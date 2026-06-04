@@ -1,6 +1,6 @@
 # Werewolf Ville Bug Backlog
 
-更新日期：2026-06-04
+更新日期：2026-06-05
 
 ## 使用规则
 
@@ -40,12 +40,30 @@ ID:
 关联需求：REQ-100
 回归测试：`tests/test_ui_bubble_layout.py`
 回归频率：每次必现
-状态：Open
-验收状态：Open
+状态：Closed
+验收状态：Closed
 
 期望：克罗由玩家控制，不显示任何蓝色思考/行动气泡；只在需要时显示白色说话气泡。
 
 验证方式：启动游戏，点击移动克罗，观察克罗头顶不出现蓝色气泡；相关 UI 测试需覆盖。
+
+根因：该条目记录的是结构拆分前的历史体验问题，第一阶段结构收口后 backlog 状态未同步。当前后端 `get_status()` 已清空克罗的思考、行动、路径和运行态字段；前端不为克罗创建 thought bubble，并在渲染层继续抑制遗留节点。
+
+修复方案：无需新增生产代码；以现有后端状态隔离和前端多层抑制为最终修复，补做自动化与浏览器验收后关闭滞后条目。
+
+验证结果（2026-06-05）：
+- IAB 开始游戏后点击地图移动克罗，DOM 中 Crow thought bubble 节点数量为 0，可见气泡中不存在克罗蓝色气泡。
+- `tests/test_ui_bubble_layout.py` 全部通过。
+- `tests/test_engine_foundation.py::test_crow_public_status_never_exposes_blue_bubble_state` 通过。
+- `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_bubbles.py` 通过。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] IAB 截图与 DOM 检查确认修复。
+- [x] 根因与关联需求已记录。
+
+相关提交：`fe5fc1c`（气泡状态结构收口）；本次验证收口提交。
 
 ### BUG-002：气泡仍可能重叠、穿透 UI 或在边缘被挤成长条
 
@@ -53,12 +71,30 @@ ID:
 关联需求：REQ-105, REQ-107, REQ-108, REQ-109
 回归测试：`tests/test_ui_bubble_layout.py`
 回归频率：高概率
-状态：Open
-验收状态：Open
+状态：Closed
+验收状态：Closed
 
 期望：气泡层只覆盖游戏区域，不穿右侧 UI；边缘处由容器裁切，不动态挤压；近距离对话时左右分布，不重叠。
 
 验证方式：浏览器截图 + `tests/test_ui_bubble_layout.py`。
+
+根因：该条目记录的是结构拆分前的历史体验问题，现有实现已具备固定气泡宽度、游戏区域裁切、对话左右分布和碰撞避让，但 backlog 状态未随实现与测试同步。
+
+修复方案：无需新增生产代码；保留现有 `#bubble-layer` 边界裁切和气泡碰撞解析逻辑，以自动化测试和 IAB 实际布局验收确认关闭。
+
+验证结果（2026-06-05）：
+- IAB 中 `#bubble-layer` 实测边界为 `x=0, width=960, right=960`，停在右侧 UI 前。
+- 实际出现的 NPC 白色发言气泡与蓝色行动气泡上下分层显示，未重叠或挤成长条。
+- `tests/test_ui_bubble_layout.py` 全部通过。
+- `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_bubbles.py` 通过。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] IAB 截图与 DOM 边界检查确认修复。
+- [x] 根因与关联需求已记录。
+
+相关提交：`fe5fc1c`（气泡状态结构收口）；本次验证收口提交。
 
 ### BUG-003：克罗找 NPC 对话时，NPC 回复优先级不稳定
 
@@ -137,4 +173,3 @@ ID:
 验收状态：Deferred
 
 说明：这类问题不一定能通过代码修复。代码侧应保证超时保底、优先级队列和日志清晰。
-
