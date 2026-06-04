@@ -17,3 +17,11 @@
 - Extracted engine-side bubble timing/expiry and compact thought-summary helpers to `engine_bubbles.py`.
 - Verified bubble slice with `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_navigation.py engine_tasks.py engine_bubbles.py`.
 - Verified bubble slice with `python -m pytest tests/test_engine_foundation.py tests/test_ui_bubble_layout.py -q` => 181 passed, 1 pytest cache warning.
+- Committed bubble slice as `fe5fc1c refactor(engine): extract bubble helpers`.
+- Extracted dusk discussion, vote generation/history, jail selection, and prison placement to `engine_dusk.py`.
+- Fixed compatibility routing so vote tests patching `game_engine.chat_for_agent` do not call real models.
+- Removed a residual `@staticmethod` left by the bubble extraction that incorrectly decorated `_start_crow_scene_investigation`.
+- Verified dusk slice with `python -m pytest tests/test_vote_flow.py -q` => 12 passed.
+- Verified shared foundation with `python -m pytest tests/test_engine_foundation.py -q` => 148 passed.
+- Verified focused dusk/gathering regression with `python -m pytest tests/test_gathering_timeout.py::test_crow_starts_scene_investigation_after_gathering_ends tests/test_vote_flow.py -q` => 13 passed.
+- Broader behavior test run found one pre-existing BUG-006 persona failure; it is deferred to the Bug 修复 thread.

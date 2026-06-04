@@ -26,3 +26,12 @@
 - Extracted engine-side bubble timing/expiry and thought-summary helpers into `EngineBubbleMixin` in `engine_bubbles.py`.
 - This does not alter browser/UI layout code; it only moves engine-side state helpers.
 - `engine_bubbles.py` loads config directly to avoid importing back from `game_engine.py`.
+
+## Dusk/Vote Slice
+- Extracted dusk discussion, NPC voting, vote history, player jail selection, and prison placement into `EngineDuskMixin` in `engine_dusk.py`.
+- Replaced direct `GamePhase` references with `type(self.phase)` to avoid importing `game_engine.py` back into the mixin.
+- Added `_chat_for_agent()` compatibility routing so existing tests and callers that patch `game_engine.chat_for_agent` continue to work.
+- A first combined vote/foundation run accidentally reached real model calls and took about 19 minutes. The compatibility routing fixed that; `tests/test_vote_flow.py` now completes in about 3 seconds.
+
+## Existing Bug Kept Out Of Structure Scope
+- `tests/test_daytime_npc_behavior.py::test_mei_lin_and_klaus_have_different_destinations` fails because the Mei Lin persona file lacks expected Chinese library keywords. This maps to existing BUG-006 and is deferred to the Bug 修复 thread.
