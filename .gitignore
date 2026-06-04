@@ -1,0 +1,51 @@
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local agent/tool state
+.antigravitycli/
+.gstack/
+.codex/
+.agents/
+
+# Local runtime/test scratch directories
+cache/
+.test_agent_reset_*/
+test_agent_reset_*/
+
+# Persona runtime state; soul.md remains tracked as the stable character template.
+personas/*/agent.md
+personas/*/memory.md
+personas/*/cognition.md
+personas/*/notebook.md
+personas/*/scratch.json
+personas/*/spatial_memory.json
+personas/*/memory_index.json
+
+# Server process state and logs
+server.pid
+server.stdout.log
+server.stderr.log
+*.log
+
+# Local secrets
+.env
+.env.*
+*.key
+*secret*
+*token*
+
+# Generated model/API test output
+model_test_results.txt
+
+# One-off repair/scratch scripts created during debugging
+patch*.py
+rewrite.py
+scratch*.py
+tmp_*.py
+
+# Backups from manual recovery
+*.bak

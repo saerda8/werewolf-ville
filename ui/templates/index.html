@@ -1,0 +1,3593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>狼人小镇</title>
+<script src="https://cdn.bootcdn.net/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
+
+#game-container { position: absolute; top: 0; left: 0; right: 320px; bottom: 160px; overflow: hidden; }
+
+/* 右侧面板 */
+#side-panel {
+  position: absolute; top: 0; right: 0; width: 320px; bottom: 160px;
+  background: #16213e; border-left: 2px solid #0f3460;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+.panel-header {
+  background: #0f3460; padding: 12px 16px; font-size: 16px; font-weight: bold;
+  border-bottom: 1px solid #1a1a4e;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.panel-title { min-width: 0; white-space: nowrap; }
+.rules-btn {
+  flex: 0 0 auto; padding: 5px 10px; border: 1px solid rgba(255, 221, 87, 0.8);
+  border-radius: 4px; background: #d8a928;
+  color: #101628; font-size: 12px; font-weight: 800; cursor: pointer;
+}
+.rules-btn:hover { background: rgba(255, 221, 87, 0.24); }
+
+#time-display {
+  padding: 10px 16px; background: #1a1a3e; border-bottom: 1px solid #0f3460;
+  font-size: 13px; line-height: 1.6;
+}
+#time-display .time-big { font-size: 22px; font-weight: bold; color: #e94560; }
+#time-display .phase-day { color: #f5c518; }
+#time-display .phase-night { color: #4a9eff; }
+
+#night-btn {
+  display: block; width: calc(100% - 32px); margin: 8px 16px;
+  padding: 10px; background: #4a9eff; color: #fff; border: none;
+  border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer;
+}
+#night-btn:hover { background: #3a8eef; }
+#night-btn:disabled { background: #555; cursor: not-allowed; }
+
+/* 角色列表 */
+#crow-card-container {
+  flex: 0 0 auto;
+  padding: 8px 8px 0;
+}
+#crow-card-container .agent-card {
+  margin-bottom: 8px;
+  cursor: default;
+}
+#agent-list {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px;
+}
+.agent-card {
+  background: #1a1a3e; border-radius: 8px; padding: 10px 12px;
+  margin-bottom: 6px; cursor: pointer; border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+.agent-card:hover { border-color: #4a9eff; }
+.agent-card.dead { opacity: 0.4; }
+.agent-card.selected { border-color: #e94560; }
+.agent-card .name { font-weight: bold; font-size: 14px; }
+.agent-card .role-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  font-size: 11px; margin-left: 6px;
+}
+.role-detective { background: #e6b83f; color: #fff; }
+.role-werewolf { background: #e94560; color: #fff; }
+.role-villager { background: #555; color: #ccc; }
+.agent-card .action { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+/* 对话面板 */
+#chat-panel {
+  background: #0f3460; border-top: 2px solid #1a1a4e; padding: 10px;
+  max-height: 180px;
+}
+#chat-target { color: #f5c518; font-size: 13px; margin-bottom: 6px; }
+#chat-input-row { display: flex; gap: 6px; }
+#chat-input {
+  flex: 1; padding: 6px 10px; border-radius: 4px; border: none;
+  background: #1a1a3e; color: #eee; font-size: 13px;
+}
+#chat-send {
+  padding: 6px 14px; background: #e94560; color: #fff; border: none;
+  border-radius: 4px; cursor: pointer; font-size: 13px;
+}
+#deep-dive-check { margin-top: 6px; font-size: 12px; color: #aaa; }
+#chat-log {
+  max-height: 60px; overflow-y: auto; margin-top: 8px;
+  font-size: 12px; color: #ccc; line-height: 1.5;
+}
+.chat-msg-detective { color: #4a9eff; }
+.chat-msg-other { color: #f5c518; }
+
+/* 宣布按钮 */
+#announce-btn {
+  display: block; width: calc(100% - 32px); margin: 8px 16px;
+  padding: 8px; background: #e94560; color: #fff; border: none;
+  border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer;
+}
+#announce-btn:hover { background: #d93550; }
+
+/* 底部日志窗口 */
+#log-panel {
+  position: absolute; left: 0; right: 320px; bottom: 0; height: 160px;
+  background: #0d1117; border-top: 2px solid #0f3460;
+  display: flex; flex-direction: column;
+  z-index: 100;
+}
+#log-header {
+  background: #161b22; padding: 6px 12px; font-size: 13px; font-weight: bold;
+  color: #8b949e; border-bottom: 1px solid #21262d;
+  display: flex; justify-content: space-between; align-items: center;
+  cursor: ns-resize;
+  user-select: none;
+  min-height: 20px;
+}
+#log-header span { color: #58a6ff; }
+#log-content {
+  flex: 1; overflow-y: auto; padding: 8px 12px;
+  font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+  line-height: 1.6; color: #c9d1d9;
+}
+#log-content .log-entry { margin-bottom: 2px; }
+#log-content .log-time { color: #484f58; margin-right: 6px; }
+#log-content .log-agent { color: #58a6ff; font-weight: bold; }
+#log-content .log-action { color: #7ee787; }
+#log-content .log-think { color: #d2a8ff; font-style: italic; }
+#log-content .log-error { color: #f85149; }
+#log-content .log-system { color: #8b949e; }
+#log-content .log-llm-raw { color: #ffa657; white-space: pre-wrap; word-break: break-word; font-family: monospace; font-size: 11px; }
+#log-content .log-kill { color: #e94560; font-weight: bold; }
+
+/* 游戏结束遮罩 */
+#game-over-overlay {
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.8); z-index: 1000;
+  justify-content: center; align-items: center; flex-direction: column;
+}
+#game-over-overlay.show { display: flex; }
+#game-over-text { font-size: 48px; font-weight: bold; margin-bottom: 20px; }
+#game-over-sub { font-size: 24px; margin-bottom: 30px; }
+#restart-btn {
+  padding: 12px 40px; background: #4a9eff; color: #fff; border: none;
+  border-radius: 8px; font-size: 18px; cursor: pointer;
+}
+
+/* 鼠标坐标显示 */
+#coord-display {
+  position: fixed; top: 8px; left: 8px; z-index: 100;
+  background: rgba(0,0,0,0.75); color: #0f0; padding: 4px 10px;
+  border-radius: 4px; font: bold 12px monospace; pointer-events: none;
+  display: none;
+}
+
+/* 启动遮罩 */
+#start-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.85); z-index: 999;
+  display: flex; justify-content: center; align-items: center; flex-direction: column;
+}
+
+/* 发言气泡层 — 覆盖全窗口，不受游戏容器和侧面板裁剪 */
+#bubble-layer {
+  position: absolute; top: 0; left: 0; right: 320px; bottom: 160px;
+  pointer-events: none; z-index: 50; overflow: hidden;
+}
+
+/* 发言气泡 */
+.speech-bubble {
+  position: absolute;
+  pointer-events: none;
+  z-index: 50;
+  padding: 6px 12px;
+  box-sizing: border-box;
+  min-width: 160px;
+  max-width: 260px;
+  width: fit-content;
+  color: #222;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.92);
+  border: 2px solid #555;
+  border-radius: 10px;
+  transform: translate(-50%, -100%);
+  display: none;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.speech-bubble.bubble-side-left,
+.thought-bubble.bubble-side-left {
+  transform: translate(-100%, -100%);
+}
+.speech-bubble.bubble-side-right,
+.thought-bubble.bubble-side-right {
+  transform: translate(0, -100%);
+}
+.speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid rgba(255, 255, 255, 0.92);
+}
+.speech-bubble.bubble-side-left::after,
+.thought-bubble.bubble-side-left::after { left: calc(100% - 14px); }
+.speech-bubble.bubble-side-right::after,
+.thought-bubble.bubble-side-right::after { left: 14px; }
+#start-overlay.hidden { display: none; }
+#start-overlay h1 { font-size: 42px; color: #e94560; margin-bottom: 10px; }
+#start-overlay p { font-size: 16px; color: #aaa; margin-bottom: 30px; }
+.start-options {
+  width: min(440px, calc(100vw - 48px));
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.start-options select,
+.start-options input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid #3a4f78;
+  border-radius: 6px;
+  background: #101a33;
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+}
+.start-options select:focus,
+.start-options input:focus {
+  border-color: #4a9eff;
+  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
+}
+.start-options input[readonly],
+.start-options input:disabled {
+  color: #9fb4d8;
+  opacity: 0.75;
+}
+.start-options .hint {
+  color: #9fb4d8;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+.start-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+}
+.start-actions button {
+  padding: 14px 28px;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  font-weight: bold;
+}
+#start-btn {
+  background: #e94560;
+}
+#test-llm-btn {
+  background: #4a9eff;
+}
+#llm-test-status {
+  min-height: 18px;
+  color: #9fb4d8;
+  font-size: 12px;
+  text-align: center;
+}
+#llm-test-status.ok { color: #7bed9f; }
+#llm-test-status.error { color: #ff6b81; }
+#llm-test-status.warn { color: #ffdd57; }
+#llm-test-status.busy { color: #ffdd57; }
+.start-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 心理活动气泡 */
+.thought-bubble {
+  position: absolute;
+  pointer-events: none;
+  z-index: 49;
+  padding: 6px 12px;
+  box-sizing: border-box;
+  min-width: 160px;
+  max-width: 260px;
+  width: fit-content;
+  color: #1a1a2e;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  background: rgba(220, 240, 255, 0.95);
+  border: 2px solid #4a9eff;
+  border-radius: 10px;
+  transform: translate(-50%, -100%);
+  display: none;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.thought-bubble::after { display: none; }
+.thought-bubble .bubble-owner {
+  font-weight: 700;
+  color: #185a9d;
+  margin-bottom: 3px;
+}
+.thought-bubble .bubble-row {
+  text-align: left;
+  margin-top: 2px;
+}
+.thought-bubble .bubble-key {
+  font-weight: 700;
+  color: #185a9d;
+}
+
+/* 历史记录清单 Modal */
+.modal {
+  display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.75); z-index: 1001; justify-content: center; align-items: center;
+}
+.modal-content {
+  background: #16213e; border: 2px solid #0f3460; border-radius: 12px;
+  width: 650px; height: 500px; display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+.modal-header {
+  background: #0f3460; padding: 14px 20px; font-size: 16px; font-weight: bold;
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid #1a1a4e;
+}
+.modal-close {
+  cursor: pointer; font-size: 20px; color: #aaa; transition: color 0.2s;
+}
+.modal-close:hover { color: #fff; }
+.modal-body {
+  flex: 1; overflow-y: auto; padding: 20px; font-size: 13px; line-height: 1.6; color: #eee;
+  white-space: pre-wrap; font-family: 'Segoe UI', sans-serif;
+}
+
+/* Custom premium styling for primary CTA button, task list, and hidden states */
+#end-turn-btn {
+  display: block; width: calc(100% - 32px); margin: 10px 16px;
+  padding: 12px; background: #e94560; color: #fff; border: none;
+  border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer;
+  text-align: center; transition: background 0.2s, transform 0.1s;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+}
+#end-turn-btn:hover { background: #d93550; transform: translateY(-1px); }
+#end-turn-btn:active { transform: translateY(1px); }
+#end-turn-btn:disabled { background: #555; color: #aaa; cursor: not-allowed; box-shadow: none; transform: none; }
+
+#task-panel {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  height: 160px;
+  background: #1a1a3e;
+  border-top: 2px solid #0f3460;
+  border-left: 2px solid #0f3460;
+  padding: 12px 16px;
+  overflow-y: auto;
+  z-index: 100;
+}
+.task-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.task-item:last-child {
+  border-bottom: none;
+}
+.task-name {
+  color: #ddd;
+  font-size: 12px;
+}
+.task-progress {
+  font-family: monospace;
+  font-weight: bold;
+  color: #ffdd57;
+  font-size: 12px;
+}
+.task-item.completed .task-name {
+  text-decoration: line-through;
+  color: #888;
+}
+.task-item.completed .task-progress {
+  color: #2ec4b6;
+}
+
+/* Crow bubble overrides for strict white styling and suppression of thought/action bubbles */
+[id*="thought-bubble-crow" i],
+[id*="thought_bubble_crow" i],
+[id*="thought-bubble-克罗" i],
+[id*="thought_bubble_克罗" i],
+.thought-bubble[id*="crow" i],
+.thought-bubble[id*="克罗" i] {
+  display: none !important;
+}
+[id*="bubble-crow" i],
+[id*="bubble-克罗" i] {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: 2px solid #555 !important;
+  color: #222 !important;
+}
+.history-btn:hover {
+  background: #4b885c !important;
+  border-color: #69a77a !important;
+}
+.history-btn:active {
+  transform: scale(0.95);
+}
+.chat-btn-npc {
+  transition: opacity 0.2s, background-color 0.2s;
+}
+.chat-btn-npc:disabled {
+  background: #4a5568 !important;
+  color: #a0aec0 !important;
+  cursor: not-allowed !important;
+  opacity: 0.7;
+}
+.dd-btn-npc:disabled {
+  background: #4a5568 !important;
+  color: #a0aec0 !important;
+  cursor: not-allowed !important;
+  opacity: 0.7;
+}
+</style>
+</head>
+<body>
+
+<div id="bubble-layer"></div>
+
+<div id="history-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <span id="history-modal-title">小镇居民历史言行记录</span>
+      <span class="modal-close" onclick="closeHistoryModal()">&times;</span>
+    </div>
+    <div id="history-modal-body" class="modal-body"></div>
+  </div>
+</div>
+
+<div id="deep-dive-modal" class="modal">
+  <div class="modal-content" style="width: 500px; height: 350px;">
+    <div class="modal-header">
+      <span id="deep-dive-modal-title">🕵️ 深度挖掘对话</span>
+      <span class="modal-close" onclick="closeDeepDiveModal()">&times;</span>
+    </div>
+    <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 20px;">
+      <div id="deep-dive-prompt-desc" style="color: #ffdd57; font-size: 13px;"></div>
+      <textarea id="deep-dive-textarea" style="flex: 1; width: 100%; min-height: 120px; background: #1a1a3e; color: #fff; border: 1px solid #0f3460; border-radius: 6px; padding: 10px; font-family: sans-serif; font-size: 13px; resize: none; outline: none;" placeholder="请输入你想要深度挖掘的详细问题..."></textarea>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button onclick="closeDeepDiveModal()" style="padding: 8px 16px; background: #555; color: #fff; border: none; border-radius: 4px; cursor: pointer;">取消</button>
+        <button id="deep-dive-submit-btn" style="padding: 8px 16px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">提交深挖问题</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="rules-modal" class="modal">
+  <div class="modal-content" style="width: 560px; max-height: 78vh;">
+    <div class="modal-header">
+      <span>游戏规则</span>
+      <span class="modal-close" onclick="closeRulesModal()">&times;</span>
+    </div>
+    <div class="modal-body">
+      <p><strong>目标：</strong>你扮演警长克罗，通过采访、线索和投票找出两名狼人。</p>
+      <p><strong>身份：</strong>小镇共有 8 名参与者。每局随机产生 2 名狼人，狼人知道彼此身份，白天会伪装成普通居民。</p>
+      <p><strong>白天：</strong>居民会自行行动和思考。警长每天需要采访所有存活且未被拘留的居民；每个白天有 3 次可选深度挖掘。</p>
+      <p><strong>黄昏：</strong>完成当天必要任务后，可以召集讨论和投票。居民可以投人，也可以弃票。投票结果展示后，由警长决定拘留谁。</p>
+      <p><strong>夜晚：</strong>狼人每天晚上必须尝试杀死一名非克罗目标。克罗只能最后被杀。</p>
+      <p><strong>银器：</strong>第二天起，警长需要收集五金店工具和银饰，之后才能制作一颗银质子弹。子弹只能用一次。</p>
+      <p><strong>隐藏刀具：</strong>一名好人居民藏有银质小刀，可在夜里尝试击杀一名目标；如果误杀好人，也会造成死亡。</p>
+    </div>
+  </div>
+</div>
+
+<div id="start-overlay">
+  <h1>狼人小镇</h1>
+  <p>弗洛尼西斯小镇的秘密</p>
+  <div class="start-options">
+    <select id="llm-provider" onchange="updateProviderFields()">
+      <option value="chat2api">本地 Chat2API（默认）</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="openai">OpenAI Cloud</option>
+      <option value="deepseek">DeepSeek</option>
+      <option value="anthropic">Claude / Anthropic</option>
+      <option value="custom">自定义 OpenAI-compatible</option>
+      <option value="custom_anthropic">自定义 Claude-compatible</option>
+    </select>
+    <input id="llm-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="API Key">
+    <input id="llm-model" type="text" autocomplete="off" spellcheck="false" placeholder="模型名，例如 openai/gpt-4o-mini 或 gpt-4o-mini">
+    <input id="llm-api-base" type="text" autocomplete="off" spellcheck="false" placeholder="API Base URL">
+    <div class="hint">BYOK = Bring Your Own Key，即使用你自己的厂商 API Key。选择厂商会自动填 URL；自定义模式可以改 URL。OpenRouter 的 BYOK 需先在 OpenRouter Integrations 里绑定上游 key，再在这里填 OpenRouter key。</div>
+    <div id="llm-test-status"></div>
+  </div>
+  <div class="start-actions">
+    <button id="test-llm-btn" onclick="testRuntimeLlmOptions()">检测 API</button>
+    <button id="start-btn" onclick="startGame()">开始游戏</button>
+  </div>
+</div>
+
+<div id="game-container"></div>
+<div id="coord-display"></div>
+
+<div id="side-panel">
+  <div class="panel-header">
+    <span class="panel-title">狼人小镇 <span id="conn-indicator" style="font-size:10px; color:#888; cursor:pointer;" title="等待连接...">●</span></span>
+    <button class="rules-btn" onclick="showRulesModal()">规则</button>
+  </div>
+  <div id="time-display">
+    <div>Day <span id="day-num">1</span> &nbsp;
+      <span id="phase-text" class="phase-day">DAY</span>
+    </div>
+    <div class="time-big"><span id="game-clock">07:00</span></div>
+    <div style="font-size:11px; color:#888; display: flex; justify-content: space-between;">
+      <span>白天剩余: <span id="day-timer">30:00</span></span>
+      <span>深度挖掘: <span id="deep-dive-remaining-side" style="color: #ffdd57; font-weight: bold; text-shadow: 0 0 4px rgba(255, 221, 87, 0.35);">0</span> 次</span>
+    </div>
+    <div id="vote-history-panel" style="margin-top: 10px; padding: 8px; background: rgba(15, 52, 96, 0.55); border: 1px solid rgba(255, 221, 87, 0.45); border-radius: 6px; font-size: 11px; line-height: 1.45; color: #eee;">
+      <div style="font-weight: bold; color: #ffdd57; margin-bottom: 4px; font-size: 11px;">每日投票结果</div>
+      <div id="vote-history-content" style="max-height: 86px; overflow-y: auto; color: #cfd8ee;">暂无投票记录</div>
+    </div>
+  </div>
+  <button id="end-turn-btn" onclick="startDuskDiscussion()" disabled>结束本回合，进入黄昏讨论投票</button>
+  <button id="night-btn" onclick="enterNight()" style="display: none;" disabled>进入夜晚</button>
+
+  <div id="crow-card-container"></div>
+  <div id="agent-list"></div>
+
+  <button id="announce-btn" onclick="showAnnounce()" style="display: none;" disabled>宣布推理</button>
+
+  <div id="voting-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #e94560; padding: 12px 16px;">
+    <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">🌅 黄昏投票与指控 (Dusk Voting)</div>
+    <div id="voting-votes" style="font-size: 11px; line-height: 1.5; color: #eee; max-height: 150px; overflow-y: auto; margin-bottom: 10px;"></div>
+    <div id="voting-counts" style="font-size: 11px; line-height: 1.5; color: #ffdd57; margin-bottom: 10px;"></div>
+    <div id="jail-buttons" style="display: flex; flex-direction: column; gap: 4px;"></div>
+  </div>
+
+  <div id="chat-panel">
+    <div id="chat-target" style="display: none;">点击角色开始对话</div>
+    <div id="chat-input-row" style="display: none;">
+      <input id="chat-input" placeholder="输入消息..." disabled>
+      <button id="chat-send" onclick="sendChat()" disabled>发送</button>
+      <button id="chat-btn" onclick="startNpcChat()" style="display:none; padding: 6px 14px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; white-space: nowrap;">前往交谈</button>
+    </div>
+    <div id="deep-dive-check" style="display: none;">
+      <label><input type="checkbox" id="deep-dive"> 深度挖掘</label>
+      <span id="deep-dive-remaining">(剩余0)</span>
+    </div>
+    <div id="chat-log"></div>
+  </div>
+</div>
+
+<div id="task-panel">
+  <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">📋 警长每日任务 (Sheriff Tasks)</div>
+  <div id="sheriff-tasks" style="font-size: 12px; line-height: 1.6; color: #eee;"></div>
+</div>
+
+<div id="log-panel">
+  <div id="log-header">
+    <div>智能体日志</div>
+    <span id="log-count">0条</span>
+  </div>
+  <div id="log-content"></div>
+</div>
+
+<div id="game-over-overlay">
+  <div id="game-over-text"></div>
+  <div id="game-over-sub"></div>
+  <button id="restart-btn" onclick="restartGame()">再来一局</button>
+</div>
+
+<script>
+// ==================== GLOBALS ====================
+const TILE_W = 32;
+
+// 所有角色名称（与 AGENT_CONFIGS 对应）
+let PERSONA_NAMES = [
+  "Arthur Burton", "Crow", "Isabella Rodriguez",
+  "Klaus Mueller", "Maria Lopez", "Sam Moore",
+  "Jane Moreno", "Mei Lin"
+];
+
+// 所有可能出现的居民名称（用于加载尸体精灵等）
+const ALL_RESIDENT_NAMES = [
+  "Abigail Chen", "Adam Smith", "Arthur Burton", "Ayesha Khan", "Carlos Gomez",
+  "Carmen Ortiz", "Crow", "Eddy Lin", "Francisco Lopez", "Giorgio Rossi",
+  "Hailey Johnson", "Isabella Rodriguez", "Jane Moreno", "Jennifer Moore", "John Lin",
+  "Klaus Mueller", "Latoya Williams", "Maria Lopez", "Mei Lin", "Rajiv Patel",
+  "Ryan Park", "Sam Moore", "Tamara Taylor", "Tom Moreno", "Wolfgang Schulz",
+  "Yuriko Yamamoto"
+];
+
+// 角色名 -> 资源 key 映射（用于加载独立角色 PNG）
+const PERSONA_ASSET_KEYS = {};
+for (const name of PERSONA_NAMES) {
+  PERSONA_ASSET_KEYS[name] = "char_" + name.replace(/ /g, "_");
+}
+
+// 角色名字颜色
+const PERSONA_LABEL_COLORS = {
+  "Arthur Burton": "#7ee787",
+  "Crow": "#66c2ff",
+  "Isabella Rodriguez": "#f39ab6",
+  "Klaus Mueller": "#7ee787",
+  "Maria Lopez": "#f39ab6",
+  "Sam Moore": "#7ee787",
+  "Jane Moreno": "#f39ab6",
+  "Mei Lin": "#f39ab6",
+};
+
+// 获取对玩家友好的角色中文显示名称
+function getDisplayName(name, state) {
+  if (state && state.personas && state.personas[name] && state.personas[name].display_name) {
+    return state.personas[name].display_name;
+  }
+  const fallback = {
+    "Arthur Burton": "亚瑟",
+    "Crow": "克罗",
+    "Isabella Rodriguez": "伊莎贝拉",
+    "Klaus Mueller": "克劳斯",
+    "Maria Lopez": "玛利亚",
+    "Sam Moore": "山姆",
+    "Jane Moreno": "简",
+    "Mei Lin": "林梅",
+    "Arthur": "亚瑟",
+    "Isabella": "伊莎贝拉",
+    "Klaus": "克劳斯",
+    "Maria": "玛利亚",
+    "Sam": "山姆",
+    "Jane": "简",
+    "Mei": "林梅",
+    "Crow": "克罗",
+    "Moreno": "简",
+    "Abigail Chen": "阿比盖尔·陈",
+    "Adam Smith": "亚当·史密斯",
+    "Ayesha Khan": "艾莎·汗",
+    "Carlos Gomez": "卡洛斯·戈麦斯",
+    "Carmen Ortiz": "卡门·奥尔蒂斯",
+    "Eddy Lin": "林艾迪",
+    "Francisco Lopez": "弗朗西斯科·洛佩兹",
+    "Giorgio Rossi": "乔治奥·罗西",
+    "Hailey Johnson": "海莉·约翰逊",
+    "Jennifer Moore": "詹妮弗·摩尔",
+    "John Lin": "林约翰",
+    "Latoya Williams": "拉托娅·威廉姆斯",
+    "Rajiv Patel": "拉吉夫·帕特尔",
+    "Ryan Park": "莱恩·帕克",
+    "Tamara Taylor": "塔玛拉·泰勒",
+    "Tom Moreno": "汤姆·莫雷诺",
+    "Wolfgang Schulz": "沃尔夫冈·舒尔茨",
+    "Yuriko Yamamoto": "山本百合子",
+    "Abigail": "阿比盖尔",
+    "Adam": "亚当",
+    "Ayesha": "艾莎",
+    "Carlos": "卡洛斯",
+    "Carmen": "卡门",
+    "Eddy": "艾迪",
+    "Francisco": "弗朗西斯科",
+    "Giorgio": "乔治奥",
+    "Hailey": "海莉",
+    "Jennifer": "詹妮弗",
+    "John": "约翰",
+    "Latoya": "拉托娅",
+    "Rajiv": "拉吉夫",
+    "Ryan": "莱恩",
+    "Tamara": "塔玛拉",
+    "Tom": "汤姆",
+    "Wolfgang": "沃尔夫冈",
+    "Yuriko": "百合子"
+  };
+  return fallback[name] || name;
+}
+
+function getWerewolfDisplayNames(data) {
+  const names = Array.isArray(data.werewolf_names) && data.werewolf_names.length > 0
+    ? data.werewolf_names
+    : (data.werewolf_name ? [data.werewolf_name] : []);
+  return names.map(n => getDisplayName(n, data)).join("、");
+}
+
+let socket = null;
+let gameState = null;
+let phaserGame = null;
+let sprites = {};        // Phaser sprites per persona
+let corpseSprites = {};  // Phaser sprites for dead bodies
+let nameLabels = {};     // Name labels above sprites
+let modelLabels = {};    // Model name labels below name labels
+let speechBubbles = {};  // Speech bubble DOM elements
+let thoughtBubbles = {}; // Thought bubble DOM elements
+let nightOverlay = null;
+let selectedAgent = null;
+let isNight = false;
+let isDusk = false;
+let logEntries = 0;
+let lastLogTime = 0;
+let lastLogId = -1;
+let firstStateReceived = false;
+let pendingChatTarget = null;
+let pendingChatPhase = ""; // "moving" | "waiting"
+const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你先说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
+const BUBBLE_LIFETIME_SECONDS = 12;
+let thoughtBubbleCache = {};
+let blueBubbleCache = {};
+
+function applyBlueBubbleTTL(name, html, persona) {
+  if (!html) {
+    return "";
+  }
+  const now = Date.now();
+  let cached = blueBubbleCache[name];
+  if (!cached) {
+    cached = { html: html, firstShown: now, expired: false };
+    blueBubbleCache[name] = cached;
+  } else if (cached.html !== html) {
+    cached.html = html;
+    cached.firstShown = now;
+    cached.expired = false;
+  }
+  if (cached.expired) {
+    return "";
+  }
+  if (now - cached.firstShown > BUBBLE_LIFETIME_SECONDS * 1000) {
+    cached.expired = true;
+    return "";
+  }
+  return html;
+}
+let pendingCrowBubble = null;
+
+// Camera drag
+let camDrag = false;
+let camDragStartX = 0;
+let camDragStartY = 0;
+let camScrollStartX = 0;
+let camScrollStartY = 0;
+
+// ==================== SOCKET ====================
+function initSocket() {
+  if (socket && socket.connected) return;
+  if (socket) { socket.disconnect(); }
+  socket = io();
+  socket.on("game_state", (state) => {
+    mergePendingCrowBubble(state);
+    gameState = state;
+    if (state && state.personas) {
+      PERSONA_NAMES = Object.keys(state.personas);
+    }
+    document.getElementById("start-overlay").classList.add("hidden");
+    updateUI(state);
+    if (!firstStateReceived) {
+      centerCameraOnState(state);
+      firstStateReceived = true;
+    }
+  });
+  socket.on("chat_response", (resp) => {
+    const responseTarget = resp && resp.target_name;
+    if (!responseTarget || responseTarget === pendingChatTarget) {
+      clearPendingChat();
+    }
+    if (resp.error) {
+      addChatMsg("系统", resp.error, true);
+    } else {
+      addChatMsg("Crow", resp.detective_message, false);
+      addChatMsg(resp.target_name, resp.response, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("announce_result", (resp) => {
+    showGameOver(resp);
+  });
+  socket.on("jail_result", (resp) => {
+    if (resp && resp.error) {
+      addChatMsg("系统", resp.error, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("silver_result", (resp) => {
+    if (resp && resp.error) {
+      addChatMsg("系统", resp.error, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("connect", () => {
+    document.getElementById("conn-indicator").title = "已连接到游戏服务器";
+    document.getElementById("conn-indicator").style.color = "#4caf50";
+    socket.emit("request_state");
+  });
+  socket.on("disconnect", () => {
+    document.getElementById("conn-indicator").title = "与服务器的连接已断开";
+    document.getElementById("conn-indicator").style.color = "#e94560";
+  });
+}
+
+function centerCameraOnState(state) {
+  if (!sceneRef || !state) return;
+  const site = state.gathering_site;
+  if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
+    sceneRef.cameras.main.centerOn(site.x * TILE_W, site.y * TILE_W);
+    resolveBubbleLayout();
+    return;
+  }
+  const crow = state.personas && state.personas["Crow"];
+  if (crow && Number.isFinite(crow.x) && Number.isFinite(crow.y)) {
+    sceneRef.cameras.main.centerOn(crow.x * TILE_W, crow.y * TILE_W);
+    resolveBubbleLayout();
+  }
+}
+
+function fetchCurrentState() {
+  return fetch("/api/status")
+    .then((resp) => resp.json())
+    .then((state) => {
+      if (!state || state.error) return state;
+      gameState = state;
+      if (state && state.personas) {
+        PERSONA_NAMES = Object.keys(state.personas);
+      }
+      document.getElementById("start-overlay").classList.add("hidden");
+      updateUI(state);
+      return state;
+    });
+}
+
+function deepDiveRemaining(state) {
+  if (!state) return 0;
+  if (typeof state.deep_dive_remaining === "number") {
+    return state.deep_dive_remaining;
+  }
+  return (state.deep_dive_quota || 0) - (state.deep_dive_used || 0);
+}
+
+const LLM_PROVIDER_BASE_URLS = {
+  chat2api: "",
+  openrouter: "https://openrouter.ai/api/v1",
+  openai: "https://api.openai.com/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  custom: "",
+  custom_anthropic: "",
+};
+const LLM_STORAGE_KEY = "werewolfVille.runtimeLlm";
+
+function setLlmTestStatus(message, kind) {
+  const el = document.getElementById("llm-test-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.className = kind || "";
+}
+
+function setStartButtonsBusy(isBusy) {
+  const startBtn = document.getElementById("start-btn");
+  const testBtn = document.getElementById("test-llm-btn");
+  if (startBtn) startBtn.disabled = isBusy;
+  if (testBtn) testBtn.disabled = isBusy;
+}
+
+function updateProviderFields() {
+  const providerEl = document.getElementById("llm-provider");
+  const keyEl = document.getElementById("llm-api-key");
+  const modelEl = document.getElementById("llm-model");
+  const baseEl = document.getElementById("llm-api-base");
+  const provider = providerEl ? providerEl.value : "chat2api";
+  const usesLocal = provider === "chat2api";
+  const isCustom = provider === "custom" || provider === "custom_anthropic";
+
+  if (baseEl) {
+    if (!isCustom) baseEl.value = LLM_PROVIDER_BASE_URLS[provider] || "";
+    baseEl.readOnly = !isCustom;
+    baseEl.disabled = usesLocal;
+  }
+  if (keyEl) keyEl.disabled = usesLocal;
+  if (modelEl) modelEl.disabled = usesLocal;
+  setLlmTestStatus("", "");
+}
+
+function saveRuntimeLlmOptions(options) {
+  try {
+    localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify(options));
+  } catch (e) {
+    console.warn("Could not save LLM settings locally:", e);
+  }
+}
+
+function loadRuntimeLlmOptions() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LLM_STORAGE_KEY) || "{}");
+    const providerEl = document.getElementById("llm-provider");
+    const keyEl = document.getElementById("llm-api-key");
+    const modelEl = document.getElementById("llm-model");
+    const baseEl = document.getElementById("llm-api-base");
+    if (providerEl && saved.provider) providerEl.value = saved.provider;
+    updateProviderFields();
+    if (keyEl && saved.api_key) keyEl.value = saved.api_key;
+    if (modelEl && saved.model) modelEl.value = saved.model;
+    if (baseEl && (saved.provider === "custom" || saved.provider === "custom_anthropic") && saved.api_base) {
+      baseEl.value = saved.api_base;
+    }
+  } catch (e) {
+    updateProviderFields();
+  }
+}
+
+function getRuntimeLlmOptions() {
+  const providerEl = document.getElementById("llm-provider");
+  const keyEl = document.getElementById("llm-api-key");
+  const modelEl = document.getElementById("llm-model");
+  const baseEl = document.getElementById("llm-api-base");
+  const provider = providerEl ? providerEl.value : "chat2api";
+  if (provider === "chat2api") return { provider };
+
+  const api_key = keyEl ? keyEl.value.trim() : "";
+  const model = modelEl ? modelEl.value.trim() : "";
+  const api_base = baseEl ? baseEl.value.trim() : "";
+  const missing = [];
+  if (!api_key) missing.push("API Key");
+  if (!model) missing.push("模型名");
+  if (!api_base) missing.push("API Base URL");
+  if (missing.length) {
+    alert("请填写：" + missing.join("、"));
+    return null;
+  }
+  return { provider, api_key, model, api_base };
+}
+
+function testRuntimeLlmOptions(options) {
+  const runtimeOptions = options || getRuntimeLlmOptions();
+  const isManualTest = !options;
+  if (runtimeOptions === null) {
+    return isManualTest ? Promise.resolve({ok: false}) : Promise.reject(new Error("missing LLM field"));
+  }
+
+  saveRuntimeLlmOptions(runtimeOptions);
+  if (runtimeOptions.provider === "chat2api") {
+    setLlmTestStatus("使用本地 Chat2API 配置，无需远程 API 检测。", "ok");
+    return Promise.resolve({ok: true, provider: "chat2api"});
+  }
+
+  setLlmTestStatus("正在检测 API...", "busy");
+  setStartButtonsBusy(true);
+  return fetch("/api/test_llm_provider", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(runtimeOptions),
+  }).then((resp) => {
+    return resp.json().then((data) => {
+      if (!resp.ok || !data.ok) {
+        const err = new Error(data.error || "API 检测失败");
+        err.reason = data.reason || "";
+        throw err;
+      }
+      const sample = data.sample ? `，返回：${data.sample}` : "";
+      setLlmTestStatus(`API 有效：${data.provider} / ${data.model}${sample}`, "ok");
+      return data;
+    });
+  }).catch((err) => {
+    const message = err.message || String(err);
+    if (err.reason === "rate_limited") {
+      setLlmTestStatus("模型限流：" + message, "warn");
+    } else {
+      setLlmTestStatus("API 无效：" + message, "error");
+    }
+    if (isManualTest) {
+      alert(message);
+      return {ok: false};
+    }
+    throw err;
+  }).finally(() => {
+    setStartButtonsBusy(false);
+  });
+}
+
+function postGameLifecycle(url) {
+  const runtimeOptions = getRuntimeLlmOptions();
+  if (runtimeOptions === null) return Promise.reject(new Error("missing LLM field"));
+  return testRuntimeLlmOptions(runtimeOptions).then(() => {
+    return fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(runtimeOptions),
+    }).then((resp) => {
+      if (!resp.ok) {
+        return resp.json().then((data) => {
+          throw new Error(data.error || "启动游戏失败");
+        });
+      }
+      saveRuntimeLlmOptions(runtimeOptions);
+      return resp.json();
+    });
+  });
+}
+
+function resetAgentLog() {
+  const logEl = document.getElementById("log-content");
+  if (logEl) logEl.innerHTML = "";
+  logEntries = 0;
+  lastLogTime = 0;
+  lastLogId = -1;
+  const countEl = document.getElementById("log-count");
+  if (countEl) countEl.textContent = "0条";
+
+  // Reset local chat/pending variables to prevent carrying over from previous game
+  clearPendingChat();
+
+  // Clear old gameState and director summary to prevent carrying over old roles
+  gameState = null;
+  const dirSummary = document.getElementById("director-summary");
+  if (dirSummary) dirSummary.style.display = "none";
+  const werewolfEl = document.getElementById("director-werewolf");
+  if (werewolfEl) {
+    werewolfEl.style.display = "none";
+    werewolfEl.innerHTML = '🐺 狼人: <span style="color: #e94560; font-weight: bold;">-</span>';
+  }
+  const modelsEl = document.getElementById("director-models");
+  if (modelsEl) {
+    modelsEl.style.display = "none";
+    modelsEl.innerHTML = '🤖 模型: <span style="font-family: monospace;">-</span>';
+  }
+  const huntEl = document.getElementById("director-hunt");
+  if (huntEl) {
+    huntEl.style.display = "none";
+    huntEl.textContent = "";
+  }
+}
+
+function startGame() {
+  firstStateReceived = false;
+  postGameLifecycle("/api/start").then((data) => {
+    resetAgentLog();
+    document.getElementById("start-overlay").classList.add("hidden");
+    if (!socket || !socket.connected) initSocket();
+    fetchCurrentState().then(centerCameraOnState);
+  }).catch((err) => {
+    if (err && err.message !== "missing LLM field") alert(err.message || String(err));
+  });
+}
+
+function restartGame() {
+  document.getElementById("game-over-overlay").classList.remove("show");
+  firstStateReceived = false;
+  postGameLifecycle("/api/reset").then(() => {
+    resetAgentLog();
+    if (!socket || !socket.connected) initSocket();
+    fetchCurrentState().then(centerCameraOnState);
+  }).catch((err) => {
+    if (err && err.message !== "missing LLM field") alert(err.message || String(err));
+  });
+}
+
+function enterNight() {
+  if (socket && socket.connected) {
+    socket.emit("enter_night");
+  }
+}
+
+function startDuskDiscussion() {
+  if (socket && socket.connected) {
+    socket.emit("start_dusk_discussion");
+  } else {
+    fetch("/api/start_dusk_discussion", {method: "POST"})
+      .then(() => fetchCurrentState());
+  }
+}
+
+function renderVoteHistory(state) {
+  const el = document.getElementById("vote-history-content");
+  if (!el) return;
+  const history = Array.isArray(state.vote_history) ? state.vote_history : [];
+  if (!history.length) {
+    el.innerHTML = '<span style="color:#8ea0c4;">暂无投票记录</span>';
+    return;
+  }
+  el.innerHTML = history
+    .slice()
+    .sort((a, b) => (a.day || 0) - (b.day || 0))
+    .map(entry => {
+      const counts = Array.isArray(entry.counts) ? entry.counts : [];
+      const countText = counts.length
+        ? counts.map(c => `${c.display || getDisplayName(c.target, state)} ${c.count}票`).join("，")
+        : "无人得票";
+      const abstain = entry.abstain_count ? `，弃票${entry.abstain_count}` : "";
+      const jailed = entry.jail_target_display ? `；关押：${entry.jail_target_display}` : "";
+      return `<div style="margin-bottom:5px;"><strong style="color:#ffdd57;">第${entry.day}天</strong> ${countText}${abstain}${jailed}</div>`;
+    })
+    .join("");
+}
+
+// ==================== UI UPDATES ====================
+function updateUI(state) {
+  if (!state || state.error) return;
+
+  document.getElementById("day-num").textContent = state.day;
+  const phase = state.phase;
+  isNight = phase === "night";
+  isDusk = phase === "dusk_discussion";
+  const phaseEl = document.getElementById("phase-text");
+  phaseEl.textContent = isNight ? "夜晚" : (isDusk ? "黄昏" : "白天");
+  phaseEl.className = isNight ? "phase-night" : "phase-day";
+
+  const hour = Math.floor(state.game_hour);
+  const min = Math.floor((state.game_hour % 1) * 60);
+  document.getElementById("game-clock").textContent =
+    String(hour).padStart(2,"0") + ":" + String(min).padStart(2,"0");
+  renderVoteHistory(state);
+
+  if (isNight) {
+    const left = Math.max(0, state.night_duration - state.night_elapsed);
+    const m = Math.floor(left / 60);
+    const s = Math.floor(left % 60);
+    document.getElementById("day-timer").textContent = m + ":" + String(s).padStart(2,"0");
+    document.getElementById("night-btn").disabled = true;
+    document.getElementById("night-btn").textContent = "夜晚进行中...";
+  } else {
+    const left = Math.max(0, state.day_duration - state.day_elapsed);
+    const m = Math.floor(left / 60);
+    const s = Math.floor(left % 60);
+    document.getElementById("day-timer").textContent = m + ":" + String(s).padStart(2,"0");
+    document.getElementById("night-btn").disabled = false;
+    document.getElementById("night-btn").textContent = state.day_time_expired
+      ? "进入夜晚（白天结束！）" : "进入夜晚";
+  }
+
+  // Update Director Summary & calculate isDirectorSummaryViewed
+  let isDirectorSummaryViewed = false;
+  const dirSummary = document.getElementById("director-summary");
+  if (dirSummary) {
+    let showSummary = false;
+    
+    // Werewolf Name(s)
+    const werewolfNames = state.werewolf_names;
+    const werewolfEl = document.getElementById("director-werewolf");
+    let displayStr = "";
+    if (Array.isArray(werewolfNames) && werewolfNames.length > 0) {
+      showSummary = true;
+      displayStr = werewolfNames.map(n => getDisplayName(n, state)).join(", ");
+    } else {
+      const werewolfName = state.werewolf_name || "";
+      if (werewolfName) {
+        showSummary = true;
+        displayStr = getDisplayName(werewolfName, state);
+      }
+    }
+    
+    if (displayStr) {
+      if (werewolfEl) {
+        werewolfEl.style.display = "block";
+        werewolfEl.innerHTML = `🐺 狼人: <span style="color: #e94560; font-weight: bold;">${displayStr}</span>`;
+      }
+    } else if (werewolfEl) {
+      werewolfEl.style.display = "none";
+    }
+    
+    // Model Assignments
+    const modelAssignments = state.model_assignments || {};
+    const modelsEl = document.getElementById("director-models");
+    if (modelAssignments && Object.keys(modelAssignments).length > 0) {
+      showSummary = true;
+      if (modelsEl) {
+        modelsEl.style.display = "block";
+        const mappingsStr = Object.entries(modelAssignments)
+          .map(([name, model]) => `${getDisplayName(name, state)}: ${model}`)
+          .join(", ");
+        modelsEl.innerHTML = `🤖 模型: <span style="color: #ffdd57; font-family: monospace; font-size: 10px;">${mappingsStr}</span>`;
+      }
+    } else if (modelsEl) {
+      modelsEl.style.display = "none";
+    }
+
+    const hunt = state.night_hunt || {};
+    const huntEl = document.getElementById("director-hunt");
+    if (huntEl && hunt.stage) {
+      showSummary = true;
+      const forced = hunt.forced_completion ? " | FORCED" : "";
+      huntEl.style.display = "block";
+      huntEl.textContent = `Night hunt: ${hunt.stage} | target: ${hunt.target_name || "-"}${forced}`;
+    } else if (huntEl) {
+      huntEl.style.display = "none";
+    }
+    
+    if (showSummary) {
+      dirSummary.style.display = "block";
+    } else {
+      dirSummary.style.display = "none";
+    }
+    isDirectorSummaryViewed = showSummary;
+  }
+
+  // Update Agent List using computed isDirectorSummaryViewed
+  updateAgentList(state, isDirectorSummaryViewed);
+
+  // Dynamic distance-based chat-panel state check
+  if (selectedAgent && state.personas) {
+    const crow = state.personas["Crow"];
+    const target = state.personas[selectedAgent];
+    if (crow && target && target.alive) {
+      const dist = Math.abs(crow.x - target.x) + Math.abs(crow.y - target.y);
+      const chatInput = document.getElementById("chat-input");
+      const chatSend = document.getElementById("chat-send");
+      const chatBtn = document.getElementById("chat-btn");
+      const isGathering = state.primary_cta === "gathering";
+      
+      const isPendingChat = !!pendingChatTarget;
+      if (dist <= 2 && !isGathering && !isPendingChat) {
+        // Close enough! Enable input and send, hide approach button
+        if (chatInput) {
+          chatInput.disabled = false;
+          chatInput.placeholder = "输入你的发言...";
+        }
+        if (chatSend) chatSend.disabled = false;
+        if (chatBtn) {
+          chatBtn.style.display = "none";
+          chatBtn.disabled = false;
+        }
+      } else {
+        // Too far, gathering, or pending chat! Disable input and send, show approach button
+        if (chatInput) {
+          chatInput.disabled = true;
+          chatInput.placeholder = isGathering
+            ? "聚集讨论中，无法私聊..."
+            : (isPendingChat
+               ? (pendingChatPhase === "moving" ? "前往中，请稍候..." : "等待回复中，请稍候...")
+               : "靠近后才能交谈...");
+        }
+        if (chatSend) chatSend.disabled = true;
+        if (chatBtn) {
+          if (isGathering) {
+            chatBtn.style.display = "none";
+          } else {
+            chatBtn.style.display = "inline-block";
+            chatBtn.disabled = isPendingChat;
+            chatBtn.textContent = isPendingChat
+              ? (pendingChatPhase === "moving" ? "前往中..." : "等待回复...")
+              : `前往交谈 (${Math.ceil(dist)}格)`;
+          }
+        }
+      }
+    }
+  } else {
+    // No selected agent
+    const chatInput = document.getElementById("chat-input");
+    const chatSend = document.getElementById("chat-send");
+    const chatBtn = document.getElementById("chat-btn");
+    if (chatInput) {
+      chatInput.disabled = true;
+      chatInput.placeholder = "选择角色开始对话...";
+    }
+    if (chatSend) chatSend.disabled = true;
+    if (chatBtn) chatBtn.style.display = "none";
+  }
+
+  const ddLeft = deepDiveRemaining(state);
+  document.getElementById("deep-dive-remaining").textContent = `(剩余${ddLeft})`;
+  document.getElementById("announce-btn").disabled = isNight;
+
+  // Update new primary CTA button
+  const endTurnBtn = document.getElementById("end-turn-btn");
+  if (endTurnBtn) {
+    const tasksComplete = areRequiredTasksCompleted(state);
+    const canStart = tasksComplete || (state.can_start_dusk_discussion !== undefined && !!state.can_start_dusk_discussion);
+    endTurnBtn.disabled = isNight || isDusk || !canStart || !!state.game_over || state.primary_cta === "gathering";
+    endTurnBtn.textContent = isDusk
+      ? "黄昏讨论投票进行中"
+      : (!canStart ? "请先完成今日警长任务" : "结束本回合，进入黄昏讨论投票");
+  }
+
+  // Update deep-dive count in side panel
+  const ddLeftReal = deepDiveRemaining(state);
+  const ddRemainingSide = document.getElementById("deep-dive-remaining-side");
+  if (ddRemainingSide) {
+    ddRemainingSide.textContent = ddLeftReal;
+  }
+
+  // Update task list in side panel
+  updateTasks(state);
+  maybeTriggerPendingAutoChat(state);
+
+  // 🌅 Update Dusk Voting Panel when voting fields are exposed in status
+  const votingPanel = document.getElementById("voting-panel");
+  if (votingPanel) {
+    const hasVotingFields = state.vote_summary !== undefined || state.dusk_votes !== undefined || state.votes !== undefined || state.voting !== undefined || state.voting_results !== undefined;
+    if (hasVotingFields && isDusk) {
+      votingPanel.style.display = "block";
+      const voteSummary = state.vote_summary || {};
+      const votesObj = voteSummary.votes || state.dusk_votes || state.votes || state.voting || state.voting_results || {};
+      const reasonsObj = voteSummary.reasons || {};
+      const votesEl = document.getElementById("voting-votes");
+      const countsEl = document.getElementById("voting-counts");
+      const jailButtonsEl = document.getElementById("jail-buttons");
+      votesEl.innerHTML = "";
+      countsEl.innerHTML = "";
+      jailButtonsEl.innerHTML = "";
+      const counts = {};
+      const activePersonas = state.personas || {};
+      Object.keys(activePersonas).forEach(name => {
+        if (name !== "Crow" && activePersonas[name].alive) {
+          counts[name] = 0;
+        }
+      });
+      let votesCounted = 0;
+      Object.entries(votesObj).forEach(([voter, voteData]) => {
+        const voterDisplay = getDisplayName(voter, state);
+        let target = "";
+        let reason = "";
+        if (typeof voteData === 'string') {
+          target = voteData;
+          reason = reasonsObj[voter] || "";
+        } else if (voteData && typeof voteData === 'object') {
+          target = voteData.target || voteData.target_name || voteData.voted_for || "";
+          reason = voteData.reason || voteData.thought || "";
+        }
+        if (target && target !== "None" && target !== "null") {
+          const targetDisplay = getDisplayName(target, state);
+          const reasonHtml = reason ? `<br><span style="color:#aaa; font-style:italic; padding-left:12px;">“${reason}”</span>` : "";
+          const div = document.createElement("div");
+          div.style.marginBottom = "6px";
+          div.innerHTML = `<strong style="color:${PERSONA_LABEL_COLORS[voter] || '#fff'}">${voterDisplay}</strong> 投给了 <strong style="color:${PERSONA_LABEL_COLORS[target] || '#fff'}">${targetDisplay}</strong>${reasonHtml}`;
+          votesEl.appendChild(div);
+          if (counts[target] !== undefined) {
+            counts[target]++;
+          } else {
+            counts[target] = 1;
+          }
+          votesCounted++;
+        } else {
+          const div = document.createElement("div");
+          div.style.marginBottom = "6px";
+          div.innerHTML = `<strong style="color:${PERSONA_LABEL_COLORS[voter] || '#fff'}">${voterDisplay}</strong> 选择弃票/未投`;
+          votesEl.appendChild(div);
+        }
+      });
+      if (votesCounted === 0) {
+        votesEl.innerHTML = '<div style="color:#888; font-style:italic;">暂无投票记录</div>';
+      }
+      const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      let countsHtml = "<div style='font-weight:bold; margin-bottom:4px;'>📊 得票统计 (Vote Counts):</div>";
+      sortedCounts.forEach(([name, count]) => {
+        const displayName = getDisplayName(name, state);
+        countsHtml += `<div style="display:flex; justify-content:space-between; padding: 2px 0;">
+          <span>${displayName}:</span>
+          <span style="font-weight:bold; color:#e94560;">${count} 票</span>
+        </div>`;
+      });
+      countsEl.innerHTML = countsHtml;
+      let buttonsHtml = "<div style='font-weight:bold; margin-bottom:4px; font-size:11px; color:#ffdd57;'>👮 警长抉择：将嫌疑人关入大牢 (Jail Agent):</div>";
+      let hasLivingNpcs = false;
+      Object.entries(activePersonas).forEach(([name, p]) => {
+        if (name !== "Crow" && p.alive && !p.jailed) {
+          hasLivingNpcs = true;
+          const displayName = getDisplayName(name, state);
+          const btn = document.createElement("button");
+          btn.textContent = `关押 ${displayName}`;
+          btn.style.width = "100%";
+          btn.style.padding = "6px";
+          btn.style.background = "#e94560";
+          btn.style.color = "#fff";
+          btn.style.border = "none";
+          btn.style.borderRadius = "4px";
+          btn.style.fontWeight = "bold";
+          btn.style.cursor = "pointer";
+          btn.style.marginBottom = "4px";
+          btn.style.transition = "background 0.2s";
+          btn.onmouseover = () => btn.style.background = "#d93550";
+          btn.onmouseout = () => btn.style.background = "#e94560";
+          btn.onclick = () => jailAgent(name);
+          const wrapper = document.createElement("div");
+          wrapper.appendChild(btn);
+          jailButtonsEl.appendChild(wrapper);
+        }
+      });
+      if (!hasLivingNpcs) {
+        jailButtonsEl.innerHTML = '<div style="color:#888; font-style:italic;">没有可关押的存活居民</div>';
+      }
+    } else {
+      votingPanel.style.display = "none";
+    }
+  }
+
+  if (state.game_over) showGameOver(state);
+
+  updateLog(state);
+}
+
+function updateLog(state) {
+  const logs = state.recent_log || [];
+  if (!logs.length) return;
+
+  const logEl = document.getElementById("log-content");
+  // 显示所有有意义的日志类型
+  const showTypes = ["think", "chat", "kill", "memory", "action"];
+
+  for (let i = 0; i < logs.length; i++) {
+    const entry = logs[i];
+    // 基于自增 id 去重：跳过已显示的日志（避免同一秒内多条日志丢失）
+    if (entry.id !== undefined && entry.id <= lastLogId) continue;
+    if (entry.id === undefined && entry.time <= lastLogTime) continue;
+
+    const logType = entry.type || "system";
+    if (!showTypes.includes(logType)) continue;
+
+    const div = document.createElement("div");
+    div.className = "log-entry";
+
+    const timeStr = new Date(entry.time * 1000).toLocaleTimeString("en-US",
+      {hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit"});
+
+    let cls = "log-system";
+    let prefix = "";
+    if (logType === "think") {
+      cls = "log-think";
+      prefix = "";
+    } else if (logType === "system") {
+      cls = "log-system";
+      prefix = "";
+    } else if (logType === "action") {
+      cls = "log-action";
+      prefix = "";
+    } else if (logType === "chat") {
+      cls = "log-action";
+      prefix = "💬 ";
+    } else if (logType === "kill") {
+      cls = "log-kill";
+      prefix = "💀 ";
+    } else if (logType === "memory") {
+      cls = "log-agent";
+      prefix = "🧠 ";
+    } else if (logType === "llm_raw") {
+      cls = "log-llm-raw";
+      prefix = "";
+    }
+
+    let found = false;
+    for (const name of PERSONA_NAMES) {
+      if (entry.message.includes(name)) {
+        const displayName = getDisplayName(name, state);
+        const parts = entry.message.split(name);
+        div.innerHTML = `<span class="log-time">${timeStr}</span>${prefix}<span class="${cls}">${parts[0]}</span><span class="log-agent">${displayName}</span><span class="${cls}">${parts.slice(1).join(name)}</span>`;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      div.innerHTML = `<span class="log-time">${timeStr}</span>${prefix}<span class="${cls}">${entry.message}</span>`;
+    }
+    logEl.appendChild(div);
+    logEntries++;
+    document.getElementById("log-count").textContent = logEntries + "条";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  // 更新最新日志时间戳 and id
+  lastLogTime = logs[logs.length - 1].time;
+  if (logs[logs.length - 1].id !== undefined) {
+    lastLogId = logs[logs.length - 1].id;
+  }
+}
+
+let deepDiveTarget = null;
+let pendingAutoChatTarget = null;
+
+function setPendingChat(name, phase) {
+  pendingChatTarget = name;
+  pendingChatPhase = phase || "waiting";
+  
+  if (name) {
+    const speechEl = speechBubbles[name];
+    if (speechEl) {
+      speechEl.style.display = "none";
+      speechEl.innerHTML = "";
+    }
+    const tBubbleEl = thoughtBubbles[name];
+    if (tBubbleEl) {
+      tBubbleEl.style.display = "none";
+      tBubbleEl.innerHTML = "";
+    }
+    if (gameState && gameState.chat_bubbles) {
+      delete gameState.chat_bubbles[name];
+    }
+    delete thoughtBubbleCache[name];
+
+    // Show responsive feedback in chat log immediately
+    const chatLog = document.getElementById("chat-log");
+    if (chatLog) {
+      const msgDiv = document.createElement("div");
+      msgDiv.className = "chat-msg-system";
+      msgDiv.style.color = "#a0aec0";
+      msgDiv.style.fontStyle = "italic";
+      msgDiv.style.margin = "4px 0";
+      
+      const targetCN = getDisplayName(name, gameState);
+      if (phase === "moving") {
+        msgDiv.textContent = `[系统] 警长正在前往与 ${targetCN} 交谈...`;
+      } else {
+        msgDiv.textContent = `[系统] 正在等待 ${targetCN} 的回复...`;
+      }
+      chatLog.appendChild(msgDiv);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+  }
+
+  if (gameState) updateAgentList(gameState, !!gameState.director_view);
+}
+
+function clearPendingChat() {
+  pendingChatTarget = null;
+  pendingChatPhase = "";
+  pendingAutoChatTarget = null;
+  pendingCrowBubble = null;
+  blueBubbleCache = {};
+  thoughtBubbleCache = {};
+  if (gameState) updateAgentList(gameState, !!gameState.director_view);
+}
+
+function isChatSuppressedFor(name) {
+  return !!pendingChatTarget && name === pendingChatTarget;
+}
+
+function showLocalCrowQuestion(name, msg) {
+  if (!gameState || !gameState.personas || !gameState.personas["Crow"]) return;
+  pendingCrowBubble = { text: msg, target: name, time: Date.now() / 1000 };
+  if (!gameState.chat_bubbles) gameState.chat_bubbles = {};
+  gameState.chat_bubbles["Crow"] = pendingCrowBubble;
+  updateUI(gameState);
+}
+
+function mergePendingCrowBubble(state) {
+  if (state && state.primary_cta === "gathering") {
+    clearPendingChat();
+    return;
+  }
+  if (!pendingCrowBubble || !pendingChatTarget || !state) return;
+  const now = Date.now() / 1000;
+  if (now - pendingCrowBubble.time > BUBBLE_LIFETIME_SECONDS) {
+    pendingCrowBubble = null;
+    return;
+  }
+  if (!state.chat_bubbles) state.chat_bubbles = {};
+  const serverCrow = state.chat_bubbles["Crow"];
+  if (!serverCrow || serverCrow.target === pendingCrowBubble.target || pendingChatPhase === "waiting") {
+    state.chat_bubbles["Crow"] = pendingCrowBubble;
+  }
+}
+
+function requestNpcOpeningChat(name) {
+  if (!socket || !socket.connected) return;
+  pendingAutoChatTarget = null;
+  setPendingChat(name, "waiting");
+  const msg = SHERIFF_NORMAL_QUESTION;
+  showLocalCrowQuestion(name, msg);
+  socket.emit("detective_chat", {
+    target_name: name,
+    message: msg,
+    is_deep_dive: false,
+  });
+}
+
+function maybeTriggerPendingAutoChat(state) {
+  if (!pendingAutoChatTarget || !state || !state.personas) return;
+  const crow = state.personas["Crow"];
+  const target = state.personas[pendingAutoChatTarget];
+  if (!crow || !target || !target.alive) {
+    pendingAutoChatTarget = null;
+    return;
+  }
+  const dist = Math.abs(crow.x - target.x) + Math.abs(crow.y - target.y);
+  if (dist <= 3) {
+    requestNpcOpeningChat(pendingAutoChatTarget);
+  }
+}
+
+/* Helper function to invoke NPC chat or deep-dive with prompt dialog */
+function invokeChat(name, isDeep, event) {
+  if (event) event.stopPropagation();
+  if (isNight) {
+    alert("夜晚无法交谈！");
+    return;
+  }
+  const state = gameState;
+  if (!state || !state.personas) return;
+  const crow = state.personas["Crow"];
+  const target = state.personas[name];
+  if (!crow || !target || !target.alive) return;
+
+  const dist = Math.abs(crow.x - target.x) + Math.abs(crow.y - target.y);
+  if (dist > 2) {
+    if (socket && socket.connected) {
+      if (!isDeep) {
+        pendingAutoChatTarget = name;
+        setPendingChat(name, "moving");
+      }
+      socket.emit("move_detective_to_agent", { target_name: name });
+    }
+    return;
+  }
+
+  if (isDeep) {
+    deepDiveTarget = name;
+    document.getElementById("deep-dive-prompt-desc").textContent = `正在与 ${getDisplayName(name, state)} 进行深度挖掘对话，请详细输入你想要向其发问的任何深度调查问题：`;
+    document.getElementById("deep-dive-textarea").value = "";
+    document.getElementById("deep-dive-modal").style.display = "flex";
+    
+    document.getElementById("deep-dive-submit-btn").onclick = function() {
+      const msg = document.getElementById("deep-dive-textarea").value.trim();
+      if (!msg) {
+        alert("请输入你要深入挖掘的问题！");
+        return;
+      }
+      submitDeepDiveChat(name, msg);
+    };
+  } else {
+    requestNpcOpeningChat(name);
+  }
+}
+
+function closeDeepDiveModal() {
+  document.getElementById("deep-dive-modal").style.display = "none";
+}
+
+function submitDeepDiveChat(name, msg) {
+  const state = gameState;
+  if (socket && socket.connected) {
+    setPendingChat(name, "waiting");
+    const bubbleEl = speechBubbles["Crow"];
+    const showMsg = "对" + getDisplayName(name, state) + "说：" + msg;
+    if (bubbleEl) {
+      bubbleEl.textContent = showMsg;
+      bubbleEl.style.display = "block";
+      // Robust guard: ensure Crow's speech bubble is styled as a normal white bubble
+      bubbleEl.classList.remove("thought-bubble");
+      bubbleEl.classList.add("speech-bubble");
+      bubbleEl.style.backgroundColor = "";
+      bubbleEl.style.borderColor = "";
+      bubbleEl.style.color = "";
+    }
+    if (state) {
+      if (!state.chat_bubbles) state.chat_bubbles = {};
+      state.chat_bubbles["Crow"] = { text: showMsg, time: Date.now() / 1000 };
+      if (typeof state.deep_dive_remaining === "number") {
+        state.deep_dive_remaining = Math.max(0, state.deep_dive_remaining - 1);
+      }
+      if (typeof state.deep_dive_used === "number") {
+        state.deep_dive_used += 1;
+      }
+      updateUI(state);
+    }
+
+    socket.emit("detective_chat", {
+      target_name: name,
+      message: msg,
+      is_deep_dive: true,
+    });
+  }
+  closeDeepDiveModal();
+}
+
+function jailAgent(name) {
+  if (confirm(`确定要关押 ${getDisplayName(name, gameState)} 吗？这将终结其在小镇的自由行动并确认其嫌疑！`)) {
+    if (socket && socket.connected) {
+      socket.emit("jail_vote_target", { target_name: name });
+    } else {
+      fetch("/api/jail_vote_target", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_name: name })
+      }).then(() => fetchCurrentState());
+    }
+  }
+}
+
+/* Helper function to render Dynamic Sheriff Tasks */
+function updateTasks(state) {
+  const container = document.getElementById("sheriff-tasks");
+  if (!container) return;
+
+  if (Array.isArray(state.daily_tasks) && state.daily_tasks.length > 0) {
+    container.innerHTML = "";
+    state.daily_tasks.forEach(task => {
+      const done = task.complete === true || (Number(task.total) > 0 && Number(task.done) >= Number(task.total));
+      const progress = task.total !== undefined
+        ? `${task.done || 0}/${task.total}`
+        : (done ? "已完成" : "未完成");
+      const div = document.createElement("div");
+      div.className = `task-item ${done ? "completed" : ""}`;
+      div.id = `task-${task.id || "item"}`;
+      div.innerHTML = `
+        <span class="task-name">${task.label || task.name || "任务"}</span>
+        <span class="task-progress">${progress}</span>
+      `;
+      container.appendChild(div);
+    });
+    const ddLeft = state.deep_dive_remaining !== undefined
+      ? state.deep_dive_remaining
+      : ((state.deep_dive_quota || 0) - (state.deep_dive_used || 0));
+    const ddDiv = document.createElement("div");
+    ddDiv.className = `task-item ${ddLeft <= 0 ? "completed" : ""}`;
+    ddDiv.id = "task-deep-dive";
+    ddDiv.innerHTML = `
+      <span class="task-name">深度挖掘次数（可选）</span>
+      <span class="task-progress">${ddLeft} 次</span>
+    `;
+    container.appendChild(ddDiv);
+    return;
+  }
+  
+  let interviewedCount = 0;
+  let totalNpcs = 7;
+  
+  if (state.daily_interview_count !== undefined) {
+    interviewedCount = state.daily_interview_count;
+  } else if (state.interview_progress !== undefined) {
+    interviewedCount = state.interview_progress;
+  } else if (state.interviewed_count !== undefined) {
+    interviewedCount = state.interviewed_count;
+  } else if (state.detective_chats) {
+    interviewedCount = Object.entries(state.detective_chats).filter(([name, count]) => name !== "Crow" && count > 0).length;
+  }
+  
+  if (state.daily_interview_total !== undefined) {
+    totalNpcs = state.daily_interview_total;
+  } else if (state.total_npcs !== undefined) {
+    totalNpcs = state.total_npcs;
+  } else if (state.personas) {
+    totalNpcs = Object.keys(state.personas).filter(name => name !== "Crow").length;
+  }
+
+  const taskList = [];
+  
+  // Day 1 task
+  taskList.push({
+    id: "task-interview",
+    name: "🔍 每日采访所有居民",
+    progress: `${interviewedCount}/${totalNpcs}`,
+    done: interviewedCount >= totalNpcs
+  });
+
+  // Silver Tool Task
+  let showSilverTool = false;
+  let toolProg = 0;
+  let toolTot = 1;
+  let toolDone = false;
+
+  if (state.silver_tool_status !== undefined || state.silver_tool_progress !== undefined || state.silver_tool_acquired !== undefined || state.silver_tool !== undefined) {
+    showSilverTool = true;
+    if (state.silver_tool_acquired !== undefined) {
+      toolDone = !!state.silver_tool_acquired;
+      toolProg = toolDone ? 1 : 0;
+    } else if (state.silver_tool_progress !== undefined) {
+      toolProg = state.silver_tool_progress;
+      toolTot = state.silver_tool_total !== undefined ? state.silver_tool_total : 1;
+      toolDone = toolProg >= toolTot;
+    } else if (state.silver_tool_status !== undefined) {
+      if (typeof state.silver_tool_status === 'number') {
+        toolProg = state.silver_tool_status;
+        toolDone = toolProg >= toolTot;
+      } else {
+        toolDone = state.silver_tool_status === "acquired" || state.silver_tool_status === "completed" || state.silver_tool_status === "true";
+        toolProg = toolDone ? 1 : 0;
+      }
+    } else if (state.silver_tool !== undefined) {
+      toolDone = !!state.silver_tool;
+      toolProg = toolDone ? 1 : 0;
+    }
+  }
+
+  if (state.day >= 2 || showSilverTool) {
+    taskList.push({
+      id: "task-silver-tool",
+      name: "🛠️ 搜寻银制工具",
+      progress: toolDone ? "已完成" : `${toolProg}/${toolTot}`,
+      done: toolDone
+    });
+  }
+
+  // Silver Item Task
+  let showSilverJewelry = false;
+  let jewelryProg = 0;
+  let jewelryTot = 1;
+  let jewelryDone = false;
+
+  if (state.silver_jewelry_status !== undefined || state.silver_jewelry_acquired !== undefined || state.silver_jewelry !== undefined || state.silver_item_progress !== undefined || state.silver_item_status !== undefined || state.silver_item !== undefined) {
+    showSilverJewelry = true;
+    if (state.silver_jewelry_acquired !== undefined) {
+      jewelryDone = !!state.silver_jewelry_acquired;
+      jewelryProg = jewelryDone ? 1 : 0;
+    } else if (state.silver_jewelry_status !== undefined) {
+      if (typeof state.silver_jewelry_status === 'number') {
+        jewelryProg = state.silver_jewelry_status;
+        jewelryDone = jewelryProg >= jewelryTot;
+      } else {
+        jewelryDone = state.silver_jewelry_status === "acquired" || state.silver_jewelry_status === "completed" || state.silver_jewelry_status === "true";
+        jewelryProg = jewelryDone ? 1 : 0;
+      }
+    } else if (state.silver_jewelry !== undefined) {
+      jewelryDone = !!state.silver_jewelry;
+      jewelryProg = jewelryDone ? 1 : 0;
+    } else if (state.silver_item_progress !== undefined) {
+      jewelryProg = state.silver_item_progress;
+      jewelryTot = state.silver_item_total !== undefined ? state.silver_item_total : 1;
+      jewelryDone = jewelryProg >= jewelryTot;
+    } else if (state.silver_item_status !== undefined) {
+      if (typeof state.silver_item_status === 'number') {
+        jewelryProg = state.silver_item_status;
+        jewelryDone = jewelryProg >= jewelryTot;
+      } else {
+        jewelryDone = state.silver_item_status === "acquired" || state.silver_item_status === "completed" || state.silver_item_status === "true";
+        jewelryProg = jewelryDone ? 1 : 0;
+      }
+    } else if (state.silver_item !== undefined) {
+      jewelryDone = !!state.silver_item;
+      jewelryProg = jewelryDone ? 1 : 0;
+    }
+  }
+
+  if (state.day >= 2 || showSilverJewelry) {
+    taskList.push({
+      id: "task-silver-jewelry",
+      name: "🥈 寻找银制物品",
+      progress: jewelryDone ? "已完成" : `${jewelryProg}/${jewelryTot}`,
+      done: jewelryDone
+    });
+  }
+
+  // Bullet Task
+  let showBullet = false;
+  let bulletProg = 0;
+  let bulletTot = 1;
+  let bulletDone = false;
+
+  if (state.silver_bullet_status !== undefined || state.bullet_status !== undefined || state.bullet_progress !== undefined || state.bullet_task !== undefined || state.bullets !== undefined) {
+    showBullet = true;
+    if (state.bullets !== undefined) {
+      bulletProg = state.bullets;
+      bulletDone = bulletProg > 0;
+    } else if (state.bullet_progress !== undefined) {
+      bulletProg = state.bullet_progress;
+      bulletTot = state.bullet_total !== undefined ? state.bullet_total : 1;
+      bulletDone = bulletProg >= bulletTot;
+    } else if (state.bullet_status !== undefined) {
+      if (typeof state.bullet_status === 'number') {
+        bulletProg = state.bullet_status;
+        bulletDone = bulletProg >= bulletTot;
+      } else {
+        bulletDone = state.bullet_status === "acquired" || state.bullet_status === "completed" || state.bullet_status === "true" || state.bullet_status === "ready";
+        bulletProg = bulletDone ? 1 : 0;
+      }
+    } else if (state.silver_bullet_status !== undefined) {
+      bulletDone = state.silver_bullet_status === "ready" || state.silver_bullet_status === "completed" || !!state.silver_bullet_status;
+      bulletProg = bulletDone ? 1 : 0;
+    }
+  }
+
+  if (state.day >= 3 || showBullet) {
+    taskList.push({
+      id: "task-bullet",
+      name: "🔫 制作银弹",
+      progress: bulletDone ? "已完成" : `${bulletProg}/${bulletTot}`,
+      done: bulletDone
+    });
+  }
+
+  // Deep Dive Count Task
+  const ddLeft = state.deep_dive_remaining !== undefined
+    ? state.deep_dive_remaining
+    : ((state.deep_dive_quota || 0) - (state.deep_dive_used || 0));
+
+  taskList.push({
+    id: "task-deep-dive",
+    name: "🔬 深度挖掘次数（可选）",
+    progress: `${ddLeft} 次`,
+    done: ddLeft <= 0
+  });
+
+  container.innerHTML = "";
+  if (taskList.length === 0) {
+    container.innerHTML = `<div style="color: #888; font-style: italic;">暂无今日任务</div>`;
+    return;
+  }
+
+  taskList.forEach(task => {
+    const div = document.createElement("div");
+    div.className = `task-item ${task.done ? 'completed' : ''}`;
+    div.id = task.id;
+    div.innerHTML = `
+      <span class="task-name">${task.name}</span>
+      <span class="task-progress">${task.progress}</span>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function areRequiredTasksCompleted(state) {
+  if (state.can_start_dusk_discussion !== undefined) {
+    return !!state.can_start_dusk_discussion;
+  }
+
+  let interviewedCount = 0;
+  let totalNpcs = 7;
+  
+  if (state.daily_interview_count !== undefined) {
+    interviewedCount = state.daily_interview_count;
+  } else if (state.interview_progress !== undefined) {
+    interviewedCount = state.interview_progress;
+  } else if (state.interviewed_count !== undefined) {
+    interviewedCount = state.interviewed_count;
+  } else if (state.detective_chats) {
+    interviewedCount = Object.entries(state.detective_chats).filter(([name, count]) => name !== "Crow" && count > 0).length;
+  }
+  
+  if (state.daily_interview_total !== undefined) {
+    totalNpcs = state.daily_interview_total;
+  } else if (state.total_npcs !== undefined) {
+    totalNpcs = state.total_npcs;
+  } else if (state.personas) {
+    totalNpcs = Object.keys(state.personas).filter(name => name !== "Crow").length;
+  }
+
+  // 1. Day 1 interview task
+  if (state.day === 1) {
+    if (interviewedCount < totalNpcs) {
+      return false;
+    }
+  }
+
+  // 2. Silver Tool Task
+  if (state.day >= 2) {
+    let toolDone = false;
+    if (state.silver_tool_acquired !== undefined) {
+      toolDone = !!state.silver_tool_acquired;
+    } else if (state.silver_tool_progress !== undefined) {
+      const tot = state.silver_tool_total !== undefined ? state.silver_tool_total : 1;
+      toolDone = state.silver_tool_progress >= tot;
+    } else if (state.silver_tool_status !== undefined) {
+      if (typeof state.silver_tool_status === 'number') {
+        toolDone = state.silver_tool_status >= 1;
+      } else {
+        toolDone = state.silver_tool_status === "acquired" || state.silver_tool_status === "completed" || state.silver_tool_status === "true";
+      }
+    } else if (state.silver_tool !== undefined) {
+      toolDone = !!state.silver_tool;
+    }
+    if (!toolDone) return false;
+  }
+
+  // 3. Silver Item Task
+  if (state.day >= 2) {
+    let jewelryDone = false;
+    if (state.silver_jewelry_acquired !== undefined) {
+      jewelryDone = !!state.silver_jewelry_acquired;
+    } else if (state.silver_jewelry_status !== undefined) {
+      if (typeof state.silver_jewelry_status === 'number') {
+        jewelryDone = state.silver_jewelry_status >= 1;
+      } else {
+        jewelryDone = state.silver_jewelry_status === "acquired" || state.silver_jewelry_status === "completed" || state.silver_jewelry_status === "true";
+      }
+    } else if (state.silver_jewelry !== undefined) {
+      jewelryDone = !!state.silver_jewelry;
+    } else if (state.silver_item_progress !== undefined) {
+      const tot = state.silver_item_total !== undefined ? state.silver_item_total : 1;
+      jewelryDone = state.silver_item_progress >= tot;
+    } else if (state.silver_item_status !== undefined) {
+      if (typeof state.silver_item_status === 'number') {
+        jewelryDone = state.silver_item_status >= 1;
+      } else {
+        jewelryDone = state.silver_item_status === "acquired" || state.silver_item_status === "completed" || state.silver_item_status === "true";
+      }
+    } else if (state.silver_item !== undefined) {
+      jewelryDone = !!state.silver_item;
+    }
+    if (!jewelryDone) return false;
+  }
+
+  // 4. Bullet Task
+  if (state.day >= 3) {
+    let bulletDone = false;
+    if (state.bullets !== undefined) {
+      bulletDone = state.bullets > 0;
+    } else if (state.bullet_progress !== undefined) {
+      const tot = state.bullet_total !== undefined ? state.bullet_total : 1;
+      bulletDone = state.bullet_progress >= tot;
+    } else if (state.bullet_status !== undefined) {
+      if (typeof state.bullet_status === 'number') {
+        bulletDone = state.bullet_status >= 1;
+      } else {
+        bulletDone = state.bullet_status === "acquired" || state.bullet_status === "completed" || state.bullet_status === "true" || state.bullet_status === "ready";
+      }
+    } else if (state.silver_bullet_status !== undefined) {
+      bulletDone = state.silver_bullet_status === "ready" || state.silver_bullet_status === "completed" || !!state.silver_bullet_status;
+    }
+    if (!bulletDone) return false;
+  }
+
+  return true;
+}
+
+function updateAgentList(state, isDirectorSummaryViewed) {
+  const list = document.getElementById("agent-list");
+  const crowList = document.getElementById("crow-card-container");
+  if (!list || !crowList) return;
+  const personas = state.personas || {};
+
+  const activeNames = state.personas ? Object.keys(state.personas) : PERSONA_NAMES;
+
+  const activeCardIds = new Set(activeNames.map(name => "card-" + name.replace(/ /g, "_")));
+  [crowList, list].forEach(container => {
+    Array.from(container.children).forEach(card => {
+      if (!activeCardIds.has(card.id)) {
+        container.removeChild(card);
+      }
+    });
+  });
+
+  for (const name of activeNames) {
+    const safeName = name.replace(/ /g, "_");
+    const cardId = "card-" + safeName;
+    let card = document.getElementById(cardId);
+    let isNew = false;
+
+    if (!card) {
+      card = document.createElement("div");
+      card.id = cardId;
+      isNew = true;
+    }
+
+    card.className = "agent-card";
+    if (selectedAgent === name) {
+      card.classList.add("selected");
+    }
+    const p = personas[name] || {};
+    if (!p.alive) {
+      card.classList.add("dead");
+    }
+
+    if (isNew) {
+      card.addEventListener("click", (event) => {
+        if (event.target.closest("button")) return;
+        focusAgent(name);
+        selectAgent(name);
+      }, true);
+    }
+
+    let roleVal = "villager";
+    if (name === "Crow") {
+      roleVal = "detective";
+    } else if (Array.isArray(state.werewolf_names) && state.werewolf_names.includes(name)) {
+      roleVal = "werewolf";
+    } else if (isDirectorSummaryViewed) {
+      roleVal = p.true_role || p.role || "villager";
+    } else {
+      roleVal = p.role || p.public_role || "villager";
+    }
+
+    let roleClass = "role-villager";
+    let roleLabel = "村民";
+    if (roleVal === "detective" || roleVal === "侦探" || roleVal === "警长" || name === "Crow") {
+      roleClass = "role-detective";
+      roleLabel = "警长";
+    } else if (roleVal === "werewolf" || roleVal === "狼人") {
+      roleClass = "role-werewolf";
+      roleLabel = "狼人";
+    }
+
+    const bulbHtml = (p.alive && p.has_new_clue) ? `<span id="clue-bulb-${safeName}" class="clue-bulb" style="margin-left: 6px; font-size: 13px; filter: drop-shadow(0 0 3px #ffd700); cursor: help;" title="有新线索">💡</span>` : '';
+
+    const modelName = p.model || "?";
+    const displayName = getDisplayName(name, state);
+    const modelFailed = !!(p.llm_error || p.last_error || p.response_error || (p.last_decision && p.last_decision.ok === false));
+    const modelHealthHtml = modelFailed
+      ? `<span class="model-health-warning" style="color:#ffdd57;font-weight:bold;margin-right:3px;" title="最近一次模型回复未生效">?</span>`
+      : "";
+
+    let chatsUsed = 0;
+    if (p.chat_count !== undefined) {
+      chatsUsed = p.chat_count;
+    } else if (p.detective_chats !== undefined) {
+      chatsUsed = p.detective_chats;
+    } else if (state.detective_chats && state.detective_chats[name] !== undefined) {
+      chatsUsed = state.detective_chats[name];
+    }
+
+    let normalLimit = 1;
+    if (p.chat_limit !== undefined) {
+      normalLimit = p.chat_limit;
+    } else if (state.detective_normal_chat_limit !== undefined) {
+      normalLimit = state.detective_normal_chat_limit;
+    } else if (state.config && state.config.conversation && state.config.conversation.detective_normal_chat_limit !== undefined) {
+      normalLimit = state.config.conversation.detective_normal_chat_limit;
+    }
+
+    let chatsRemaining = Math.max(0, normalLimit - chatsUsed);
+    if (p.chats_remaining !== undefined) {
+      chatsRemaining = p.chats_remaining;
+    }
+
+    let ddQuota = 0;
+    if (p.deep_dive_quota !== undefined) {
+      ddQuota = p.deep_dive_quota;
+    } else if (state.deep_dive_quota !== undefined) {
+      if (typeof state.deep_dive_quota === 'object' && state.deep_dive_quota !== null) {
+        ddQuota = state.deep_dive_quota[name] !== undefined ? state.deep_dive_quota[name] : 0;
+      } else {
+        ddQuota = state.deep_dive_quota;
+      }
+    }
+
+    let ddUsed = 0;
+    if (p.deep_dive_used !== undefined) {
+      ddUsed = p.deep_dive_used;
+    } else if (state.deep_dive_used !== undefined) {
+      if (typeof state.deep_dive_used === 'object' && state.deep_dive_used !== null) {
+        ddUsed = state.deep_dive_used[name] !== undefined ? state.deep_dive_used[name] : 0;
+      } else {
+        ddUsed = state.deep_dive_used;
+      }
+    }
+
+    let ddRemaining = Math.max(0, ddQuota - ddUsed);
+    if (p.deep_dive_remaining !== undefined) {
+      ddRemaining = p.deep_dive_remaining;
+    } else if (state.deep_dive_remaining !== undefined) {
+      ddRemaining = state.deep_dive_remaining;
+    }
+
+    const globalDdRemaining = state.deep_dive_remaining !== undefined
+      ? state.deep_dive_remaining
+      : (state.deep_dive_quota || 0) - (state.deep_dive_used || 0);
+
+    const chatAvailable = p.chat_available !== undefined ? !!p.chat_available : chatsRemaining > 0;
+    const pendingPhase = pendingChatTarget === name ? pendingChatPhase : "";
+    const isPendingChat = !!pendingChatTarget;
+    const isGathering = state.primary_cta === "gathering";
+    const chatBtnDisabled = (!chatAvailable || isNight || isDusk || isPendingChat || isGathering) ? "disabled" : "";
+    const chatBtnLabel = pendingPhase
+      ? (pendingPhase === "moving" ? "前往中..." : "等待回复...")
+      : "交谈";
+    const chatBtnBg = pendingPhase ? "#606a78" : "#4a9eff";
+    const chatBtnCursor = isPendingChat ? "wait" : "pointer";
+
+    // Signature-based diffing to prevent hover flicker
+    const signature = `${name}|${displayName}|${p.alive}|${p.has_new_clue}|${roleVal}|${modelName}|${modelFailed}|${selectedAgent === name}|${chatAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}`;
+    const targetContainer = name === "Crow" ? crowList : list;
+    if (card.dataset.renderSignature === signature) {
+      if (card.parentElement !== targetContainer) {
+        targetContainer.appendChild(card);
+      }
+      continue;
+    }
+    card.dataset.renderSignature = signature;
+
+    let actionButtonsHtml = "";
+    if (name !== "Crow" && p.alive && !p.jailed) {
+      let buttonsListHtml = "";
+      if (chatAvailable) {
+        buttonsListHtml = `
+          <button id="chat-btn-${safeName}" class="chat-btn-npc" onclick="invokeChat('${name}', false, event)" ${chatBtnDisabled} style="flex: 1; padding: 4px 6px; font-size: 11px; background: ${chatBtnBg}; color: #fff; border: none; border-radius: 4px; cursor: ${chatBtnCursor}; font-weight: bold;">
+            ${chatBtnLabel}
+          </button>
+        `;
+      } else if (globalDdRemaining > 0) {
+        const deepDiveAvailable = p.deep_dive_available !== undefined ? !!p.deep_dive_available : ddRemaining > 0;
+        const ddBtnDisabled = (!deepDiveAvailable || isNight || isDusk || isGathering) ? "disabled" : "";
+        const deepDiveLabel = deepDiveAvailable ? "深挖" : "无深挖";
+        buttonsListHtml = `
+          <button id="dd-btn-${safeName}" class="dd-btn-npc" onclick="invokeChat('${name}', true, event)" ${ddBtnDisabled} style="flex: 1; padding: 4px 6px; font-size: 11px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+            ${deepDiveLabel} (${ddRemaining})
+          </button>
+        `;
+      }
+      
+      if (buttonsListHtml) {
+        actionButtonsHtml = `
+          <div class="agent-actions" style="margin-top: 8px; display: flex; gap: 6px;">
+            ${buttonsListHtml}
+          </div>
+        `;
+      }
+    }
+
+    const historyBtnHtml = name === "Crow" ? "" : `
+      <button id="history-btn-${safeName}" class="history-btn" onclick="showAgentHistory('${name}', event)" style="float:right; margin-top:-2px; padding:2px 8px; font-size:10px; background:#5f9e72; color:#fff; border:1px solid #79b88a; border-radius:4px; cursor:pointer;">详细</button>
+    `;
+
+    card.innerHTML = `
+      ${historyBtnHtml}
+      ${modelHealthHtml}<span class="name" style="color:${PERSONA_LABEL_COLORS[name] || '#fff'}">${displayName}</span>
+      ${bulbHtml}
+      <span class="role-tag ${roleClass}">${roleLabel}</span>
+      <span class="model-tag" style="font-size:9px;color:#ffdd57;margin-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px;display:inline-block;vertical-align:middle;" title="${modelName}">${modelName}</span>
+      ${actionButtonsHtml}
+    `;
+
+    if (card.parentElement !== targetContainer) {
+      targetContainer.appendChild(card);
+    }
+  }
+}
+
+function selectAgent(name) {
+  if (isNight) return;
+  const p = (gameState && gameState.personas && gameState.personas[name]) || {};
+  if (!p.alive) return;
+  if (name === "Crow") return;
+
+  selectedAgent = name;
+  document.querySelectorAll(".agent-card").forEach(c => c.classList.remove("selected"));
+  const card = document.getElementById("card-" + name.replace(/ /g, "_"));
+  if (card) card.classList.add("selected");
+
+  document.getElementById("chat-target").textContent = "正在查看：" + getDisplayName(name, gameState);
+  if (gameState) updateUI(gameState);
+}
+
+function summarizeThoughtForDisplay(text, maxChars = 100) {
+  const thought = String(text || "").replace(/\s+/g, " ").trim();
+  if (thought.length <= maxChars) return thought;
+
+  const clauses = thought.match(/[^。.!！?？;；]+[。.!！?？;；]?/g) || [];
+  let summary = "";
+  for (const clause of clauses) {
+    const candidate = summary + clause.trim();
+    if (candidate.length > maxChars) break;
+    summary = candidate;
+  }
+  return summary || "正在整理当前情况。";
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function actionTypeLabel(type) {
+  const labels = {
+    move_to: "前往",
+    stay: "停留",
+    observe: "观察",
+    inspect: "检查",
+    work: "工作",
+    rest: "休息",
+    investigate: "调查",
+    socialize: "交谈",
+    talk: "交谈",
+    hide: "隐藏"
+  };
+  return labels[String(type || "").trim()] || "行动";
+}
+
+function compactBubbleText(text, maxChars = 58) {
+  return summarizeThoughtForDisplay(localizePersonNames(replaceEnglishNames(text || "", gameState), gameState), maxChars);
+}
+
+function buildNpcThoughtBubble(name, persona, state) {
+  if (name === "Crow") return "";
+  if (String(name).trim().toLowerCase() === "crow") return "";
+  const p = persona || {};
+  const runtime = String(p.runtime_state || "");
+  const activeForPlan = runtime === "thinking" || runtime === "planning";
+  const activeForAction = runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0;
+  if (!activeForPlan && !activeForAction) return "";
+
+  const displayName = getDisplayName(name, state);
+  const owner = `<div class="bubble-owner">${escapeHtml(displayName)}</div>`;
+
+  if (activeForAction) {
+    const action = compactBubbleText(p.action || "开始行动。", 70);
+    const type = actionTypeLabel(p.action_type);
+    const where = p.action_target_location_label || p.location_label || "";
+    const whereText = where ? `，目标：${where}` : "";
+    const sentence = `${type}：${action}${whereText}`;
+    return `${owner}<div class="bubble-row"><span class="bubble-key">行动：</span>${escapeHtml(sentence)}</div>`;
+  }
+
+  const rawThoughtText = freshThoughtForDisplay(name, p.thought_summary || p.thought || "", p);
+  const thought = compactBubbleText(rawThoughtText || "正在整理当前情况。", 70);
+  const planSource = p.action_plan || p.action || "";
+  const plan = compactBubbleText(planSource || "先判断下一步怎么做。", 70);
+  return `${owner}<div class="bubble-row"><span class="bubble-key">思考：</span>${escapeHtml(thought)}</div><div class="bubble-row"><span class="bubble-key">计划：</span>${escapeHtml(plan)}</div>`;
+}
+
+function freshThoughtForDisplay(name, rawText, persona) {
+  if (name === "Crow" || name === "克罗" || String(name).trim().toLowerCase() === "crow" || String(name).trim() === "克罗") {
+    delete thoughtBubbleCache[name];
+    return "";
+  }
+  const text = String(rawText || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    delete thoughtBubbleCache[name];
+    return "";
+  }
+  const now = Date.now() / 1000;
+  const thoughtTime = persona && Number(persona.thought_time || 0);
+  if (thoughtTime > 0 && now - thoughtTime > BUBBLE_LIFETIME_SECONDS) {
+    delete thoughtBubbleCache[name];
+    return "";
+  }
+  const activeNow = !!(
+    persona &&
+    (persona.conversation_with || persona.path_len > 0 || ["thinking", "planning", "moving", "acting"].includes(persona.runtime_state))
+  );
+  const cached = thoughtBubbleCache[name];
+  if (!cached || cached.text !== text || (thoughtTime > 0 && cached.time !== thoughtTime)) {
+    thoughtBubbleCache[name] = { text, time: thoughtTime || now };
+    return text;
+  }
+  if (!activeNow && now - cached.time > BUBBLE_LIFETIME_SECONDS) {
+    return "";
+  }
+  return cached.text;
+}
+
+function bubbleSideByPositions(name, target, state) {
+  const s = state || gameState;
+  if (s && s.personas) {
+    let p1 = s.personas[name];
+    let p2 = s.personas[target];
+    if (p1 && p2) {
+      p1 = Object.assign({}, p1);
+      p2 = Object.assign({}, p2);
+      const sp1 = sprites[name];
+      const sp2 = sprites[target];
+      if (sp1) { p1.x = sp1.x; p1.y = sp1.y; }
+      if (sp2) { p2.x = sp2.x; p2.y = sp2.y; }
+      if (typeof p1.x === 'number' && typeof p2.x === 'number' && typeof p1.y === 'number' && typeof p2.y === 'number') {
+        const dx = p1.x - p2.x;
+        const dy = p1.y - p2.y;
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          if (dx !== 0) return p1.x < p2.x ? "left" : "right";
+        } else {
+          if (dy !== 0) return p1.y > p2.y ? "left" : "right";
+        }
+      }
+    }
+  }
+  return name.localeCompare(target) < 0 ? "left" : "right";
+}
+
+function bubbleSideFor(name, bubbles, state) {
+  const s = state || gameState;
+  const payload = bubbles[name] || {};
+  let target = payload.target || "";
+  if (!target && s && s.personas && s.personas[name]) {
+    target = s.personas[name].conversation_with || "";
+  }
+  if (!target) {
+    const incoming = Object.entries(bubbles || {}).find(([speaker, b]) => speaker !== name && b && b.target === name);
+    if (incoming) target = incoming[0];
+  }
+  if (!target && s && s.personas) {
+    const partner = Object.entries(s.personas).find(([otherName, otherP]) => otherName !== name && otherP.alive && otherP.conversation_with === name);
+    if (partner) target = partner[0];
+  }
+  if (!target && s && s.personas && s.personas[name]) {
+    const p1 = s.personas[name];
+    if (p1 && typeof p1.x === 'number' && typeof p1.y === 'number') {
+      let closestNpc = null;
+      let minDist = Infinity;
+      for (const [otherName, p2] of Object.entries(s.personas)) {
+        if (otherName === name || otherName === "Crow" || !p2.alive) continue;
+        if (p2 && typeof p2.x === 'number' && typeof p2.y === 'number') {
+          const dist = Math.abs(p1.x - p2.x) + Math.abs(p1.y - p2.y);
+          if (dist < minDist) {
+            minDist = dist;
+            closestNpc = otherName;
+          }
+        }
+      }
+      if (closestNpc && minDist <= 3) {
+        target = closestNpc;
+      }
+    }
+  }
+  if (target) {
+    const s = state || gameState;
+    if (s && s.personas && s.personas[target]) return bubbleSideByPositions(name, target, s);
+  }
+  return "center";
+}
+
+function applyBubbleSide(el, side) {
+  el.classList.toggle("bubble-side-left", side === "left");
+  el.classList.toggle("bubble-side-right", side === "right");
+  el.style.transform = side === "left"
+    ? "translate(-100%, -100%)"
+    : (side === "right" ? "translate(0, -100%)" : "translate(-50%, -100%)");
+}
+
+function bubbleSideOffset(side) {
+  if (side === "left") return -64;
+  if (side === "right") return 64;
+  return 0;
+}
+
+function bubbleSpeechText(payload) {
+  if (!payload) return "";
+  let text = typeof payload === "string" ? payload : (payload.text || "");
+  text = replaceEnglishNames(text, gameState);
+  const target = typeof payload === "object" ? payload.target : "";
+  if (!target) return text;
+
+  // Clean up any existing prefix starting with "对" and ending with "说：" or "说:"
+  const prefixRegex = /^对\s*(.*?)\s*说[：:]\s*/;
+  while (prefixRegex.test(text)) {
+    text = text.replace(prefixRegex, "");
+  }
+
+  const targetDisplayName = getDisplayName(target, gameState);
+  return `对${targetDisplayName}说：${text}`;
+}
+
+function replaceEnglishNames(text, state) {
+  if (!text) return "";
+  let out = String(text);
+  const mapping = {
+    "Arthur Burton": "亚瑟",
+    "Crow": "克罗",
+    "Isabella Rodriguez": "伊莎贝拉",
+    "Klaus Mueller": "克劳斯",
+    "Maria Lopez": "玛利亚",
+    "Sam Moore": "山姆",
+    "Jane Moreno": "简",
+    "Mei Lin": "林梅",
+    "Arthur": "亚瑟",
+    "Isabella": "伊莎贝拉",
+    "Klaus": "克劳斯",
+    "Maria": "玛利亚",
+    "Sam": "山姆",
+    "Jane": "简",
+    "Mei": "林梅",
+    "Crow": "克罗",
+    "Moreno": "简",
+    "Hobbs Cafe": "霍布斯咖啡馆",
+    "The Rose and Crown Pub": "玫瑰与皇冠酒吧",
+    "The Rose and Crown": "玫瑰与皇冠酒吧",
+    "Oak Hill College": "橡树山学院",
+    "The Willows Market and Pharmacy": "柳树市场药房",
+    "The Willows Market": "柳树市场药房",
+    "Harvey Oak Supply Store": "哈维橡树五金店",
+    "Harvey Oak Supply": "哈维橡树五金店",
+    "Johnson Park": "约翰逊公园",
+    "The Rose and Crown Pub kitchen": "酒吧厨房",
+    "The Rose and Crown Pub behind the bar counter": "酒吧吧台后",
+    "behind the bar counter": "吧台后",
+    "behind the supply store counter": "五金店柜台后",
+    "behind the cafe counter": "咖啡馆柜台后",
+    "Johnson Park east plaza": "约翰逊公园东广场",
+    "artist's co-living space": "艺术家共享公寓",
+    "Dorm for Oak Hill College": "学院宿舍",
+    "Ryan Park's apartment": "莱恩的公寓",
+    "Giorgio Rossi's apartment": "乔治奥的公寓",
+    "Carlos Gomez's apartment": "卡洛斯的公寓",
+    "Sam Moore's Home": "山姆之家",
+    "Isabella Rodriguez's apartment": "伊莎贝拉公寓",
+    "Arthur Burton's Home": "亚瑟之家",
+    "Klaus Mueller's Home": "克劳斯之家",
+    "Isabella Rodriguez's Home": "伊莎贝拉之家",
+    "Crow's Sheriff Residence": "警长办公室",
+    "Crow's Jail Cell A": "牢房1",
+    "Crow's Jail Cell B": "牢房2",
+    "prison_cell_1": "监狱牢房1",
+    "prison_cell_2": "监狱牢房2",
+    "sheriff_office": "警长办公室",
+    "Abigail Chen": "阿比盖尔·陈",
+    "Adam Smith": "亚当·史密斯",
+    "Ayesha Khan": "艾莎·汗",
+    "Carlos Gomez": "卡洛斯·戈麦斯",
+    "Carmen Ortiz": "卡门·奥尔蒂斯",
+    "Eddy Lin": "林艾迪",
+    "Francisco Lopez": "弗朗西斯科·洛佩兹",
+    "Giorgio Rossi": "乔治奥·罗西",
+    "Hailey Johnson": "海莉·约翰逊",
+    "Jennifer Moore": "詹妮弗·摩尔",
+    "John Lin": "林约翰",
+    "Latoya Williams": "拉托娅·威廉姆斯",
+    "Rajiv Patel": "拉吉夫·帕特尔",
+    "Ryan Park": "莱恩·帕克",
+    "Tamara Taylor": "塔玛拉·泰勒",
+    "Tom Moreno": "汤姆·莫雷诺",
+    "Wolfgang Schulz": "沃尔夫冈·舒尔茨",
+    "Yuriko Yamamoto": "山本百合子",
+    "Abigail": "阿比盖尔",
+    "Adam": "亚当",
+    "Ayesha": "艾莎",
+    "Carlos": "卡洛斯",
+    "Carmen": "卡门",
+    "Eddy": "艾迪",
+    "Francisco": "弗朗西斯科",
+    "Giorgio": "乔治奥",
+    "Hailey": "海莉",
+    "Jennifer": "詹妮弗",
+    "John": "约翰",
+    "Latoya": "拉托娅",
+    "Rajiv": "拉吉夫",
+    "Ryan": "莱恩",
+    "Tamara": "塔玛拉",
+    "Tom": "汤姆",
+    "Wolfgang": "沃尔夫冈",
+    "Yuriko": "百合子"
+  };
+  const keys = Object.keys(mapping).sort((a, b) => b.length - a.length);
+  for (const k of keys) {
+    out = out.split(k).join(mapping[k]);
+  }
+  return out;
+}
+
+function localizePersonNames(text, state) {
+  let out = String(text || "");
+  const source = state || gameState || {};
+  const names = new Set(PERSONA_NAMES);
+  if (source.personas) {
+    Object.keys(source.personas).forEach(name => names.add(name));
+  }
+  Array.from(names).sort((a, b) => b.length - a.length).forEach(name => {
+    const display = getDisplayName(name, source);
+    if (display && display !== name) {
+      if (/^[A-Za-z]+$/.test(name)) {
+        out = out.replace(new RegExp(`\\b${name}\\b`, "g"), display);
+      } else {
+        out = out.split(name).join(display);
+      }
+    }
+  });
+  return out;
+}
+
+function startNpcChat() {
+  if (!selectedAgent) return;
+  if (socket && socket.connected) {
+    pendingAutoChatTarget = selectedAgent;
+    setPendingChat(selectedAgent, "moving");
+    socket.emit("move_detective_to_agent", { target_name: selectedAgent });
+  }
+}
+
+function focusAgent(name) {
+  if (!gameState || !gameState.personas || !sceneRef) return;
+  const p = gameState.personas[name];
+  if (!p) return;
+  focusedAgent = name;
+  sceneRef.cameras.main.centerOn(p.x * TILE_W, p.y * TILE_W);
+  resolveBubbleLayout();
+}
+
+function sendChat() {
+  const input = document.getElementById("chat-input");
+  const msg = input.value.trim();
+  if (!msg || !selectedAgent) return;
+
+  // Set pending state first to disable inputs and update button state
+  setPendingChat(selectedAgent, "waiting");
+
+  // Immediately render Crow's speech bubble on screen for maximum responsiveness
+  if (gameState && gameState.personas["Crow"]) {
+    const bubbleEl = speechBubbles["Crow"];
+    const showMsg = "对" + getDisplayName(selectedAgent, gameState) + "说：" + msg;
+    if (bubbleEl) {
+      bubbleEl.textContent = showMsg;
+      bubbleEl.style.display = "block";
+      // Robust guard: ensure Crow's speech bubble is styled as a normal white bubble
+      bubbleEl.classList.remove("thought-bubble");
+      bubbleEl.classList.add("speech-bubble");
+      bubbleEl.style.backgroundColor = "";
+      bubbleEl.style.borderColor = "";
+      bubbleEl.style.color = "";
+    }
+    if (!gameState.chat_bubbles) gameState.chat_bubbles = {};
+    gameState.chat_bubbles["Crow"] = { text: showMsg, time: Date.now() / 1000 };
+  }
+
+  const isDeep = document.getElementById("deep-dive").checked;
+
+  if (socket && socket.connected) {
+    socket.emit("detective_chat", {
+      target_name: selectedAgent,
+      message: msg,
+      is_deep_dive: isDeep,
+    });
+  }
+
+  input.value = "";
+}
+
+function showRulesModal() {
+  document.getElementById("rules-modal").style.display = "flex";
+}
+
+function closeRulesModal() {
+  document.getElementById("rules-modal").style.display = "none";
+}
+
+function addChatMsg(who, msg, isReply) {
+  const log = document.getElementById("chat-log");
+  const div = document.createElement("div");
+  div.className = isReply ? "chat-msg-other" : "chat-msg-detective";
+  div.textContent = getDisplayName(who, gameState) + ": " + msg;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function showAnnounce() {
+  const guess = prompt("请输入你认为的狼人姓名：");
+  if (!guess) return;
+  if (socket && socket.connected) {
+    socket.emit("detective_announce", {werewolf_guess: guess});
+  }
+}
+
+function showGameOver(data) {
+  const overlay = document.getElementById("game-over-overlay");
+  const text = document.getElementById("game-over-text");
+  const sub = document.getElementById("game-over-sub");
+
+  if (data.winner === "villagers") {
+    text.textContent = "村民胜利！";
+    text.style.color = "#4a9eff";
+    sub.textContent = "警长正确指认了 " + (getWerewolfDisplayNames(data) || "狼人") + "！";
+  } else {
+    text.textContent = "狼人获胜！";
+    text.style.color = "#e94560";
+    sub.textContent = "狼人 " + (getWerewolfDisplayNames(data) || "") + " 笑到了最后...";
+  }
+  overlay.classList.add("show");
+}
+
+// ==================== PHASER GAME ====================
+const config = {
+  type: Phaser.AUTO,
+  width: window.innerWidth - 320,
+  height: window.innerHeight - 160,
+  parent: "game-container",
+  pixelArt: true,
+  physics: {
+    default: "arcade",
+    arcade: { gravity: { y: 0 } }
+  },
+  scene: {
+    preload: preload,
+    create: create,
+    update: update
+  }
+};
+
+phaserGame = new Phaser.Game(config);
+let cursors;
+let wasd;
+let map;
+let sceneRef;
+let focusedAgent = null;
+
+function preload() {
+  // 地图资源
+  this.load.image("blocks_1", "/static/assets/the_ville/visuals/map_assets/blocks/blocks_1.png");
+  this.load.image("walls", "/static/assets/the_ville/visuals/map_assets/v1/Room_Builder_32x32.png");
+  this.load.image("interiors_pt1", "/static/assets/the_ville/visuals/map_assets/v1/interiors_pt1.png");
+  this.load.image("interiors_pt2", "/static/assets/the_ville/visuals/map_assets/v1/interiors_pt2.png");
+  this.load.image("interiors_pt3", "/static/assets/the_ville/visuals/map_assets/v1/interiors_pt3.png");
+  this.load.image("interiors_pt4", "/static/assets/the_ville/visuals/map_assets/v1/interiors_pt4.png");
+  this.load.image("interiors_pt5", "/static/assets/the_ville/visuals/map_assets/v1/interiors_pt5.png");
+  this.load.image("CuteRPG_Field_B", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Field_B.png");
+  this.load.image("CuteRPG_Field_C", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Field_C.png");
+  this.load.image("CuteRPG_Harbor_C", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Harbor_C.png");
+  this.load.image("CuteRPG_Village_B", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Village_B.png");
+  this.load.image("CuteRPG_Forest_B", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Forest_B.png");
+  this.load.image("CuteRPG_Desert_C", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Desert_C.png");
+  this.load.image("CuteRPG_Mountains_B", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Mountains_B.png");
+  this.load.image("CuteRPG_Desert_B", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Desert_B.png");
+  this.load.image("CuteRPG_Forest_C", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Forest_C.png");
+
+  this.load.tilemapTiledJSON("map", "/static/assets/the_ville/visuals/the_ville_jan7.json");
+
+  // 加载所有角色独立的美术资源（atlas PNG + JSON）
+  for (const name of ALL_RESIDENT_NAMES) {
+    const key = "char_" + name.replace(/ /g, "_");
+    const pngName = name.replace(/ /g, "_");
+    this.load.atlas(key,
+      "/static/assets/characters/" + pngName + ".png",
+      "/static/assets/characters/atlas.json"
+    );
+  }
+}
+
+function create() {
+  sceneRef = this;
+  map = this.make.tilemap({ key: "map" });
+
+  const collisions = map.addTilesetImage("blocks", "blocks_1");
+  const walls = map.addTilesetImage("Room_Builder_32x32", "walls");
+  const interiors_pt1 = map.addTilesetImage("interiors_pt1", "interiors_pt1");
+  const interiors_pt2 = map.addTilesetImage("interiors_pt2", "interiors_pt2");
+  const interiors_pt3 = map.addTilesetImage("interiors_pt3", "interiors_pt3");
+  const interiors_pt4 = map.addTilesetImage("interiors_pt4", "interiors_pt4");
+  const interiors_pt5 = map.addTilesetImage("interiors_pt5", "interiors_pt5");
+  const CuteRPG_Field_B = map.addTilesetImage("CuteRPG_Field_B", "CuteRPG_Field_B");
+  const CuteRPG_Field_C = map.addTilesetImage("CuteRPG_Field_C", "CuteRPG_Field_C");
+  const CuteRPG_Harbor_C = map.addTilesetImage("CuteRPG_Harbor_C", "CuteRPG_Harbor_C");
+  const CuteRPG_Village_B = map.addTilesetImage("CuteRPG_Village_B", "CuteRPG_Village_B");
+  const CuteRPG_Forest_B = map.addTilesetImage("CuteRPG_Forest_B", "CuteRPG_Forest_B");
+  const CuteRPG_Desert_C = map.addTilesetImage("CuteRPG_Desert_C", "CuteRPG_Desert_C");
+  const CuteRPG_Mountains_B = map.addTilesetImage("CuteRPG_Mountains_B", "CuteRPG_Mountains_B");
+  const CuteRPG_Desert_B = map.addTilesetImage("CuteRPG_Desert_B", "CuteRPG_Desert_B");
+  const CuteRPG_Forest_C = map.addTilesetImage("CuteRPG_Forest_C", "CuteRPG_Forest_C");
+
+  const tileset_group = [
+    CuteRPG_Field_B, CuteRPG_Field_C, CuteRPG_Harbor_C, CuteRPG_Village_B,
+    CuteRPG_Forest_B, CuteRPG_Desert_C, CuteRPG_Mountains_B, CuteRPG_Desert_B, CuteRPG_Forest_C,
+    interiors_pt1, interiors_pt2, interiors_pt3, interiors_pt4, interiors_pt5, walls
+  ];
+
+  map.createLayer("Bottom Ground", tileset_group, 0, 0);
+  map.createLayer("Exterior Ground", tileset_group, 0, 0);
+  map.createLayer("Exterior Decoration L1", tileset_group, 0, 0);
+  map.createLayer("Exterior Decoration L2", tileset_group, 0, 0);
+  map.createLayer("Interior Ground", tileset_group, 0, 0);
+  map.createLayer("Wall", [CuteRPG_Field_C, walls], 0, 0);
+  map.createLayer("Interior Furniture L1", tileset_group, 0, 0);
+  map.createLayer("Interior Furniture L2 ", tileset_group, 0, 0);
+  const fg1 = map.createLayer("Foreground L1", tileset_group, 0, 0);
+  const fg2 = map.createLayer("Foreground L2", tileset_group, 0, 0);
+  fg1.setDepth(2);
+  fg2.setDepth(2);
+
+  const collisionsLayer = map.createLayer("Collisions", collisions, 0, 0);
+  // tileset 没有 tileproperties，用 setCollisionBetween 标记所有非空 tile 为碰撞
+  collisionsLayer.setCollisionBetween(1, 99999);
+  collisionsLayer.setDepth(-1);
+
+  // 相机设置 - 不使用 cameraTarget sprite，直接用键盘/鼠标控制
+  const camera = this.cameras.main;
+  camera.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+  // 初始位置：广场聚集点 (57,35)，6 个 NPC 出生位置
+  camera.scrollX = 57 * TILE_W - camera.width / 2;
+  camera.scrollY = 35 * TILE_W - camera.height / 2;
+
+  cursors = this.input.keyboard.createCursorKeys();
+  wasd = this.input.keyboard.addKeys("W,A,S,D");
+
+  // 为每个角色创建精灵（使用独立美术资源）
+  for (const name of PERSONA_NAMES) {
+    const key = PERSONA_ASSET_KEYS[name];
+    // 初始放在地图外（不可见），等收到 gameState 后再定位
+    const sprite = this.physics.add.sprite(-100, -100, key, "down")
+      .setSize(30, 40).setOffset(0, 24);
+    sprite.setDepth(1.5);
+    sprite.setVisible(false); // 收到状态前隐藏
+
+    sprites[name] = sprite;
+
+    // Name label
+    nameLabels[name] = this.add.text(0, 0, getDisplayName(name), {
+      font: "bold 11px monospace",
+      fill: PERSONA_LABEL_COLORS[name] || "#ffffff",
+      backgroundColor: "#000000cc",
+      padding: { x: 4, y: 2 }
+    }).setDepth(22).setOrigin(0.5).setVisible(false);
+
+    // Model name label (below name label)
+    modelLabels[name] = this.add.text(0, 0, "", {
+      font: "bold 9px monospace",
+      fill: "#ffdd57",
+      backgroundColor: "#333333ee",
+      padding: { x: 3, y: 1 }
+    }).setDepth(21).setOrigin(0.5).setVisible(false);
+
+    // Speech bubble DOM element
+    const bubble = document.createElement("div");
+    bubble.className = "speech-bubble";
+    bubble.id = "bubble-" + name.replace(/ /g, "_");
+    document.getElementById("bubble-layer").appendChild(bubble);
+    speechBubbles[name] = bubble;
+
+    // Thought bubble DOM element
+    if (name !== "Crow") {
+      if (String(name).trim().toLowerCase() !== "crow") {
+        const tBubble = document.createElement("div");
+        tBubble.className = "thought-bubble";
+        tBubble.id = "thought-bubble-" + name.replace(/ /g, "_");
+        document.getElementById("bubble-layer").appendChild(tBubble);
+        thoughtBubbles[name] = tBubble;
+      }
+    }
+  }
+
+  // 为每个角色创建行走动画
+  for (const name of PERSONA_NAMES) {
+    const key = PERSONA_ASSET_KEYS[name];
+    this.anims.create({
+      key: key + "-left-walk",
+      frames: this.anims.generateFrameNames(key, { prefix: "left-walk.", start: 0, end: 3, zeroPad: 3 }),
+      frameRate: 6, repeat: -1
+    });
+    this.anims.create({
+      key: key + "-right-walk",
+      frames: this.anims.generateFrameNames(key, { prefix: "right-walk.", start: 0, end: 3, zeroPad: 3 }),
+      frameRate: 6, repeat: -1
+    });
+    this.anims.create({
+      key: key + "-front-walk",
+      frames: this.anims.generateFrameNames(key, { prefix: "down-walk.", start: 0, end: 3, zeroPad: 3 }),
+      frameRate: 6, repeat: -1
+    });
+    this.anims.create({
+      key: key + "-back-walk",
+      frames: this.anims.generateFrameNames(key, { prefix: "up-walk.", start: 0, end: 3, zeroPad: 3 }),
+      frameRate: 6, repeat: -1
+    });
+  }
+
+  // Night overlay
+  nightOverlay = this.add.graphics();
+  nightOverlay.setDepth(4);
+  nightOverlay.setVisible(false);
+
+  // 常态化绘制小镇 19 个地点的艺术字标签
+  const townLocations = [
+    // Landmarks
+    { name: "Hobbs Cafe", displayName: "霍布斯咖啡馆", x: 77, y: 21, color: "#ff4757" },
+    { name: "The Rose and Crown Pub", displayName: "玫瑰与皇冠酒吧", x: 57, y: 22, color: "#ffa502" },
+    { name: "The Willows Market and Pharmacy", displayName: "柳树市场药房", x: 84, y: 47, color: "#2ed573" },
+    { name: "Oak Hill College", displayName: "橡树山学院", x: 118, y: 41, color: "#9b59b6" },
+    { name: "Harvey Oak Supply Store", displayName: "哈维橡树五金店", x: 63, y: 47, color: "#ff7f50" },
+    { name: "Johnson Park", displayName: "约翰逊公园", x: 27, y: 46, color: "#1abc9c" },
+    // Public Buildings / Dorms
+    { name: "artist's co-living space", displayName: "艺术家共享公寓", x: 30, y: 25, color: "#a5b1c2" },
+    { name: "Dorm for Oak Hill College", displayName: "学院宿舍", x: 122, y: 51, color: "#a5b1c2" },
+    // Standalone Apartments
+    { name: "Ryan Park's apartment", displayName: "莱恩的公寓", x: 66, y: 20, color: "#778ca3" },
+    { name: "Giorgio Rossi's apartment", displayName: "乔治奥的公寓", x: 87, y: 19, color: "#778ca3" },
+    { name: "Carlos Gomez's apartment", displayName: "卡洛斯的公寓", x: 95, y: 19, color: "#778ca3" },
+    { name: "Sam Moore's Home", displayName: "山姆之家", x: 54, y: 16, color: "#2f3542" },
+    { name: "Isabella Rodriguez's apartment", displayName: "伊莎贝拉公寓", x: 78, y: 15, color: "#778ca3" },
+    // Villager Homes (Redistributed to distinct standalone houses)
+    { name: "Arthur Burton's Home", displayName: "亚瑟之家", x: 89, y: 73, color: "#70a1ff" },
+    { name: "Klaus Mueller's Home", displayName: "克劳斯之家", x: 58, y: 73, color: "#00ecff" },
+    { name: "Isabella Rodriguez's Home", displayName: "伊莎贝拉之家", x: 78, y: 73, color: "#ff6b81" },
+    { name: "Crow's Sheriff Residence", displayName: "警长办公室", x: 23, y: 65, color: "#54a0ff" },
+    { name: "Crow's Jail Cell A", displayName: "牢房1", x: 31, y: 66, color: "#54a0ff" },
+    { name: "Crow's Jail Cell B", displayName: "牢房2", x: 38, y: 65, color: "#54a0ff" }
+  ];
+
+  townLocations.forEach(loc => {
+    let px = loc.x * TILE_W + 16;
+    let py = loc.y * TILE_W + 16;
+    
+    let label = this.add.text(px, py, loc.displayName || loc.name, {
+      fontFamily: "'Outfit', 'Inter', 'Arial', sans-serif",
+      fontSize: "10px",
+      fontWeight: "bold",
+      align: "center",
+      fill: "#ffffff",
+      stroke: loc.color,
+      strokeThickness: 3,
+      backgroundColor: "rgba(0, 0, 0, 0.65)",
+      padding: { x: 5, y: 3 }
+    });
+    label.setOrigin(0.5);
+    label.setDepth(1.2);
+  });
+
+  const self = this;
+  // 异步获取小镇内所有可互动场景物件并以精致的中文标签常态化渲染在地图上
+  fetch("/api/objects")
+    .then(resp => resp.json())
+    .then(data => {
+      if (data.objects) {
+        data.objects.forEach(obj => {
+          let px = obj.x * TILE_W + 16;
+          let py = obj.y * TILE_W + 16;
+          
+          let label = self.add.text(px, py, obj.chinese, {
+            fontFamily: "'Outfit', 'Inter', 'Arial', sans-serif",
+            fontSize: "8px",
+            fontWeight: "normal",
+            fill: "#00ffcc",
+            stroke: "#0f3460",
+            strokeThickness: 1.5,
+            backgroundColor: "rgba(10, 15, 30, 0.7)",
+            padding: { x: 4, y: 2 }
+          });
+          label.setOrigin(0.5);
+          label.setDepth(1.1); // 层级置于角色和地名之下，充当完美背景板
+        });
+      }
+    })
+    .catch(err => console.error("Error loading interactive objects:", err));
+
+
+  // 鼠标拖拽移动相机
+  this.input.on("pointerdown", (pointer) => {
+    // 如果点击的是 canvas 以外的 HTML 元素，直接忽略
+    if (pointer.event && pointer.event.target && pointer.event.target.tagName !== "CANVAS") {
+      return;
+    }
+    // 右键或中键拖拽相机
+    if (pointer.rightButtonDown() || pointer.middleButtonDown()) {
+      focusedAgent = null;
+      camDrag = true;
+      camDragStartX = pointer.x;
+      camDragStartY = pointer.y;
+      camScrollStartX = this.cameras.main.scrollX;
+      camScrollStartY = this.cameras.main.scrollY;
+      return;
+    }
+
+    // 左键点击：移动侦探
+    if (!isNight && gameState && !pendingChatTarget) {
+      focusedAgent = null;
+      const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const tileX = Math.floor(worldPoint.x / TILE_W);
+      const tileY = Math.floor(worldPoint.y / TILE_W);
+
+      if (socket && socket.connected) {
+        socket.emit("move_detective", {x: tileX, y: tileY, location: ""});
+      }
+    }
+  });
+
+  this.input.on("pointermove", (pointer) => {
+    if (camDrag) {
+      const dx = pointer.x - camDragStartX;
+      const dy = pointer.y - camDragStartY;
+      this.cameras.main.scrollX = camScrollStartX - dx;
+      this.cameras.main.scrollY = camScrollStartY - dy;
+      resolveBubbleLayout();
+    }
+
+    // 更新鼠标坐标显示
+    const coordEl = document.getElementById("coord-display");
+    if (coordEl && pointer.x >= 0 && pointer.y >= 0) {
+      const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const tileX = Math.floor(worldPoint.x / TILE_W);
+      const tileY = Math.floor(worldPoint.y / TILE_W);
+      coordEl.textContent = `Tile: (${tileX}, ${tileY})  Pixel: (${Math.round(worldPoint.x)}, ${Math.round(worldPoint.y)})`;
+      coordEl.style.display = "block";
+    }
+  });
+
+  this.input.on("pointerup", () => {
+    camDrag = false;
+  });
+
+  // 鼠标离开 canvas 时隐藏坐标
+  document.getElementById("game-container").addEventListener("mouseleave", () => {
+    document.getElementById("coord-display").style.display = "none";
+  });
+
+  // 禁用右键菜单
+  this.input.mouse.disableContextMenu();
+
+  window._scene = this;
+}
+
+loadRuntimeLlmOptions();
+
+function getCharacterTextureKey(sprite_key, name) {
+  if (sprite_key) {
+    if (sceneRef && sceneRef.textures.exists(sprite_key)) {
+      return sprite_key;
+    }
+    const altKey1 = "char_" + sprite_key;
+    if (sceneRef && sceneRef.textures.exists(altKey1)) {
+      return altKey1;
+    }
+    const altKey2 = "char_" + sprite_key.replace(/ /g, "_");
+    if (sceneRef && sceneRef.textures.exists(altKey2)) {
+      return altKey2;
+    }
+  }
+  if (name) {
+    const key = "char_" + name.replace(/ /g, "_");
+    if (sceneRef && sceneRef.textures.exists(key)) {
+      return key;
+    }
+  }
+  return "char_Crow"; 
+}
+
+function resolveBubbleLayout() {
+  if (!sceneRef || !gameState || !gameState.personas) return;
+  const cam = sceneRef.cameras.main;
+  const bubbleLayer = document.getElementById("bubble-layer");
+  const viewportWidth = bubbleLayer ? bubbleLayer.clientWidth : (window.innerWidth - 320);
+  const viewportHeight = bubbleLayer ? bubbleLayer.clientHeight : (window.innerHeight - 160);
+
+  for (const name of PERSONA_NAMES) {
+    const sprite = sprites[name];
+    const p = gameState.personas[name];
+    if (!sprite || !p) continue;
+
+    const cx = sprite.x;
+    const cy = sprite.y;
+
+    const chatBubbles = gameState.chat_bubbles || {};
+    const bubblePayload = chatBubbles[name] || null;
+    const suppressChatDisplay = isChatSuppressedFor(name);
+    const speechText = suppressChatDisplay ? "" : bubbleSpeechText(bubblePayload);
+    let thoughtText = suppressChatDisplay ? "" : buildNpcThoughtBubble(name, p, gameState);
+    thoughtText = applyBlueBubbleTTL(name, thoughtText, p);
+
+    // Hide thought bubble when speech bubble is visible, unless it is an action bubble
+    if (speechText && p.alive) {
+      const runtime = String(p.runtime_state || "");
+      const activeForAction = runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0;
+      if (!activeForAction) {
+        thoughtText = "";
+      }
+    }
+
+    // Hide stale thought bubbles for NPC in active detective chat
+    const isNPCInActiveChat = (pendingChatTarget && pendingChatTarget === name);
+    if (isNPCInActiveChat && p.alive) {
+      const runtime = String(p.runtime_state || "");
+      const activeForAction = runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0;
+      if (!activeForAction) {
+        thoughtText = "";
+      }
+    }
+
+    const bubbleSide = bubbleSideFor(name, chatBubbles, gameState);
+
+    const bubbleEl = speechBubbles[name];
+    const tBubbleEl = thoughtBubbles[name];
+
+    // Crow/克罗 must never render any blue thought/action bubble under any condition
+    if (name === "Crow") {
+      delete thoughtBubbleCache[name];
+      if (tBubbleEl) {
+        tBubbleEl.style.display = "none";
+        tBubbleEl.innerHTML = "";
+      }
+      const staleCrowThought = document.getElementById("thought-bubble-Crow");
+      if (staleCrowThought) {
+        staleCrowThought.style.display = "none";
+        staleCrowThought.innerHTML = "";
+      }
+      thoughtText = "";
+    }
+    if (name === "Crow" && tBubbleEl) {
+      tBubbleEl.innerHTML = "";
+      tBubbleEl.style.display = "none";
+    }
+    if (name === "克罗" || String(name).trim().toLowerCase() === "crow" || String(name).trim() === "克罗") {
+      delete thoughtBubbleCache[name];
+      const staleCrowThought = document.getElementById("thought-bubble-Crow") || document.getElementById("thought-bubble-克罗");
+      if (staleCrowThought) staleCrowThought.style.display = "none";
+      const allStaleThoughts = document.querySelectorAll("[id^='thought-bubble-Crow'], [id^='thought-bubble-crow'], [id^='thought-bubble-克罗']");
+      allStaleThoughts.forEach(el => {
+        el.style.display = "none";
+        el.innerHTML = "";
+      });
+      if (tBubbleEl) {
+        tBubbleEl.style.display = "none";
+        tBubbleEl.innerHTML = "";
+      }
+      thoughtText = "";
+    }
+
+    const isNPCVisible = cx >= cam.scrollX && cx <= (cam.scrollX + cam.width) && cy >= cam.scrollY && cy <= (cam.scrollY + cam.height);
+
+    let hasSpeechShown = false;
+
+    // 1. 发言气泡渲染
+    if (speechText && p.alive && bubbleEl) {
+      let screenX = cx - cam.scrollX + bubbleSideOffset(bubbleSide);
+      let screenY = cy - cam.scrollY - 55;
+      const inVisibleScreen = screenX >= 0 && screenX <= viewportWidth && screenY >= 0 && screenY <= viewportHeight;
+
+      if (isNPCVisible && inVisibleScreen) {
+        bubbleEl.textContent = speechText;
+        applyBubbleSide(bubbleEl, bubbleSide);
+        bubbleEl.style.display = "block";
+        bubbleEl.style.left = screenX + "px";
+        bubbleEl.style.top = screenY + "px";
+        bubbleEl.dataset.anchorY = String(screenY);
+        hasSpeechShown = true;
+        const forceSBReflow = bubbleEl.offsetHeight;
+
+        if (name === "Crow" || name === "克罗" || String(name).trim().toLowerCase() === "crow" || String(name).trim() === "克罗") {
+          bubbleEl.classList.remove("thought-bubble");
+          bubbleEl.classList.add("speech-bubble");
+          bubbleEl.style.backgroundColor = "";
+          bubbleEl.style.borderColor = "";
+          bubbleEl.style.color = "";
+        }
+      } else {
+        bubbleEl.style.display = "none";
+      }
+    } else if (bubbleEl) {
+      bubbleEl.style.display = "none";
+    }
+
+    if (name === "Crow" || name === "克罗" || String(name).trim().toLowerCase() === "crow" || String(name).trim() === "克罗") {
+      delete thoughtBubbleCache[name];
+      if (tBubbleEl) {
+        tBubbleEl.style.display = "none";
+        tBubbleEl.innerHTML = "";
+      }
+      const staleCrowThought = document.getElementById("thought-bubble-Crow") || document.getElementById("thought-bubble-克罗");
+      if (staleCrowThought) {
+        staleCrowThought.style.display = "none";
+        staleCrowThought.innerHTML = "";
+      }
+      continue;
+    }
+
+    // 2. 心理活动气泡渲染（淡蓝色，动态堆叠在发言气泡上方或直接在头顶）
+    if (thoughtText && p.alive && tBubbleEl) {
+      let screenX = cx - cam.scrollX + bubbleSideOffset(bubbleSide);
+      let speechBubbleHeight = 0;
+      if (hasSpeechShown && bubbleEl) {
+        speechBubbleHeight = bubbleEl.offsetHeight || 0;
+      }
+      const thoughtSpeechGap = 10;
+      let tYOffset = 55 + (speechBubbleHeight > 0 ? (speechBubbleHeight + thoughtSpeechGap) : 0);
+      let screenY = cy - cam.scrollY - tYOffset;
+      const inVisibleScreen = screenX >= 0 && screenX <= viewportWidth && screenY >= 0 && screenY <= viewportHeight;
+
+      if (isNPCVisible && inVisibleScreen) {
+        tBubbleEl.innerHTML = thoughtText;
+        applyBubbleSide(tBubbleEl, bubbleSide);
+        tBubbleEl.style.display = "block";
+        tBubbleEl.style.left = screenX + "px";
+        tBubbleEl.style.top = screenY + "px";
+        tBubbleEl.dataset.anchorY = String(screenY);
+        tBubbleEl.dataset.owner = name;
+      } else {
+        tBubbleEl.style.display = "none";
+      }
+    } else if (tBubbleEl) {
+      tBubbleEl.style.display = "none";
+    }
+  }
+
+  // Do not horizontally clamp bubbles at the game edge. #bubble-layer clips overflow,
+  // which avoids narrow stretched bubbles near the right UI panel.
+
+  // 3. 气泡防重合与动态排斥算法 (DOM Bubble Collision Resolver)
+  const thoughtSpeechGap = 10;
+
+  // Force browser layout reflow to ensure DOM measurements are updated after setting innerHTML/textContent
+  if (bubbleLayer) {
+    const forceReflow = bubbleLayer.offsetHeight;
+  }
+
+  let activeBubbles = [];
+  for (const name of PERSONA_NAMES) {
+    const sB = speechBubbles[name];
+    if (sB && sB.style.display === "block") {
+      const forceSB = sB.offsetHeight;
+      activeBubbles.push({
+        el: sB,
+        x: parseFloat(sB.style.left),
+        y: parseFloat(sB.style.top),
+        anchorY: parseFloat(sB.dataset.anchorY || sB.style.top),
+        w: sB.offsetWidth || 120,
+        h: sB.offsetHeight || 40,
+        type: "speech",
+        owner: name,
+        side: sB.classList.contains("bubble-side-left")
+          ? "left"
+          : (sB.classList.contains("bubble-side-right") ? "right" : "center")
+      });
+    }
+    const tB = thoughtBubbles[name];
+    if (tB && tB.style.display === "block") {
+      const forceTB = tB.offsetHeight;
+      activeBubbles.push({
+        el: tB,
+        x: parseFloat(tB.style.left),
+        y: parseFloat(tB.style.top),
+        anchorY: parseFloat(tB.dataset.anchorY || tB.style.top),
+        w: tB.offsetWidth || 120,
+        h: tB.offsetHeight || 40,
+        type: "thought",
+        owner: tB.dataset.owner || name,
+        side: tB.classList.contains("bubble-side-left")
+          ? "left"
+          : (tB.classList.contains("bubble-side-right") ? "right" : "center")
+      });
+    }
+  }
+
+  // 运行多轮反向推开，防止气泡相互重合
+  for (let iter = 0; iter < 15; iter++) {
+    let collisionDetected = false;
+    for (let i = 0; i < activeBubbles.length; i++) {
+      for (let j = i + 1; j < activeBubbles.length; j++) {
+        let b1 = activeBubbles[i];
+        let b2 = activeBubbles[j];
+
+        if (b1.owner === b2.owner && b1.type !== b2.type) {
+          const speechBubble = b1.type === "speech" ? b1 : b2;
+          const thoughtBubble = b1.type === "thought" ? b1 : b2;
+          const speechTop = speechBubble.y - speechBubble.h;
+          const oldY = thoughtBubble.y;
+          thoughtBubble.y = Math.min(thoughtBubble.y, speechTop - thoughtSpeechGap);
+          if (thoughtBubble.y !== oldY) {
+            thoughtBubble.el.style.top = thoughtBubble.y + "px";
+            collisionDetected = true;
+          }
+        }
+        if (b1.owner === b2.owner) continue;
+
+        // 气泡向角色左右展开，避免遮住人物本体。
+        let left1 = b1.side === "left" ? b1.x - b1.w : (b1.side === "center" ? b1.x - b1.w / 2 : b1.x);
+        let right1 = b1.side === "left" ? b1.x : (b1.side === "center" ? b1.x + b1.w / 2 : b1.x + b1.w);
+        let top1 = b1.y - b1.h;
+        let bottom1 = b1.y;
+
+        let left2 = b2.side === "left" ? b2.x - b2.w : (b2.side === "center" ? b2.x - b2.w / 2 : b2.x);
+        let right2 = b2.side === "left" ? b2.x : (b2.side === "center" ? b2.x + b2.w / 2 : b2.x + b2.w);
+        let top2 = b2.y - b2.h;
+        let bottom2 = b2.y;
+
+        // 检查重叠（带 12 像素防粘连安全边界）
+        let gap = 12;
+        if (
+          left1 - gap < right2 &&
+          right1 + gap > left2 &&
+          top1 - gap < bottom2 &&
+          bottom1 + gap > top2
+        ) {
+          collisionDetected = true;
+          // 计算 Y 轴重叠深度
+          let overlapY = Math.min(bottom1, bottom2) - Math.max(top1, top2);
+          // 只向上推，避免气泡被挤到角色身上。
+          const bubbleToMove = b1.y < b2.y ? b1 : b2;
+          const maxLift = 300;
+          bubbleToMove.y = Math.max(
+            4,
+            Math.max(bubbleToMove.anchorY - maxLift, bubbleToMove.y - (overlapY + gap))
+          );
+          // 同步写回 DOM 样式
+          b1.el.style.top = b1.y + "px";
+          b2.el.style.top = b2.y + "px";
+        }
+      }
+    }
+    if (!collisionDetected) break;
+  }
+}
+
+function update(time, delta) {
+  if (!sceneRef) return;
+
+  // 键盘移动相机 (WASD + 方向键)
+  const camSpeed = 8;
+  const cam = sceneRef.cameras.main;
+  const manualCameraMove = cursors.left.isDown || wasd.A.isDown ||
+    cursors.right.isDown || wasd.D.isDown ||
+    cursors.up.isDown || wasd.W.isDown ||
+    cursors.down.isDown || wasd.S.isDown;
+  if (manualCameraMove) focusedAgent = null;
+  if (cursors.left.isDown || wasd.A.isDown) cam.scrollX -= camSpeed;
+  if (cursors.right.isDown || wasd.D.isDown) cam.scrollX += camSpeed;
+  if (cursors.up.isDown || wasd.W.isDown) cam.scrollY -= camSpeed;
+  if (cursors.down.isDown || wasd.S.isDown) cam.scrollY += camSpeed;
+
+  if (!gameState || !gameState.personas) return;
+
+  // Update corpses from gameState.bodies
+  const bodies = gameState.bodies || [];
+  const currentBodyIds = new Set();
+  
+  for (const body of bodies) {
+    if (body.buried) continue;
+    const bodyId = body.body_id;
+    currentBodyIds.add(bodyId);
+    
+    let corpseSprite = corpseSprites[bodyId];
+    const textureKey = getCharacterTextureKey(body.sprite_key, body.victim_name);
+    
+    const bx = body.x * TILE_W;
+    const by = body.y * TILE_W;
+    
+    if (!corpseSprite) {
+      // Create new corpse sprite
+      corpseSprite = sceneRef.physics.add.sprite(bx, by, textureKey, "down");
+      corpseSprite.setDepth(0.9); // depth below active characters (1) and labels (3)
+      corpseSprite.setSize(30, 40).setOffset(0, 24);
+      
+      // Gray tint
+      corpseSprite.setTint(0x777777);
+      
+      // Prone rotation
+      corpseSprite.setAngle(90);
+      
+      corpseSprites[bodyId] = corpseSprite;
+    } else {
+      // Update position and texture if needed
+      corpseSprite.setPosition(bx, by);
+      if (corpseSprite.texture.key !== textureKey) {
+        corpseSprite.setTexture(textureKey, "down");
+      }
+    }
+  }
+  
+  // Safely remove any corpses that are no longer in the state
+  for (const bodyId in corpseSprites) {
+    if (!currentBodyIds.has(parseInt(bodyId)) && !currentBodyIds.has(bodyId.toString())) {
+      corpseSprites[bodyId].destroy();
+      delete corpseSprites[bodyId];
+    }
+  }
+
+  // Camera is centered once on card click via focusAgent(), so continuous centering is disabled here to prevent screen jitter.
+
+  for (const name of PERSONA_NAMES) {
+    const sprite = sprites[name];
+    const p = gameState.personas[name];
+    if (!sprite || !p) continue;
+
+    const targetPx = p.x * TILE_W;
+    const targetPy = p.y * TILE_W;
+
+    // 第一次收到状态：直接传送到初始位置
+    if (!sprite.visible) {
+      sprite.setPosition(targetPx, targetPy);
+      sprite.setVisible(true);
+      nameLabels[name].setVisible(true);
+    }
+
+    const key = PERSONA_ASSET_KEYS[name];
+
+    if (!p.alive) {
+      sprite.setTint(0x666666);
+      sprite.anims.stop();
+      sprite.setTexture(key, "down");
+    } else {
+      sprite.clearTint();
+
+      // 平滑移动：基于时间的插值
+      const dx = targetPx - sprite.x;
+      const dy = targetPy - sprite.y;
+      // 每160ms走一格(32px)，用delta时间计算本帧步长
+      const tileMoveMs = 160;
+      const step = (TILE_W / tileMoveMs) * delta;
+
+      const isMoving = p.runtime_state === "moving";
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > 1) {
+        // 有距离差，播放walk动画并插值移动
+        if (Math.abs(dx) > Math.abs(dy)) {
+          if (dx > 0) sprite.anims.play(key + "-right-walk", true);
+          else sprite.anims.play(key + "-left-walk", true);
+        } else {
+          if (dy > 0) sprite.anims.play(key + "-front-walk", true);
+          else sprite.anims.play(key + "-back-walk", true);
+        }
+        if (Math.abs(dx) > step) sprite.x += Math.sign(dx) * step;
+        else sprite.x = targetPx;
+        if (Math.abs(dy) > step) sprite.y += Math.sign(dy) * step;
+        else sprite.y = targetPy;
+      } else if (isMoving && p.path_len > 0) {
+        // 后端仍有路径时才保持 walk 动画
+        sprite.setPosition(targetPx, targetPy);
+      } else {
+        // 非移动状态 → stop动画
+        sprite.setPosition(targetPx, targetPy);
+        sprite.anims.stop();
+        sprite.setTexture(key, "down");
+      }
+    }
+
+    // 更新标签位置
+    const cx = sprite.x;
+    const cy = sprite.y;
+
+    nameLabels[name].x = cx;
+    nameLabels[name].y = cy - 44;
+    nameLabels[name].setVisible(true);
+    const displayName = getDisplayName(name, gameState);
+    nameLabels[name].setText(displayName);
+    nameLabels[name].setStyle({ fill: PERSONA_LABEL_COLORS[name] || "#66c2ff" });
+
+    // 模型名标签（显示在角色名下方一行）
+    const modelName = p.model || "";
+    if (modelName) {
+      modelLabels[name].setVisible(true);
+      modelLabels[name].setText(modelName);
+      modelLabels[name].x = cx;
+      modelLabels[name].y = cy - 30;
+      modelLabels[name].setStyle({ fill: "#ffdd57" });
+    } else {
+      modelLabels[name].setVisible(false);
+    }
+  }
+
+  // Call global bubble resolver to position and resolve overlaps
+  resolveBubbleLayout();
+
+  // Night overlay
+  if (isNight) {
+    nightOverlay.setVisible(true);
+    nightOverlay.clear();
+    nightOverlay.fillStyle(0x000033, 0.55);
+    nightOverlay.fillRect(
+      cam.scrollX, cam.scrollY,
+      cam.width, cam.height
+    );
+  } else {
+    nightOverlay.setVisible(false);
+  }
+}
+
+// ==================== INIT ====================
+document.getElementById("chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendChat();
+});
+document.getElementById("conn-indicator").onclick = () => {
+  if (!socket || !socket.connected) {
+    initSocket();
+  }
+  fetchCurrentState();
+};
+
+window.addEventListener("resize", () => {
+  resolveBubbleLayout();
+});
+
+// ==================== 日志面板拖拽调整大小 ====================
+(function() {
+  const logPanel = document.getElementById("log-panel");
+  const logHeader = document.getElementById("log-header");
+  let dragging = false;
+  let startY = 0;
+  let startHeight = 0;
+
+  logHeader.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startY = e.clientY;
+    startHeight = logPanel.offsetHeight;
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dy = startY - e.clientY;
+    const newHeight = Math.max(40, Math.min(window.innerHeight * 0.8, startHeight + dy));
+    logPanel.style.height = newHeight + "px";
+  });
+
+  document.addEventListener("mouseup", () => {
+    dragging = false;
+  });
+})();
+
+function translateEnglishLabels(text) {
+  if (!text) return "";
+  let out = String(text);
+  const patterns = [
+    { regex: /Memory:/gi, repl: "记忆：" },
+    { regex: /Thoughts?:/gi, repl: "思考：" },
+    { regex: /Cognition:/gi, repl: "认知：" },
+    { regex: /Reflection:/gi, repl: "反思：" },
+    { regex: /Plans?:/gi, repl: "计划：" },
+    { regex: /Action Plans?:/gi, repl: "行动计划：" },
+    { regex: /Actions?:/gi, repl: "行动：" },
+    { regex: /Dialogues?:/gi, repl: "对话：" },
+    { regex: /Speech(?: History)?:/gi, repl: "发言：" },
+    { regex: /Conversations?:/gi, repl: "对话：" },
+    { regex: /Chats?:/gi, repl: "聊天：" },
+    { regex: /Observations?:/gi, repl: "观察：" },
+    { regex: /Tasks?:/gi, repl: "任务：" },
+    { regex: /Status:/gi, repl: "状态：" },
+    { regex: /Day\s*(\d+)/gi, repl: "第 $1 天" },
+    { regex: /Hour:/gi, repl: "时间（小时）：" },
+    { regex: /Location:/gi, repl: "位置：" },
+    { regex: /Target Location:/gi, repl: "目标位置：" },
+    { regex: /Excuses?:/gi, repl: "借口：" }
+  ];
+  patterns.forEach(p => {
+    out = out.replace(p.regex, p.repl);
+  });
+  return out;
+}
+
+// ==================== 历史言行记录清单 Modal ====================
+function showAgentHistory(name, event) {
+  if (event) event.stopPropagation(); // 阻断点击卡片聚焦事件冒泡
+
+  const modal = document.getElementById("history-modal");
+  const title = document.getElementById("history-modal-title");
+  const body = document.getElementById("history-modal-body");
+
+  title.textContent = `📜 ${getDisplayName(name, gameState)} 的历史言行与思考记录`;
+  body.textContent = "正在读取记忆文件与心理活动，请稍候...";
+  modal.style.display = "flex";
+
+  const apiName = name.replace(/ /g, "_");
+  fetch(`/api/agent/${apiName}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        body.textContent = "读取失败: " + data.error;
+      } else {
+        const memoryContent = data.memory ? data.memory.trim() : "暂无言行记录";
+        const cognitionContent = data.cognition ? data.cognition.trim() : "暂无思考记录";
+        const localizedCognition = localizePersonNames(replaceEnglishNames(cognitionContent, gameState), gameState);
+        const localizedMemory = localizePersonNames(replaceEnglishNames(memoryContent, gameState), gameState);
+        
+        const translatedCognition = translateEnglishLabels(localizedCognition);
+        const translatedMemory = translateEnglishLabels(localizedMemory);
+
+        const dialogueRaw = data.dialogue || data.speech || data.speech_history || data.dialogue_history || data.history || data.dialogue_record || "";
+        const formatDialogueEntry = (entry) => {
+          if (entry === null || entry === undefined) return "";
+          if (typeof entry === "string") return entry;
+          if (typeof entry !== "object") return String(entry);
+          const day = entry.day ? `第${entry.day}天 ` : "";
+          const partner = entry.partner ? `与${entry.partner}：` : "";
+          const incoming = entry.incoming ? `对方：${entry.incoming}` : "";
+          const outgoing = entry.outgoing ? `我：${entry.outgoing}` : "";
+          return `${day}${partner}${[incoming, outgoing].filter(Boolean).join(" | ")}`.trim();
+        };
+        const dialogueContent = typeof dialogueRaw === "string"
+          ? dialogueRaw.trim()
+          : (Array.isArray(dialogueRaw) ? dialogueRaw.map(formatDialogueEntry).filter(Boolean).join("\n").trim() : formatDialogueEntry(dialogueRaw).trim());
+        let dialogueHtml = "";
+        if (dialogueContent) {
+          const localizedDialogue = translateEnglishLabels(localizePersonNames(replaceEnglishNames(dialogueContent, gameState), gameState));
+          dialogueHtml = `
+<div style="background:#0f3460; padding:10px; border-radius:6px; margin-bottom:15px; border-left:4px solid #ffdd57; font-weight:bold;">
+  💬 对话与发言记录：
+</div>
+<div style="background:#1a1a3e; padding:12px; border-radius:6px; max-height:220px; overflow-y:auto; margin-bottom:20px; border:1px solid #0f3460; font-family:monospace; font-size:11px; white-space:pre-wrap;">${localizedDialogue}</div>
+          `;
+        }
+
+        body.innerHTML = `
+<div style="background:#0f3460; padding:10px; border-radius:6px; margin-bottom:15px; border-left:4px solid #4a9eff; font-weight:bold;">
+  🧠 心理活动与日常决策思考：
+</div>
+<div style="background:#1a1a3e; padding:12px; border-radius:6px; max-height:220px; overflow-y:auto; margin-bottom:20px; border:1px solid #0f3460; font-family:monospace; font-size:11px; white-space:pre-wrap;">${translatedCognition}</div>
+
+${dialogueHtml}
+
+<div style="background:#0f3460; padding:10px; border-radius:6px; margin-bottom:15px; border-left:4px solid #e94560; font-weight:bold;">
+  💬 历史言行与对话记忆：
+</div>
+<div style="background:#1a1a3e; padding:12px; border-radius:6px; max-height:220px; overflow-y:auto; border:1px solid #0f3460; font-family:monospace; font-size:11px; white-space:pre-wrap;">${translatedMemory}</div>
+        `;
+      }
+    })
+    .catch(err => {
+      body.textContent = "网络读取异常: " + err;
+    });
+}
+
+function closeHistoryModal() {
+  document.getElementById("history-modal").style.display = "none";
+}
+
+// 点击 Modal 背景也可以直接关闭
+document.getElementById("history-modal").addEventListener("click", (e) => {
+  if (e.target.id === "history-modal") {
+    closeHistoryModal();
+  }
+});
+document.getElementById("rules-modal").addEventListener("click", (e) => {
+  if (e.target.id === "rules-modal") {
+    closeRulesModal();
+  }
+});
+</script>
+</body>
+</html>

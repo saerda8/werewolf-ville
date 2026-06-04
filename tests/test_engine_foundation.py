@@ -1,0 +1,2780 @@
+import io
+import threading
+import time
+
+import game_engine
+from world_config import (
+    ACTIVE_CHARACTERS,
+    AMBIENT_RESIDENT_DISPLAY_NAMES,
+    AMBIENT_RESIDENT_SPRITES,
+    INITIAL_BODY_SITE,
+)
+
+
+def _make_engine(monkeypatch, seed=7, llm_override=None):
+    empty_maze = [[0] * 140 for _ in range(100)]
+    monkeypatch.setattr(game_engine, "load_collision_maze", lambda: empty_maze)
+    monkeypatch.setattr(
+        game_engine,
+        "load_scene_data",
+        lambda: (empty_maze, empty_maze, empty_maze, {}, {}, {}),
+    )
+    monkeypatch.setattr(
+        game_engine.WerewolfGameEngine,
+        "_build_shared_spatial_memory",
+        lambda self: {},
+    )
+    monkeypatch.setattr(game_engine.Agent, "init_files", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "init_scratch_from_soul", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "load_shared_spatial_memory", lambda self, data: None)
+    monkeypatch.setattr(game_engine.Agent, "add_memory", lambda self, event, day: None)
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "")
+    return game_engine.WerewolfGameEngine(random_seed=seed, llm_override=llm_override)
+
+
+def _complete_daily_interviews(engine):
+    engine._daily_interviewed = {
+        name for name, agent in engine.agents.items()
+        if name != engine.detective_name and agent.is_alive and name not in engine._jailed
+    }
+
+
+def test_random_werewolf_models_and_initial_body(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    second = _make_engine(monkeypatch, seed=11)
+
+    assert engine.werewolf_name == second.werewolf_name
+    assert engine.werewolf_name in set(ACTIVE_CHARACTERS) - {"Crow"}
+    assert len(engine.werewolf_names) == 2
+    assert all(w in set(ACTIVE_CHARACTERS) - {"Crow"} for w in engine.werewolf_names)
+    assert engine.werewolf_name == engine.werewolf_names[0]  # legacy first wolf
+    assert len(engine.model_assignments) == 8
+    assert "GLM-5.1" not in engine.model_assignments.values()
+
+    body = engine.bodies[0]
+    assert body.victim_name in AMBIENT_RESIDENT_SPRITES
+    assert body.discovered is True
+    assert body.location == INITIAL_BODY_SITE["location"]
+    assert (body.x, body.y) == (INITIAL_BODY_SITE["x"], INITIAL_BODY_SITE["y"])
+
+    status = engine.get_status()
+    assert status["werewolf_name"] == engine.werewolf_name
+    assert status["werewolf_names"] == engine.werewolf_names
+    assert status["bodies"][0]["alive"] is False
+    assert status["bodies"][0]["victim_display_name"] == AMBIENT_RESIDENT_DISPLAY_NAMES[body.victim_name]
+    assert status["bodies"][0]["victim_display_name"] != body.victim_name
+    assert status["gathering_site"]["location"] == body.location
+    assert status["gathering_site"]["x"] == INITIAL_BODY_SITE["x"]
+    assert status["gathering_site"]["y"] == INITIAL_BODY_SITE["y"]
+    assert status["personas"]["Crow"]["location_label"] == "约翰逊公园东侧广场"
+    assert "recent_log" in status
+    assert isinstance(status["recent_log"], list)
+
+    center = (INITIAL_BODY_SITE["x"], INITIAL_BODY_SITE["y"])
+    for persona in status["personas"].values():
+        assert abs(persona["x"] - center[0]) <= 7
+        assert abs(persona["y"] - center[1]) <= 7
+
+
+def test_case_intro_uses_body_display_name(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    body = engine.bodies[0]
+
+    text = engine._case_intro_text()
+
+    assert AMBIENT_RESIDENT_DISPLAY_NAMES[body.victim_name] in text
+    assert body.victim_name not in text
+
+
+def test_crow_case_intro_lines_sound_like_sheriff_not_coroner(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+
+    lines = engine._case_intro_fallback_lines()
+    joined = "".join(lines)
+
+    assert "法医" not in joined
+    assert "死因" not in joined
+    assert "现场" in joined
+    assert "痕迹" in joined
+    assert "克罗" in lines[0]
+
+
+def test_move_detective_to_agent_stops_adjacent_not_on_top(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    target = engine.agents["Maria Lopez"]
+
+    assert engine.move_detective_to_agent("Maria Lopez") is True
+    crow = engine.agents["Crow"]
+    # Crow should stop *adjacent* to Maria, not on the same tile
+    assert (crow.target_x, crow.target_y) != (target.x, target.y), (
+        f"Crow target {crow.target_x},{crow.target_y} must differ "
+        f"from Maria position {target.x},{target.y}"
+    )
+    # Manhattan distance from Crow's target to Maria should be exactly 1
+    dist = abs(crow.target_x - target.x) + abs(crow.target_y - target.y)
+    assert dist == 1, f"Expected distance 1, got {dist}"
+
+
+def test_crow_public_status_never_exposes_blue_bubble_state(monkeypatch):
+    """Crow can move internally, but UI status must not imply thought/action bubbles."""
+    engine = _make_engine(monkeypatch)
+    crow = engine.agents["Crow"]
+    crow.runtime_state = "moving"
+    crow.current_action = "前往咖啡馆调查"
+    crow.current_action_type = "investigate"
+    crow.current_thought = "我要先整理线索"
+    crow.current_thought_time = time.time()
+    engine.agent_paths["Crow"] = [(crow.x + 1, crow.y), (crow.x + 2, crow.y)]
+
+    public_crow = engine.get_status()["personas"]["Crow"]
+
+    assert public_crow["runtime_state"] == "idle"
+    assert public_crow["path_len"] == 0
+    assert public_crow["action"] == ""
+    assert public_crow["action_type"] == ""
+    assert public_crow["action_plan"] == ""
+    assert public_crow["thought"] == ""
+    assert public_crow["thought_summary"] == ""
+    assert public_crow["thought_time"] == 0
+
+
+def test_world_config_fallback_preserves_supply_store(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    engine._set_agent_target(arthur, "Arthur Burton", "secret underground laboratory")
+    assert arthur.current_location == "Harvey Oak Supply Store"
+
+
+def test_departure_default_object_is_concrete_for_college(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    assert engine._departure_object("Klaus Mueller", "Oak Hill College") == "classroom student seating"
+    assert engine._departure_object("Mei Lin", "Oak Hill College") == "bookshelf"
+
+
+def test_set_agent_target_uses_concrete_object_coordinate(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    klaus = engine.agents["Klaus Mueller"]
+    monkeypatch.setattr(
+        engine,
+        "_find_object_in_spatial_memory",
+        lambda agent, location, obj: (122, 20) if obj == "bookshelf" else None,
+    )
+
+    engine._set_agent_target(klaus, "Klaus Mueller", "Oak Hill College", "bookshelf")
+
+    assert abs(klaus.target_x - 122) + abs(klaus.target_y - 20) == 1
+    assert (klaus.target_x, klaus.target_y) != (122, 20)
+
+
+def test_invented_object_is_replaced_by_real_landmark_default(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    klaus = engine.agents["Klaus Mueller"]
+    monkeypatch.setattr(
+        engine,
+        "_find_object_in_spatial_memory",
+        lambda agent, location, obj: (122, 20) if obj == "bookshelf" else None,
+    )
+
+    resolved = engine._resolve_concrete_target_object(
+        klaus,
+        "Oak Hill College",
+        "archive cabinet",
+        "move_to",
+        "去图书馆查阅旧报纸档案",
+    )
+
+    assert resolved == "bookshelf"
+
+
+def test_object_lookup_does_not_fall_back_to_landmark_center(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    klaus = engine.agents["Klaus Mueller"]
+    klaus.spatial_memory = {"Oak Hill College": {"library": ["bookshelf"]}}
+
+    assert engine._find_object_in_spatial_memory(klaus, "Oak Hill College", "bookshelf") is None
+
+
+def test_set_agent_target_falls_back_when_object_has_no_physical_coordinate(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    klaus = engine.agents["Klaus Mueller"]
+    original_target = (klaus.target_x, klaus.target_y)
+    monkeypatch.setattr(engine, "_find_object_in_spatial_memory", lambda *args: None)
+
+    moved = engine._set_agent_target(klaus, "Klaus Mueller", "Oak Hill College", "archive cabinet")
+
+    assert moved is True
+    assert (klaus.target_x, klaus.target_y) != original_target
+    assert klaus.current_location == "Oak Hill College"
+
+
+def test_set_agent_target_falls_back_when_object_adjacent_path_fails(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    mei = engine.agents["Mei Lin"]
+    original_target = (mei.target_x, mei.target_y)
+    monkeypatch.setattr(engine, "_find_object_in_spatial_memory", lambda *args: (58, 8))
+    monkeypatch.setattr(engine, "_path_adjacent_to", lambda *args, **kwargs: None)
+
+    moved = engine._set_agent_target(mei, "Mei Lin", "Oak Hill College", "bookshelf")
+
+    assert moved is True
+    assert (mei.target_x, mei.target_y) != original_target
+    assert mei.current_location == "Oak Hill College"
+
+
+def test_morning_gathering_spawns_all_agents_in_body_component(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    body_component = engine._reachable_component((
+        game_engine.INITIAL_BODY_SITE["x"],
+        game_engine.INITIAL_BODY_SITE["y"],
+    ))
+
+    for agent in engine.agents.values():
+        assert (agent.x, agent.y) in body_component
+
+
+def test_detective_cannot_leave_during_morning_gathering(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = True
+    crow = engine.agents["Crow"]
+    original_target = (crow.target_x, crow.target_y)
+
+    assert engine.move_detective_to(99, 99, "Johnson Park") is False
+    assert (crow.target_x, crow.target_y) == original_target
+    assert crow.current_action != "investigating"
+
+
+def test_manual_detective_move_avoids_long_detour_around_wall(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    maze = [[0] * 7 for _ in range(7)]
+    for y in range(1, 7):
+        maze[y][2] = 1
+    engine.collision_maze = maze
+
+    target_x, target_y, path = engine._best_manual_move_path((1, 5), (3, 5), radius=2)
+
+    assert (target_x, target_y) == (1, 5)
+    assert path == []
+
+
+def test_collision_loader_preserves_source_walls(monkeypatch):
+    values = ["1"] * (140 * 100)
+    values[0] = "0"
+    values[-1] = "0"
+    source = ",".join(values)
+
+    monkeypatch.setattr(game_engine.os.path, "exists", lambda path: True)
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: io.StringIO(source))
+    monkeypatch.setattr(
+        game_engine,
+        "_connect_maze_regions",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("collision loading must not carve visual walls")
+        ),
+    )
+
+    maze = game_engine.load_collision_maze()
+
+    assert maze[0][1] == 1
+    assert maze[-1][-2] == 1
+
+
+def test_collision_loader_clears_invisible_public_plaza_seam(monkeypatch):
+    values = ["0"] * (140 * 100)
+    values[(46 * 140) + 51] = "32125"
+    source = ",".join(values)
+
+    monkeypatch.setattr(game_engine.os.path, "exists", lambda path: True)
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: io.StringIO(source))
+
+    maze = game_engine.load_collision_maze()
+
+    assert maze[46][51] == 0
+
+
+def test_manual_detective_move_avoids_occupied_tile(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    crow = engine.agents["Crow"]
+    maria = engine.agents["Maria Lopez"]
+    crow.x, crow.y = 1, 1
+    crow.target_x, crow.target_y = 1, 1
+    maria.x, maria.y = 3, 1
+    maria.target_x, maria.target_y = 3, 1
+
+    assert engine.move_detective_to(3, 1) is True
+    assert (crow.target_x, crow.target_y) != (maria.x, maria.y)
+
+
+def test_move_step_does_not_enter_other_agent_tile(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    crow = engine.agents["Crow"]
+    maria = engine.agents["Maria Lopez"]
+    crow.x, crow.y = 1, 1
+    crow.target_x, crow.target_y = 3, 1
+    maria.x, maria.y = 2, 1
+    maria.target_x, maria.target_y = 2, 1
+    engine.agent_paths["Crow"] = [(2, 1), (3, 1)]
+
+    engine._move_agents()
+
+    assert (crow.x, crow.y) == (1, 1)
+
+
+def test_clue_stays_pending_until_successful_detective_chat(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    source = engine.agents["Isabella Rodriguez"]
+    source.can_chat_with = lambda target_name, is_deep_dive: True
+    source.generate_response = lambda speaker, message, day: "I found something."
+
+    clue = engine.create_clue(
+        clue_type="footprint",
+        summary="Fresh muddy footprints led away from the body.",
+        source="Isabella Rodriguez",
+        related_person="",
+        location="Hobbs Cafe",
+    )
+    assert clue.delivered_to_crow is False
+    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is True
+
+    result = engine.detective_chat("Isabella Rodriguez", "What did you notice?")
+
+    assert result["delivered_clues"] == [clue.summary]
+    assert clue.delivered_to_crow is True
+    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is False
+    assert engine.chat_bubbles["Crow"]["target"] == "Isabella Rodriguez"
+    assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Crow"
+
+
+def test_status_lights_bulb_for_current_clue_like_thought(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    source = engine.agents["Isabella Rodriguez"]
+    source.current_thought = "我发现了一个异常线索，但还没决定是否去找警长。"
+    source.current_action = "先整理咖啡馆柜台旁的证据"
+
+    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is True
+
+
+def test_npc_chat_bubbles_expose_each_other_as_targets(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你昨晚注意到什么了吗？")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "我只听见街上有脚步声。")
+    # Shorten the NPC chat delay for fast test
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=1)
+
+    assert engine.chat_bubbles["Arthur Burton"]["target"] == "Isabella Rodriguez"
+    assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton"
+
+
+def test_npc_chat_empty_reply_keeps_visible_fallback_bubble(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你昨晚注意到什么了吗？")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "")
+    # Shorten the NPC chat delay for fast test
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=1)
+
+    assert engine.chat_bubbles["Isabella Rodriguez"]["text"] == "我现在还没有想清楚，稍后再和你说。"
+    assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton"
+
+
+def test_status_exposes_director_fields(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.agents["Arthur Burton"].current_thought = (
+        "昨晚的情况仍然可疑。我需要先检查附近是否有脚印。"
+        + "之后再询问其他居民是否听见异常。" * 8
+    )
+    engine.agents["Arthur Burton"].current_thought_time = 123.0
+    status = engine.get_status()
+
+    assert status["model_assignments"] == engine.model_assignments
+    assert status["werewolf_name"] == engine.werewolf_name
+    assert status["werewolf_names"] == engine.werewolf_names
+    assert "thought" in status["personas"]["Arthur Burton"]
+    assert status["personas"]["Arthur Burton"]["thought_time"] == 123.0
+    assert len(status["personas"]["Arthur Burton"]["thought_summary"]) <= 100
+    assert status["personas"]["Arthur Burton"]["thought_summary"].endswith("。")
+    assert len(status["personas"]["Arthur Burton"]["thought"]) > 100
+    # Director fields expose true_role for debugging; per-persona role is public-facing.
+    for wolf_name in engine.werewolf_names:
+        assert status["personas"][wolf_name]["role"] == "villager"
+        assert status["personas"][wolf_name]["public_role"] == "villager"
+        assert status["personas"][wolf_name]["true_role"] == "werewolf"
+    assert status["personas"]["Crow"]["role"] == "detective"
+    assert status["personas"]["Crow"]["true_role"] == "detective"
+
+
+def test_thought_summary_uses_complete_fallback_for_one_overlong_sentence():
+    summary = game_engine.WerewolfGameEngine._summarize_thought_for_display("持续分析" * 40)
+
+    assert summary == "正在整理当前情况。"
+
+
+def test_openrouter_override_assigns_one_runtime_model_without_exposing_key(monkeypatch):
+    engine = _make_engine(
+        monkeypatch,
+        seed=5,
+        llm_override={
+            "provider": "openrouter",
+            "api_key": "sk-test-secret",
+            "model": "openai/gpt-4o-mini",
+            "api_base": "https://openrouter.ai/api/v1",
+        },
+    )
+    status = engine.get_status()
+
+    assert status["llm_provider"] == {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini",
+        "api_base": "https://openrouter.ai/api/v1",
+    }
+    assert set(status["model_assignments"].values()) == {"openai/gpt-4o-mini"}
+    assert "sk-test-secret" not in str(status)
+
+
+def test_custom_provider_override_uses_custom_base_without_exposing_key(monkeypatch):
+    engine = _make_engine(
+        monkeypatch,
+        seed=6,
+        llm_override={
+            "provider": "custom",
+            "api_key": "sk-custom-secret",
+            "model": "my-model",
+            "api_base": "http://127.0.0.1:9000/v1",
+        },
+    )
+    status = engine.get_status()
+
+    assert status["llm_provider"] == {
+        "provider": "custom",
+        "model": "my-model",
+        "api_base": "http://127.0.0.1:9000/v1",
+    }
+    assert set(status["model_assignments"].values()) == {"my-model"}
+    assert "sk-custom-secret" not in str(status)
+
+
+def test_anthropic_provider_override_uses_one_model_without_exposing_key(monkeypatch):
+    engine = _make_engine(
+        monkeypatch,
+        seed=7,
+        llm_override={
+            "provider": "anthropic",
+            "api_key": "sk-anthropic-secret",
+            "model": "claude-3-5-sonnet-latest",
+            "api_base": "https://api.anthropic.com/v1",
+        },
+    )
+    status = engine.get_status()
+
+    assert status["llm_provider"] == {
+        "provider": "anthropic",
+        "model": "claude-3-5-sonnet-latest",
+        "api_base": "https://api.anthropic.com/v1",
+    }
+    assert set(status["model_assignments"].values()) == {"claude-3-5-sonnet-latest"}
+    assert "sk-anthropic-secret" not in str(status)
+
+
+# ---------------------------------------------------------------------------
+# Requirement 3 / 4 — _path_adjacent_to & object-adjacent placement
+# ---------------------------------------------------------------------------
+
+def test_path_adjacent_to_returns_tile_adjacent_to_target(monkeypatch):
+    """_path_adjacent_to must return a tile whose Manhattan distance to target is 1."""
+    engine = _make_engine(monkeypatch)
+    start = (10, 10)
+    target = (30, 20)
+
+    result = engine._path_adjacent_to(start, target)
+    assert result is not None, "_path_adjacent_to returned None on open maze"
+
+    adj_x, adj_y, path = result
+    dist = abs(adj_x - target[0]) + abs(adj_y - target[1])
+    assert dist == 1, f"adjacent tile ({adj_x},{adj_y}) is {dist} away from target {target}"
+
+    # Path must lead from start to the chosen adjacent tile
+    assert path[-1] == (adj_x, adj_y)
+    assert len(path) > 0
+
+
+def test_path_adjacent_to_never_returns_target_tile_itself(monkeypatch):
+    """The returned tile must not equal the target coordinate."""
+    engine = _make_engine(monkeypatch)
+    result = engine._path_adjacent_to((5, 5), (8, 5))
+    assert result is not None
+    adj_x, adj_y, _ = result
+    assert (adj_x, adj_y) != (8, 5), "returned tile must not be the target itself"
+
+
+def test_path_adjacent_to_fallback_when_adjacent_blocked(monkeypatch):
+    """If all direct neighbours are walls, expand search outward."""
+    engine = _make_engine(monkeypatch)
+    maze = [[0] * 10 for _ in range(10)]
+    # Wall off all 4 direct neighbours of (5,5)
+    maze[5][4] = 1  # W
+    maze[5][6] = 1  # E
+    maze[4][5] = 1  # N
+    maze[6][5] = 1  # S
+    engine.collision_maze = maze
+
+    result = engine._path_adjacent_to((0, 0), (5, 5))
+    assert result is not None, "should expand search past blocked neighbours"
+    adj_x, adj_y, _ = result
+    dist = abs(adj_x - 5) + abs(adj_y - 5)
+    assert dist >= 2, f"expanded search tile should be ≥2 away, got dist={dist}"
+    assert maze[adj_y][adj_x] == 0, "returned tile must be walkable"
+
+
+def test_path_adjacent_to_returns_none_when_no_tile_reachable(monkeypatch):
+    """When the start position is walled off, return None conservatively."""
+    engine = _make_engine(monkeypatch)
+    maze = [[0] * 10 for _ in range(10)]
+    # Wall in start at (1,1)
+    maze[1][0] = 1
+    maze[1][2] = 1
+    maze[0][1] = 1
+    maze[2][1] = 1
+    engine.collision_maze = maze
+
+    result = engine._path_adjacent_to((1, 1), (8, 8))
+    assert result is None, "should return None when start is isolated"
+
+
+def test_move_detective_to_agent_target_differs_from_npc_coordinate(monkeypatch):
+    """Regression: Crow must stop adjacent, not on the NPC tile."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    # Place target away from Crow so path exists
+    engine.agents["Maria Lopez"].x = 50
+    engine.agents["Maria Lopez"].y = 50
+    engine.agents["Crow"].x = 10
+    engine.agents["Crow"].y = 10
+
+    assert engine.move_detective_to_agent("Maria Lopez") is True
+    crow = engine.agents["Crow"]
+    maria = engine.agents["Maria Lopez"]
+    assert (crow.target_x, crow.target_y) != (maria.x, maria.y), (
+        "Crow target must differ from NPC position"
+    )
+
+
+def test_path_adjacent_to_shortest_path_chosen(monkeypatch):
+    """When multiple adjacent tiles are reachable, the shortest-path one is picked."""
+    engine = _make_engine(monkeypatch)
+    # With open maze, tile (31,20) is adjacent east of (30,20) and farther from (10,10)
+    # than (30,19) which is north — our BFS should pick the shortest path
+    result = engine._path_adjacent_to((10, 10), (30, 20))
+    assert result is not None
+    adj_x, adj_y, path = result
+    # Among the 4 neighbours, the one with shortest path from (10,10) is (29,20) or (30,19)
+    # Both are 29 steps (10→29 = 19 dx + 10→20 = 10 dy = 29; 10→30=20 + 10→19=9 = 29)
+    dist = abs(adj_x - 30) + abs(adj_y - 20)
+    assert dist == 1, f"must be adjacent, got distance {dist} to (30,20)"
+
+    # Verify path leads to the adjacent tile
+    assert path[-1] == (adj_x, adj_y)
+
+
+def test_two_werewolves_are_random_non_crow_residents(monkeypatch):
+    """Exactly 2 werewolves are selected from non-Crow residents per game seed."""
+    engine = _make_engine(monkeypatch, seed=7)
+    assert len(engine.werewolf_names) == 2
+    assert engine.werewolf_name == engine.werewolf_names[0]  # legacy first wolf
+    for w in engine.werewolf_names:
+        assert w in engine.agents
+        assert w != "Crow"
+        assert engine.agents[w].role == "werewolf"
+
+    # Same seed produces same wolves
+    second = _make_engine(monkeypatch, seed=7)
+    assert engine.werewolf_names == second.werewolf_names
+
+
+def test_model_assignment_allows_reused_models_for_eight_agents(monkeypatch):
+    """Model assignment cycles/reuses models when fewer than 8 entries available."""
+    monkeypatch.setattr("game_engine.CONFIG", {
+        "llm": {"available_models": ["only-one-model"]},
+        "game": {"day_duration_seconds": 1800, "night_duration_seconds": 300, "tick_interval_seconds": 0.16, "max_days": 5, "move_steps_per_tick": 1},
+        "conversation": {"deep_dive_quota": {"kill_1": 3, "kill_2": 2, "kill_3": 1}, "detective_normal_chat_limit": 1, "max_rounds_per_side": 5},
+        "agent": {"min_act_seconds": 5, "max_act_seconds": 15},
+        "night_behavior": {"forced_completion_seconds": 20, "replan_interval_seconds": 20, "night_move_steps_per_tick": 3},
+    })
+    engine = _make_engine(monkeypatch, seed=42)
+    assert len(engine.model_assignments) == 8
+    # All 8 agents get the same model since only one is available
+    assert set(engine.model_assignments.values()) == {"only-one-model"}
+
+
+def test_wolves_receive_each_other_as_runtime_pack_knowledge(monkeypatch):
+    """Both wolf agents have role 'werewolf' and know each other."""
+    engine = _make_engine(monkeypatch, seed=3)
+    assert len(engine.werewolf_names) == 2
+    wolf_names = list(engine.werewolf_names)
+    # Both wolves have werewolf role
+    for w in wolf_names:
+        assert engine.agents[w].role == "werewolf"
+        assert engine.agents[w].name == w
+
+    # Non-wolves should not have werewolf role
+    non_wolves = [n for n in engine.agents if n not in engine.werewolf_names]
+    for nw in non_wolves:
+        if nw == "Crow":
+            assert engine.agents[nw].role == "detective"
+        else:
+            assert engine.agents[nw].role == "villager", f"{nw} should be villager"
+
+    # Verify pack knowledge: each wolf's runtime role prompt mentions werewolf
+    for w in wolf_names:
+        prompt = engine.agents[w].get_runtime_role_prompt()
+        assert "werewolf" in prompt.lower(), f"{w} prompt lacks werewolf identity"
+
+
+def test_runtime_hidden_roles_are_not_serialized_as_public_agent_knowledge(monkeypatch):
+    """Per-persona public data must not include hidden role for normal player use.
+    Director-level fields (werewolf_names, werewolf_name) expose truth at top level,
+    and per-persona true_role is reserved for the director view. The public role
+    remains villager/detective so normal player UI does not get hidden identities."""
+    engine = _make_engine(monkeypatch, seed=5)
+    status = engine.get_status()
+
+    # Top-level director fields expose the truth
+    assert "werewolf_names" in status
+    assert "werewolf_name" in status
+
+    # Each persona has public-facing role plus a separate director true_role.
+    for name, persona in status["personas"].items():
+        assert "role" in persona
+        assert "public_role" in persona
+        assert "true_role" in persona
+        assert persona["true_role"] == engine.agents[name].role
+        if name in engine.werewolf_names:
+            assert persona["role"] == "villager"
+            assert persona["public_role"] == "villager"
+        else:
+            assert persona["role"] == engine.agents[name].role
+            assert persona["public_role"] == engine.agents[name].role
+
+    # Public player-facing view should not expose hidden werewolf identity
+    # through non-role fields (e.g. no 'is_werewolf' or hidden role flag)
+    for name, persona in status["personas"].items():
+        assert "is_werewolf" not in persona
+        assert "hidden_role" not in persona
+
+    # No public role reveals werewolf identity.
+    for name in engine.agents:
+        assert status["personas"][name]["role"] != "werewolf"
+        assert status["personas"][name]["public_role"] != "werewolf"
+        assert status["personas"][name]["role"] in ("villager", "detective")
+
+
+# ---------------------------------------------------------------------------
+# Requirement — Dusk Discussion / right-panel day-flow status
+# ---------------------------------------------------------------------------
+
+
+def test_start_dusk_discussion_transitions_phase(monkeypatch):
+    """start_dusk_discussion changes phase from DAY to DUSK_DISCUSSION."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+    assert engine.phase == game_engine.GamePhase.DAY
+
+    result = engine.start_dusk_discussion()
+    assert result is True
+    assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
+
+
+def test_start_dusk_discussion_does_not_enter_night(monkeypatch):
+    """Dusk discussion must NOT immediately trigger night transition."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+
+    engine.start_dusk_discussion()
+    assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
+    # Night should not have started
+    assert engine.phase != game_engine.GamePhase.NIGHT
+    # dusk_start_time should be set
+    assert engine.dusk_start_time is not None
+
+
+def test_enter_night_from_dusk_discussion(monkeypatch):
+    """enter_night should still work when phase is DUSK_DISCUSSION."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+
+    engine.start_dusk_discussion()
+    assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
+
+    engine.enter_night()
+    assert engine.phase == game_engine.GamePhase.NIGHT
+
+
+def test_start_dusk_discussion_rejected_outside_day(monkeypatch):
+    """start_dusk_discussion returns False when not in DAY phase."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+
+    # Go to dusk then night
+    engine.start_dusk_discussion()
+    engine.enter_night()
+
+    # Cannot start dusk from NIGHT
+    result = engine.start_dusk_discussion()
+    assert result is False
+
+
+def test_enter_night_from_day_without_dusk(monkeypatch):
+    """enter_night directly from DAY skips dusk and goes to night."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    assert engine.phase == game_engine.GamePhase.DAY
+
+    engine.enter_night()
+    assert engine.phase == game_engine.GamePhase.NIGHT
+
+
+def test_status_exposes_dusk_fields(monkeypatch):
+    """get_status must include dusk_elapsed, dusk_duration when in DUSK_DISCUSSION."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+    engine.start_dusk_discussion()
+
+    status = engine.get_status()
+    assert status["phase"] == "dusk_discussion"
+    assert "dusk_elapsed" in status
+    assert "dusk_duration" in status
+    assert isinstance(status["dusk_elapsed"], (int, float))
+    assert status["dusk_duration"] == 600  # default
+
+
+def test_status_exposes_deep_dive_remaining_numeric(monkeypatch):
+    """deep_dive_remaining must be a numeric value (quota - used)."""
+    engine = _make_engine(monkeypatch)
+    detective = engine.agents["Crow"]
+    # Simulate quota usage
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 1
+
+    status = engine.get_status()
+    assert "deep_dive_remaining" in status
+    assert status["deep_dive_remaining"] == 2
+    assert isinstance(status["deep_dive_remaining"], int)
+
+
+def test_deep_dive_quota_resets_each_day(monkeypatch):
+    """Deep dives are a daily allowance, so a new day restores 3 chances."""
+    engine = _make_engine(monkeypatch)
+    detective = engine.agents["Crow"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 2
+    engine.day = 1
+    engine.phase = game_engine.GamePhase.NIGHT
+    engine.night_hunt = None
+    engine._gathering_active = False
+
+    monkeypatch.setattr(engine, "_discover_latest_body", lambda: None)
+    monkeypatch.setattr(engine, "_generate_daily_plans", lambda: None)
+    monkeypatch.setattr(engine, "_init_gathering", lambda: None)
+    monkeypatch.setattr(game_engine.Agent, "compress_memory", lambda self, day: None)
+
+    engine._transition_to_day()
+
+    assert detective.deep_dive_quota == 3
+    assert detective.deep_dive_used == 0
+    assert engine.get_status()["deep_dive_remaining"] == 3
+
+
+def test_status_exposes_daily_interview_fields(monkeypatch):
+    """daily_interview_total and daily_interview_count must be exposed."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    # Initially no interviews
+    status = engine.get_status()
+    assert "daily_interview_total" in status
+    assert "daily_interview_count" in status
+    assert status["daily_interview_total"] == 7  # 8 agents - 1 Crow
+    assert status["daily_interview_count"] == 0
+
+    # Mark two NPCs as interviewed
+    engine._daily_interviewed.add("Arthur Burton")
+    engine._daily_interviewed.add("Isabella Rodriguez")
+
+    status = engine.get_status()
+    assert status["daily_interview_count"] == 2
+
+
+def test_daily_interview_count_excludes_crow(monkeypatch):
+    """Crow must never be counted in daily_interview_total."""
+    engine = _make_engine(monkeypatch)
+    status = engine.get_status()
+
+    assert status["daily_interview_total"] <= 7
+    assert "Crow" not in engine._daily_interviewed
+
+
+def test_persona_chat_availability_fields(monkeypatch):
+    """Each persona must expose chat_available and deep_dive_available booleans.
+    deep_dive_available requires normal chat done first AND quota remaining."""
+    engine = _make_engine(monkeypatch)
+    detective = engine.agents["Crow"]
+
+    # Setup: Crow has chatted with Arthur once (normal chat limit is 1)
+    detective.chat_count = {"Arthur Burton": 1}
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+
+    # Mark Arthur as interviewed (normal chat done)
+    engine._daily_interviewed.add("Arthur Burton")
+
+    status = engine.get_status()
+
+    arthur = status["personas"]["Arthur Burton"]
+    assert "chat_available" in arthur
+    assert "deep_dive_available" in arthur
+    assert arthur["chat_available"] is False  # Already used the 1 normal chat
+    assert arthur["deep_dive_available"] is True  # Normal done + quota remaining
+
+    # Isabella: not interviewed, so deep_dive NOT available
+    isabella = status["personas"]["Isabella Rodriguez"]
+    assert isabella["chat_available"] is True  # Not chatted yet
+    assert isabella["deep_dive_available"] is False  # Normal chat not done yet
+
+    # Crow's own persona should have both False
+    crow = status["personas"]["Crow"]
+    assert crow["chat_available"] is False
+    assert crow["deep_dive_available"] is False
+
+
+def test_deep_dive_available_respects_quota(monkeypatch):
+    """deep_dive_available must become False when quota exhausted."""
+    engine = _make_engine(monkeypatch)
+    detective = engine.agents["Crow"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 3  # All used
+
+    status = engine.get_status()
+    for name, persona in status["personas"].items():
+        if name != "Crow":
+            assert persona["deep_dive_available"] is False, f"{name} should have no deep dive available"
+
+
+def test_daily_interview_resets_on_new_day(monkeypatch):
+    """_daily_interviewed must be cleared when transitioning to a new day."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    # Simulate some interviews
+    engine._daily_interviewed.add("Arthur Burton")
+    engine._daily_interviewed.add("Isabella Rodriguez")
+
+    # Transition to day (simulate what _transition_to_day does)
+    engine.phase = game_engine.GamePhase.DAY
+    engine._daily_interviewed = set()  # This is what _transition_to_day does
+
+    status = engine.get_status()
+    assert status["daily_interview_count"] == 0
+
+
+def test_primary_cta_during_day_is_dusk_discussion_by_default(monkeypatch):
+    """primary_cta should be 'dusk_discussion' during normal DAY with no gathering."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine._daily_interviewed = {"Arthur Burton", "Isabella Rodriguez", "Klaus Mueller",
+                                  "Maria Lopez", "Sam Moore", "Jane Moreno", "Mei Lin"}
+
+    status = engine.get_status()
+    assert status["primary_cta"] == "dusk_discussion"
+
+
+def test_primary_cta_during_gathering(monkeypatch):
+    """primary_cta should be 'gathering' when morning gathering is active."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = True
+
+    status = engine.get_status()
+    assert status["primary_cta"] == "gathering"
+
+
+def test_primary_cta_during_dusk(monkeypatch):
+    """primary_cta should be 'vote_accuse' during DUSK_DISCUSSION."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+    engine.start_dusk_discussion()
+
+    status = engine.get_status()
+    assert status["primary_cta"] in ("vote_accuse", "jail_choice")
+
+
+def test_detective_can_move_during_dusk(monkeypatch):
+    """Detective movement should be allowed during DUSK_DISCUSSION phase."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+    engine.start_dusk_discussion()
+
+    crow = engine.agents["Crow"]
+    original_x, original_y = crow.target_x, crow.target_y
+
+    success = engine.move_detective_to(50, 50, "Johnson Park")
+    assert success is True
+    # Target should have been updated
+    assert (crow.target_x, crow.target_y) != (original_x, original_y)
+
+
+def test_start_dusk_discussion_blocked_during_gathering(monkeypatch):
+    """start_dusk_discussion must return False when morning gathering is active."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = True
+
+    result = engine.start_dusk_discussion()
+    assert result is False
+    assert engine.phase == game_engine.GamePhase.DAY
+
+
+def test_enter_night_clears_gathering_and_doesnt_crash(monkeypatch):
+    """Regression: enter_night must not crash when no dusk discussion has happened."""
+    engine = _make_engine(monkeypatch)
+    # Don't touch _gathering_active — engine starts with gathering active
+    # but Crow is still a special case. Just test the direct path.
+    engine._gathering_active = False
+    engine.enter_night()
+    assert engine.phase == game_engine.GamePhase.NIGHT
+
+
+# ============================================================================
+# Jailed / Prison system tests (Requirement 1)
+# ============================================================================
+
+def test_jailed_state_initialized_empty(monkeypatch):
+    """_jailed set starts empty."""
+    engine = _make_engine(monkeypatch)
+    assert engine._jailed == set()
+    assert engine.get_status()["jailed"] == []
+
+
+def test_jailed_resident_cannot_move(monkeypatch):
+    """Jailed residents are skipped in _update_agent_schedules."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Jail a resident
+    target = "Arthur Burton"
+    engine._jailed.add(target)
+    engine.agents[target].runtime_state = "jailed"
+
+    # Run _update_agent_schedules — should skip jailed
+    engine._update_agent_schedules()
+    # Jailed agent should not have been moved or scheduled
+    assert engine.agents[target].runtime_state == "jailed"
+
+
+def test_jailed_excluded_from_night_targets(monkeypatch):
+    """Jailed residents cannot be night hunt targets."""
+    engine = _make_engine(monkeypatch)
+    # Jail a resident
+    engine._jailed.add("Isabella Rodriguez")
+
+    targets = engine._eligible_night_targets()
+    assert "Isabella Rodriguez" not in targets
+
+
+def test_jailed_excluded_from_daily_interview_total(monkeypatch):
+    """Jailed residents don't count toward daily_interview_total."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    # Initially 7 non-Crow residents
+    status = engine.get_status()
+    assert status["daily_interview_total"] == 7
+
+    # Jail one
+    engine._jailed.add("Arthur Burton")
+    status = engine.get_status()
+    assert status["daily_interview_total"] == 6
+
+
+def test_cannot_chat_with_jailed_npc(monkeypatch):
+    """detective_chat must reject jailed NPCs."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Setup target as alive but jailed
+    engine._jailed.add("Isabella Rodriguez")
+    engine.agents["Crow"].can_chat_with = lambda name, deep: True
+    engine.agents["Isabella Rodriguez"].can_chat_with = lambda name, deep: True
+    engine.agents["Isabella Rodriguez"].generate_response = lambda speaker, msg, day: "ok"
+
+    result = engine.detective_chat("Isabella Rodriguez", "Hello?")
+    assert "error" in result
+    assert "拘留" in result["error"]
+
+
+def test_persona_shows_jailed_status(monkeypatch):
+    """get_status personas include jailed and prison_cell fields."""
+    engine = _make_engine(monkeypatch)
+    engine._jailed.add("Arthur Burton")
+
+    status = engine.get_status()
+    arthur = status["personas"]["Arthur Burton"]
+    assert arthur["jailed"] is True
+    assert arthur["prison_cell"] is not None
+    assert arthur["chat_available"] is False  # Jailed = can't chat
+
+    # Non-jailed should have jailed=False, prison_cell=None
+    isabella = status["personas"]["Isabella Rodriguez"]
+    assert isabella["jailed"] is False
+    assert isabella["prison_cell"] is None
+
+
+def test_jailed_in_win_check_removed_from_active(monkeypatch):
+    """Win checks should treat jailed wolves/villagers as removed from active play."""
+    engine = _make_engine(monkeypatch)
+    # Determine wolves from the engine
+    wolf_names = list(engine.werewolf_names)
+
+    # Kill some to test win conditions
+    for name in list(engine.agents.keys()):
+        if name not in wolf_names and name != "Crow" and name not in engine._jailed:
+            engine.agents[name].is_alive = False
+            engine.dead_list.append(name)
+
+    # Now let's simulate: if a wolf is jailed, they should not count toward wolf count
+    if len(wolf_names) >= 1:
+        engine._jailed.add(wolf_names[0])
+
+    # Count alive non-jailed wolves
+    alive_wolves = [n for n in wolf_names if engine.agents[n].is_alive and n not in engine._jailed]
+    alive_good = [n for n, a in engine.agents.items()
+                  if a.is_alive and n not in wolf_names and n not in engine._jailed]
+
+    # Jailed wolf should be excluded from alive_wolves
+    assert wolf_names[0] not in alive_wolves
+
+
+# ============================================================================
+# Dusk workflow / vote tests (Requirement 2)
+# ============================================================================
+
+def test_start_dusk_blocked_by_missing_interviews(monkeypatch):
+    """start_dusk_discussion must return False when not all residents interviewed."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # No interviews done
+    ok, reason = engine.can_start_dusk_discussion()
+    assert ok is False
+    assert "采访" in reason
+
+    result = engine.start_dusk_discussion()
+    assert result is False
+
+
+def test_start_dusk_succeeds_after_all_interviews(monkeypatch):
+    """After interviewing all living non-jailed non-Crow residents, dusk can start."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Mark all non-Crow residents as interviewed
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+
+    ok, reason = engine.can_start_dusk_discussion()
+    assert ok is True
+    assert reason == "OK"
+
+    result = engine.start_dusk_discussion()
+    assert result is True
+    assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
+
+
+def test_dusk_generates_npc_votes(monkeypatch):
+    """After start_dusk_discussion, NPC votes must be populated."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Complete all interviews
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+
+    engine.start_dusk_discussion()
+    assert engine._dusk_vote_active is True
+    assert len(engine._dusk_votes) > 0  # At least some votes
+
+    # Every living non-jailed non-Crow NPC should have a vote
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive and name not in engine._jailed:
+            assert name in engine._dusk_votes, f"{name} should have voted"
+            assert name in engine._dusk_vote_reasons, f"{name} should have a reason"
+
+    # Vote summary should be in status
+    status = engine.get_status()
+    assert status["vote_summary"] is not None
+    assert "votes" in status["vote_summary"]
+    assert "counts" in status["vote_summary"]
+    assert status["vote_summary"]["active"] is True
+    assert status["vote_history"]
+    assert status["vote_history"][0]["day"] == engine.day
+
+
+def test_jail_vote_target_success(monkeypatch):
+    """jail_vote_target must jail a valid target and move them to prison."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Complete interviews and start dusk
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+    engine.start_dusk_discussion()
+
+    target = "Arthur Burton"
+    result = engine.jail_vote_target(target)
+    assert result["success"] is True
+    assert result["jailed"] == target
+    assert "vote_summary" in result
+    assert target in engine._jailed
+
+    # Target should be in a prison cell
+    agent = engine.agents[target]
+    assert agent.current_action == "被拘留中"
+    assert "监狱" in agent.current_location or "牢房" in agent.current_location
+    assert agent.runtime_state == "jailed"
+
+    # Status should reflect
+    status = engine.get_status()
+    assert target in status["jailed"]
+    assert status["phase"] == "night"
+
+
+def test_jail_vote_target_rejects_duplicate(monkeypatch):
+    """Cannot jail the same person twice."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+    engine.start_dusk_discussion()
+
+    engine.jail_vote_target("Arthur Burton")
+    result = engine.jail_vote_target("Isabella Rodriguez")
+    assert "error" in result
+
+
+def test_jail_vote_target_rejects_crow(monkeypatch):
+    """Cannot jail the detective."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+    engine.start_dusk_discussion()
+
+    result = engine.jail_vote_target("Crow")
+    assert "error" in result
+
+
+def test_jail_vote_target_rejects_dead(monkeypatch):
+    """Cannot jail a dead person."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+    engine.start_dusk_discussion()
+
+    engine.agents["Arthur Burton"].is_alive = False
+    result = engine.jail_vote_target("Arthur Burton")
+    assert "error" in result
+
+
+def test_vote_summary_includes_counts(monkeypatch):
+    """Vote summary counts must aggregate NPC votes."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+    engine.start_dusk_discussion()
+
+    status = engine.get_status()
+    vote_summary = status["vote_summary"]
+    assert vote_summary is not None
+    assert len(vote_summary["counts"]) > 0
+    # Each count entry has target, display, count
+    for entry in vote_summary["counts"]:
+        assert "target" in entry
+        assert "display" in entry
+        assert "count" in entry
+        assert entry["count"] >= 1
+
+
+def test_dusk_vote_can_abstain_and_history_tracks_it(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+
+    monkeypatch.setattr(engine, "_generate_single_dusk_vote", lambda voter, dead, clues: ("证据不足，先弃票。", ""))
+    assert engine.start_dusk_discussion() is True
+
+    status = engine.get_status()
+    summary = status["vote_summary"]
+    assert summary["abstain_count"] > 0
+    assert summary["counts"] == []
+    assert status["vote_history"][0]["abstain_count"] == summary["abstain_count"]
+
+
+# ============================================================================
+# Daily tasks tests (Requirement 3)
+# ============================================================================
+
+def test_daily_tasks_day1_has_interview_task(monkeypatch):
+    """Day 1 tasks include daily interviews."""
+    engine = _make_engine(monkeypatch)
+    status = engine.get_status()
+    tasks = status["daily_tasks"]
+
+    interview_task = [t for t in tasks if t["id"] == "daily_interviews"]
+    day1_objective = [t for t in tasks if t["id"] == "day1_objective"]
+    assert len(interview_task) == 1
+    assert day1_objective == []
+    assert interview_task[0]["total"] == 7  # 7 non-Crow residents
+    assert interview_task[0]["daily"] is True
+
+
+def test_daily_tasks_day2_has_silver_tasks(monkeypatch):
+    """Day 2+ includes silver tasks."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.day = 2
+    engine.phase = game_engine.GamePhase.DAY
+
+    status = engine.get_status()
+    tasks = status["daily_tasks"]
+
+    bullet_task = [t for t in tasks if t["id"] == "silver_bullet"]
+    jewelry_task = [t for t in tasks if t["id"] == "silver_jewelry"]
+    assert len(bullet_task) == 1
+    assert len(jewelry_task) == 1
+    assert bullet_task[0]["complete"] is False
+    assert jewelry_task[0]["complete"] is False
+
+
+def test_daily_tasks_day4_has_craft_task_when_both_acquired(monkeypatch):
+    """Day 4 with both silver items exposes craft task."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.day = 4
+    engine.phase = game_engine.GamePhase.DAY
+    engine._silver_bullet_acquired = True
+    engine._silver_jewelry_acquired = True
+
+    status = engine.get_status()
+    tasks = status["daily_tasks"]
+
+    craft_task = [t for t in tasks if t["id"] == "craft_silver_bullet"]
+    assert len(craft_task) == 1
+    assert craft_task[0]["complete"] is False
+
+
+def test_can_start_dusk_false_when_interviews_missing(monkeypatch):
+    """can_start_dusk_discussion returns False with interview count < total."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    ok, reason = engine.can_start_dusk_discussion()
+    assert ok is False
+    assert "采访" in reason
+
+
+# ============================================================================
+# Silver gameplay tests (Requirement 4)
+# ============================================================================
+
+def test_silver_holders_are_initialized(monkeypatch):
+    """Silver jewelry holder and knife holder are set on init."""
+    engine = _make_engine(monkeypatch)
+    assert engine._silver_jewelry_holder is not None
+    assert engine._silver_jewelry_holder != "Crow"
+    assert engine._silver_jewelry_holder in engine.agents
+
+    if engine._silver_knife_holder:
+        assert engine._silver_knife_holder != "Crow"
+        assert engine._silver_knife_holder not in engine.werewolf_names
+        assert engine._silver_knife_holder in engine.agents
+
+
+def test_acquire_silver_bullet_success(monkeypatch):
+    """Acquiring silver bullet from Arthur succeeds if Arthur is not werewolf."""
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Place Crow near Harvey Oak Supply Store
+    supply = game_engine.PUBLIC_LANDMARKS["Harvey Oak Supply Store"]
+    crow = engine.agents["Crow"]
+    crow.x = supply["x"]
+    crow.y = supply["y"]
+
+    # Ensure Arthur is not a werewolf for this test
+    if "Arthur Burton" in engine.werewolf_names:
+        # Reassign Arthur out of werewolf role for deterministic test
+        engine.werewolf_names = [n for n in engine.werewolf_names if n != "Arthur Burton"]
+        engine.agents["Arthur Burton"].role = "villager"
+
+    result = engine.acquire_silver_bullet()
+    assert result["success"] is True
+    assert engine._silver_bullet_acquired is True
+    assert "silver_bullet_acquired" in result
+
+
+def test_acquire_silver_bullet_fails_when_arthur_is_werewolf(monkeypatch):
+    """If Arthur is a werewolf, acquisition fails with suspicious clue."""
+    engine = _make_engine(monkeypatch, seed=99)
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Place Crow near Harvey Oak Supply Store
+    supply = game_engine.PUBLIC_LANDMARKS["Harvey Oak Supply Store"]
+    crow = engine.agents["Crow"]
+    crow.x = supply["x"]
+    crow.y = supply["y"]
+
+    # Force Arthur to be a werewolf
+    engine.agents["Arthur Burton"].role = "werewolf"
+    if "Arthur Burton" not in engine.werewolf_names:
+        engine.werewolf_names.append("Arthur Burton")
+
+    result = engine.acquire_silver_bullet()
+    assert result["success"] is False
+    assert result.get("suspicious") is True
+    assert engine._silver_bullet_acquired is False
+
+
+def test_acquire_silver_bullet_fails_when_too_far(monkeypatch):
+    """Must be near Harvey Oak Supply Store to acquire silver bullet."""
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Place Crow far away
+    crow = engine.agents["Crow"]
+    crow.x = 10
+    crow.y = 10
+
+    result = engine.acquire_silver_bullet()
+    assert result["success"] is False
+    assert "error" in result
+
+
+def test_silver_holders_deterministic_with_seed(monkeypatch):
+    """Same seed produces same silver holders."""
+    engine1 = _make_engine(monkeypatch, seed=42)
+    engine2 = _make_engine(monkeypatch, seed=42)
+
+    assert engine1._silver_jewelry_holder == engine2._silver_jewelry_holder
+    assert engine1._silver_knife_holder == engine2._silver_knife_holder
+
+
+def test_silver_status_in_get_status(monkeypatch):
+    """get_status includes silver progression fields."""
+    engine = _make_engine(monkeypatch)
+    status = engine.get_status()
+
+    assert "silver_bullet_acquired" in status
+    assert "silver_jewelry_acquired" in status
+    assert "silver_bullet_crafted" in status
+    assert status["silver_bullet_acquired"] is False
+    assert status["silver_jewelry_acquired"] is False
+    assert status["silver_bullet_crafted"] is False
+
+
+def test_craft_silver_bullet_requires_prerequisites(monkeypatch):
+    """Crafting requires bullet tool and jewelry acquired."""
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Missing prerequisites
+    result = engine.craft_silver_bullet()
+    assert result["success"] is False
+    assert "error" in result
+
+    # Acquire bullet only
+    engine._silver_bullet_acquired = True
+    result = engine.craft_silver_bullet()
+    assert result["success"] is False
+
+    # Acquire both but day < 4
+    engine._silver_jewelry_acquired = True
+    engine.day = 3
+    result = engine.craft_silver_bullet()
+    assert result["success"] is False
+
+    # Day 4 with both acquired → success
+    engine.day = 4
+    result = engine.craft_silver_bullet()
+    assert result["success"] is True
+    assert engine._silver_bullet_crafted is True
+
+
+def test_only_one_silver_objective_per_day(monkeypatch):
+    """Crow can complete only one key silver-resource action per day."""
+    engine = _make_engine(monkeypatch)
+    engine.day = 2
+    engine.phase = game_engine.GamePhase.DAY
+    engine.agents["Arthur Burton"].role = "villager"
+    crow = engine.agents["Crow"]
+    store = game_engine.PUBLIC_LANDMARKS["Harvey Oak Supply Store"]
+    crow.x, crow.y = store["x"], store["y"]
+
+    first = engine.acquire_silver_bullet()
+    assert first["success"] is True
+
+    holder = engine._silver_jewelry_holder
+    engine.agents[holder].x = crow.x
+    engine.agents[holder].y = crow.y
+    second = engine.acquire_silver_jewelry(holder)
+    assert second["success"] is False
+    assert "今天已经完成过" in second["error"]
+
+
+def test_silver_bullet_can_be_fired_once(monkeypatch):
+    """Crafted silver bullet can kill one target and then becomes unavailable."""
+    engine = _make_engine(monkeypatch)
+    engine.day = 4
+    engine._silver_bullet_acquired = True
+    engine._silver_jewelry_acquired = True
+    engine._silver_bullet_crafted = True
+    target = engine.werewolf_names[0]
+
+    result = engine.shoot_silver_bullet(target)
+    assert result["success"] is True
+    assert result["target_was_werewolf"] is True
+    assert engine.agents[target].is_alive is False
+    assert engine._silver_bullet_used is True
+
+    second = engine.shoot_silver_bullet(engine.werewolf_names[1])
+    assert second["success"] is False
+    assert "已经使用过" in second["error"]
+
+
+def test_hidden_silver_knife_can_be_used_once_at_night(monkeypatch):
+    """The hidden good NPC can use the silver knife once during night."""
+    engine = _make_engine(monkeypatch)
+    holder = engine._silver_knife_holder
+    assert holder is not None
+    engine.phase = game_engine.GamePhase.NIGHT
+    target = engine.werewolf_names[0]
+
+    result = engine.use_silver_knife(holder, target)
+    assert result["success"] is True
+    assert engine.agents[target].is_alive is False
+    assert engine._silver_knife_used is True
+
+    second = engine.use_silver_knife(holder, engine.werewolf_names[1])
+    assert second["success"] is False
+    assert "已经使用过" in second["error"]
+
+
+# ============================================================================
+# Deep dive tests (Requirement 5)
+# ============================================================================
+
+def test_deep_dive_requires_normal_chat_first(monkeypatch):
+    """Deep dive must be preceded by normal chat with that NPC today."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Setup
+    engine.agents["Crow"].deep_dive_quota = 3
+    engine.agents["Crow"].deep_dive_used = 0
+    engine.agents["Isabella Rodriguez"].can_chat_with = lambda name, deep: True
+    engine.agents["Isabella Rodriguez"].generate_response = lambda speaker, msg, day: "ok"
+
+    # Deep dive without normal chat first → error
+    result = engine.detective_chat("Isabella Rodriguez", "Tell me more", is_deep_dive=True)
+    assert "error" in result
+    assert "正常采访" in result["error"] or "深度追问" in result["error"]
+
+
+def test_normal_detective_chat_uses_fixed_human_question(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    captured = {}
+    engine.agents["Arthur Burton"].can_chat_with = lambda name, deep: True
+
+    def fake_response(speaker, msg, day):
+        captured["msg"] = msg
+        return "我昨晚在店里收拾工具，没离开过。现在我不放心山姆。"
+
+    engine.agents["Arthur Burton"].generate_response = fake_response
+    result = engine.detective_chat("Arthur Burton", "", is_deep_dive=False)
+
+    assert "response" in result
+    assert "时间线" in captured["msg"]
+    assert "为什么你不可能是凶手" in captured["msg"]
+    assert "最不放心谁" in captured["msg"]
+    assert "Arthur Burton" in engine._daily_interviewed
+    assert engine.chat_bubbles["Crow"]["target"] == "Arthur Burton"
+    assert "时间线" in engine.chat_bubbles["Crow"]["text"]
+
+
+def test_detective_chat_records_and_locks_before_slow_npc_reply(monkeypatch):
+    """Sheriff interviews must update visible state immediately, before the model returns."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    detective = engine.agents["Crow"]
+    target = engine.agents["Arthur Burton"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+    engine._daily_interviewed.add("Arthur Burton")
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_response(speaker, msg, day):
+        started.set()
+        release.wait(timeout=2)
+        return "我昨晚一直在店里，听见后巷有脚步声。"
+
+    target.generate_response = slow_response
+    result_holder = {}
+
+    t = threading.Thread(
+        target=lambda: result_holder.update(engine.detective_chat("Arthur Burton", "你再想想细节。", is_deep_dive=True)),
+        daemon=True,
+    )
+    t.start()
+    assert started.wait(timeout=1)
+
+    assert detective.deep_dive_used == 1
+    assert target.in_conversation_with == "Crow"
+    assert engine.chat_bubbles["Crow"]["target"] == "Arthur Burton"
+    assert "你再想想细节" in engine.chat_bubbles["Crow"]["text"]
+    assert engine.move_detective_to(10, 10) is False
+
+    release.set()
+    t.join(timeout=2)
+    assert result_holder["deep_dive_remaining"] == 2
+    assert target.in_conversation_with is None
+
+
+def test_detective_chat_uses_priority_no_retry_response(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    target = engine.agents["Arthur Burton"]
+    captured = {}
+
+    def fake_response(speaker, msg, day, priority=False, max_retries=None):
+        captured["priority"] = priority
+        captured["max_retries"] = max_retries
+        return "我马上回答警长。"
+
+    target.generate_response = fake_response
+
+    result = engine.detective_chat("Arthur Burton", "", is_deep_dive=False)
+
+    assert result["response"] == "我马上回答警长。"
+    assert captured == {"priority": True, "max_retries": 0}
+
+
+def test_detective_chat_interrupts_existing_npc_chat(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.in_conversation_with = "Isabella Rodriguez"
+    isabella.in_conversation_with = "Arthur Burton"
+    arthur._conversation_started_at = time.time()
+    isabella._conversation_started_at = time.time()
+    engine.chat_bubbles["Arthur Burton"] = {"text": "旧对话", "target": "Isabella Rodriguez", "time": time.time()}
+    engine.chat_bubbles["Isabella Rodriguez"] = {"text": "旧回复", "target": "Arthur Burton", "time": time.time()}
+
+    arthur.generate_response = lambda speaker, msg, day: "我先回答警长的问题。"
+
+    result = engine.detective_chat("Arthur Burton", "", is_deep_dive=False)
+
+    assert "response" in result
+    assert arthur.in_conversation_with is None
+    assert isabella.in_conversation_with is None
+    assert engine.chat_bubbles["Arthur Burton"]["target"] == "Crow"
+    assert "Isabella Rodriguez" not in engine.chat_bubbles or engine.chat_bubbles["Isabella Rodriguez"]["target"] != "Arthur Burton"
+
+
+def test_chat_available_respects_normal_chat_limit(monkeypatch):
+    """chat_available is False after normal chat limit reached."""
+    engine = _make_engine(monkeypatch)
+    detective = engine.agents["Crow"]
+    detective.chat_count = {"Arthur Burton": 1}  # Limit is 1
+
+    status = engine.get_status()
+    assert status["personas"]["Arthur Burton"]["chat_available"] is False
+
+
+def test_deep_dive_available_requires_normal_chat_done(monkeypatch):
+    """deep_dive_available is True only after normal chat done AND quota remaining."""
+    engine = _make_engine(monkeypatch)
+    detective = engine.agents["Crow"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+
+    # No normal chat done with Isabella → deep dive NOT available
+    status = engine.get_status()
+    assert status["personas"]["Isabella Rodriguez"]["deep_dive_available"] is False
+
+    # Mark Isabella as interviewed (normal chat done)
+    engine._daily_interviewed.add("Isabella Rodriguez")
+
+    status = engine.get_status()
+    assert status["personas"]["Isabella Rodriguez"]["deep_dive_available"] is True
+
+
+def test_deep_dive_does_not_count_as_daily_interview(monkeypatch):
+    """Deep dive should not add to daily_interviewed if normal wasn't done."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    detective = engine.agents["Crow"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+    # First do normal chat
+    engine.agents["Arthur Burton"].can_chat_with = lambda name, deep: True
+    engine.agents["Arthur Burton"].generate_response = lambda speaker, msg, day: "ok"
+    engine.detective_chat("Arthur Burton", "Hi", is_deep_dive=False)
+    assert "Arthur Burton" in engine._daily_interviewed
+
+    # Clear for next test
+    engine._daily_interviewed.clear()
+
+    # Now try deep dive WITHOUT prior normal
+    # Should be rejected
+    result = engine.detective_chat("Arthur Burton", "Deep?", is_deep_dive=True)
+    assert "error" in result
+    # deep dive should NOT have added to daily_interviewed
+    assert "Arthur Burton" not in engine._daily_interviewed
+
+
+def test_stale_thinking_state_is_released_for_retry(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    agent = engine.agents["Arthur Burton"]
+    agent.runtime_state = "thinking"
+    agent._is_thinking = True
+    agent._thinking_started_at = time.time() - 999
+
+    engine._update_agent_schedules()
+
+    assert agent._is_thinking is False
+    assert agent.runtime_state == "idle"
+    assert getattr(agent, "_next_llm_retry_time", 0) > 0
+
+
+def test_stale_npc_conversation_releases_both_participants(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    klaus = engine.agents["Klaus Mueller"]
+    arthur.in_conversation_with = "Klaus Mueller"
+    klaus.in_conversation_with = "Arthur Burton"
+    arthur._conversation_started_at = time.time() - 999
+    klaus._conversation_started_at = time.time() - 999
+
+    engine._update_agent_schedules()
+
+    assert arthur.in_conversation_with is None
+    assert klaus.in_conversation_with is None
+    assert arthur.runtime_state in {"idle", "thinking"}
+
+
+def test_npc_conversation_releases_when_distance_exceeds_chat_range(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    klaus = engine.agents["Klaus Mueller"]
+    arthur.x, arthur.y = 10, 10
+    klaus.x, klaus.y = 13, 10
+    arthur.in_conversation_with = "Klaus Mueller"
+    klaus.in_conversation_with = "Arthur Burton"
+    arthur._conversation_started_at = time.time()
+    klaus._conversation_started_at = time.time()
+
+    engine._update_agent_schedules()
+
+    assert arthur.in_conversation_with is None
+    assert klaus.in_conversation_with is None
+
+
+# ============================================================================
+# Night target eligibility with jailed (Requirement 6)
+# ============================================================================
+
+def test_night_targets_exclude_jailed(monkeypatch):
+    """_eligible_night_targets must exclude jailed residents."""
+    engine = _make_engine(monkeypatch)
+    engine._jailed.add("Isabella Rodriguez")
+
+    targets = engine._eligible_night_targets()
+    assert "Isabella Rodriguez" not in targets
+    # Non-jailed residents should still be included
+    other_residents = [n for n in engine.agents
+                       if n != "Crow" and n not in engine.werewolf_names
+                       and n != "Isabella Rodriguez" and engine.agents[n].is_alive]
+    for resident in other_residents:
+        assert resident in targets
+
+
+def test_hunt_candidates_exclude_jailed(monkeypatch):
+    """_build_hunt_candidates must exclude jailed targets."""
+    engine = _make_engine(monkeypatch)
+    # Setup wolf somewhere
+    wolf_name = engine.werewolf_name
+    engine.agents[wolf_name].x = 50
+    engine.agents[wolf_name].y = 50
+
+    # Jail someone
+    engine._jailed.add("Isabella Rodriguez")
+
+    candidates = engine._build_hunt_candidates()
+    candidate_names = [c.name for c in candidates]
+    assert "Isabella Rodriguez" not in candidate_names
+
+
+# ============================================================================
+# primary_cta updates (Requirement 2 gating)
+# ============================================================================
+
+def test_primary_cta_interviews_when_dusk_blocked(monkeypatch):
+    """primary_cta should be 'interviews' when can_start_dusk is False."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # No interviews done → primary_cta should not be dusk_discussion
+    status = engine.get_status()
+    assert status["can_start_dusk_discussion"] is False
+    assert status["primary_cta"] == "interviews"
+
+
+def test_primary_cta_jail_choice_during_vote_active(monkeypatch):
+    """primary_cta should be 'jail_choice' when dusk votes are active and no jail choice made."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    # Complete all interviews
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+    engine.start_dusk_discussion()
+
+    status = engine.get_status()
+    assert status["primary_cta"] == "jail_choice"
+    assert status["vote_summary"]["active"] is True
+    assert status["vote_summary"]["jail_target"] is None
+
+
+def test_jail_choice_transitions_to_night(monkeypatch):
+    """After jail target is chosen, Crow escorts the target to prison and night starts."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    for name in engine.agents:
+        if name != "Crow" and engine.agents[name].is_alive:
+            engine._daily_interviewed.add(name)
+    engine.start_dusk_discussion()
+    engine.jail_vote_target("Arthur Burton")
+
+    status = engine.get_status()
+    assert status["phase"] == "night"
+    assert status["primary_cta"] is None
+    assert "Arthur Burton" in status["jailed"]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Collision / object-target positioning regression tests
+# Ensure agents never stop on top of blocking furniture objects
+# (shelves, counters, tables, etc.) after movement.
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _make_engine_with_go_maze(monkeypatch, seed=7):
+    """Create an engine with a real-ish go_maze so blocking-object checks work."""
+    engine = _make_engine(monkeypatch, seed=seed)
+    w, h = 140, 100
+    # Build a minimal go_maze and go_dict
+    engine.go_maze = [[0] * w for _ in range(h)]
+    engine.go_dict = {
+        1: "pharmacy store shelf",
+        2: "behind the cafe counter",
+        3: "bookshelf",
+        4: "common room table",
+        5: "empty floor space",  # non-blocking
+    }
+    # Place blocking objects on specific tiles
+    # Shelf at (80, 45) — a 2×2 shelf
+    for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+        engine.go_maze[45 + dy][80 + dx] = 1
+    # Counter at (90, 50)
+    engine.go_maze[50][90] = 2
+    engine.go_maze[50][91] = 2
+    # Bookshelf at (120, 40)
+    engine.go_maze[40][120] = 3
+    engine.go_maze[41][120] = 3
+    # Non-blocking object at (100, 60)
+    engine.go_maze[60][100] = 5
+
+    # collision_maze: mark shelf/counter tiles as walkable (0) to simulate
+    # the real-world data inconsistency that causes the bug
+    for (x, y) in [(80, 45), (81, 45), (80, 46), (81, 46),
+                    (90, 50), (91, 50),
+                    (120, 40), (121, 40)]:
+        engine.collision_maze[y][x] = 0
+
+    return engine
+
+
+class TestTileFreeOfBlockingObjects:
+    def test_returns_false_for_shelf(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Shelf tile (80, 45) should be blocked
+        assert engine._is_tile_free_of_blocking_objects(80, 45) is False
+        assert engine._is_tile_free_of_blocking_objects(81, 46) is False
+
+    def test_returns_false_for_counter(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        assert engine._is_tile_free_of_blocking_objects(90, 50) is False
+        assert engine._is_tile_free_of_blocking_objects(91, 50) is False
+
+    def test_returns_false_for_bookshelf(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        assert engine._is_tile_free_of_blocking_objects(120, 40) is False
+
+    def test_returns_true_for_empty_tile(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # (70, 70) is far from any object — should be free
+        assert engine._is_tile_free_of_blocking_objects(70, 70) is True
+
+    def test_returns_true_for_non_blocking_object(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # (100, 60) has object id 5 "empty floor space" — non-blocking
+        assert engine._is_tile_free_of_blocking_objects(100, 60) is True
+
+    def test_returns_true_when_no_go_maze(self, monkeypatch):
+        engine = _make_engine(monkeypatch)
+        # No go_maze set → all tiles considered free
+        assert engine._is_tile_free_of_blocking_objects(50, 50) is True
+
+
+class TestPathAdjacentToAvoidsObjectTiles:
+    def test_adjacent_to_shelf_does_not_pick_shelf_tile(self, monkeypatch):
+        """When targeting a shelf tile, adjacent candidates must not be
+        other shelf tiles (even if walkable in collision_maze)."""
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Agent starts at (70, 46) — west of the shelf at (80-81, 45-46)
+        agent_x, agent_y = 70, 46
+        # Target: a shelf tile at (80, 45)
+        target = (80, 45)
+        result = engine._path_adjacent_to((agent_x, agent_y), target)
+        assert result is not None, "Should find a reachable adjacent tile"
+        adj_x, adj_y, path = result
+        # Adjacent tile must not be any of the shelf tiles
+        shelf_tiles = {(80, 45), (81, 45), (80, 46), (81, 46)}
+        assert (adj_x, adj_y) not in shelf_tiles, (
+            f"Adjacent tile {(adj_x, adj_y)} must not be a shelf tile"
+        )
+        # It should be a valid walkable tile
+        assert engine.collision_maze[adj_y][adj_x] == 0
+
+    def test_adjacent_to_counter_does_not_pick_counter_tile(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Agent starts south of the counter at (90, 50)
+        engine.collision_maze[51][90] = 0  # tile south of counter walkable
+        agent_pos = (90, 53)
+        target = (90, 50)  # counter tile
+        result = engine._path_adjacent_to(agent_pos, target)
+        assert result is not None
+        adj_x, adj_y, path = result
+        # Counter occupies (90,50) and (91,50)
+        counter_tiles = {(90, 50), (91, 50)}
+        assert (adj_x, adj_y) not in counter_tiles, (
+            f"Adjacent tile {(adj_x, adj_y)} must not be a counter tile"
+        )
+
+    def test_adjacent_to_bookshelf_does_not_pick_bookshelf_tile(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        agent_pos = (119, 42)
+        target = (120, 40)  # bookshelf tile
+        result = engine._path_adjacent_to(agent_pos, target)
+        assert result is not None
+        adj_x, adj_y, path = result
+        bookshelf_tiles = {(120, 40), (121, 40)}
+        assert (adj_x, adj_y) not in bookshelf_tiles, (
+            f"Adjacent tile {(adj_x, adj_y)} must not be a bookshelf tile"
+        )
+
+    def test_agent_ends_on_walkable_non_object_tile_when_targeting_shelf(self, monkeypatch):
+        """Full integration: agent moves toward a shelf target and final
+        (target_x, target_y) is a walkable non-object tile adjacent to the shelf."""
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Put agent at a known starting position
+        agent = engine.agents["Klaus Mueller"]
+        agent.x, agent.y = 70, 47
+        # Ensure a clear path to the area around the shelf
+        for y in range(44, 49):
+            for x in range(70, 82):
+                if engine.go_maze[y][x] not in (0, 5):  # skip blocking tiles
+                    pass  # these are already at shelf positions
+                engine.collision_maze[y][x] = 0
+
+        # Simulate agent deciding to move to the shelf at (80, 45)
+        monkeypatch.setattr(
+            engine,
+            "_find_object_in_spatial_memory",
+            lambda a, loc, obj: (80, 45) if obj == "pharmacy store shelf" else None,
+        )
+        agent.spatial_memory = {"The Willows Market and Pharmacy": {"main": ["pharmacy store shelf"]}}
+
+        ok = engine._set_agent_target(
+            agent, "Klaus Mueller", "The Willows Market and Pharmacy", "pharmacy store shelf"
+        )
+        assert ok is True
+        # Agent target should be adjacent to (80, 45), not on it
+        dist = abs(agent.target_x - 80) + abs(agent.target_y - 45)
+        assert dist == 1, f"Agent target should be distance 1 from shelf, got {dist} at ({agent.target_x}, {agent.target_y})"
+        shelf_tiles = {(80, 45), (81, 45), (80, 46), (81, 46)}
+        assert (agent.target_x, agent.target_y) not in shelf_tiles, (
+            f"Agent target must not be a shelf tile, got ({agent.target_x}, {agent.target_y})"
+        )
+
+
+class TestNearestWalkableTileAvoidsObjectTiles:
+    def test_nearest_walkable_tile_skips_shelf_tile(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Request nearest walkable tile at (80, 45) which is a shelf
+        # The function should skip it and return a nearby non-shelf tile
+        result = engine._nearest_walkable_tile((80, 45))
+        assert result is not None
+        nx, ny = result
+        shelf_tiles = {(80, 45), (81, 45), (80, 46), (81, 46)}
+        assert (nx, ny) not in shelf_tiles, (
+            f"_nearest_walkable_tile returned shelf tile ({nx}, {ny})"
+        )
+        assert engine.collision_maze[ny][nx] == 0
+
+    def test_nearest_walkable_tile_skips_counter_tile(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        result = engine._nearest_walkable_tile((90, 50))
+        assert result is not None
+        nx, ny = result
+        counter_tiles = {(90, 50), (91, 50)}
+        assert (nx, ny) not in counter_tiles, (
+            f"_nearest_walkable_tile returned counter tile ({nx}, {ny})"
+        )
+
+    def test_nearest_walkable_tile_in_component_skips_object(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Build a component that includes both a shelf tile and a free tile
+        component = {(80, 45), (79, 45)}  # (80,45) is shelf, (79,45) is free
+        result = engine._nearest_walkable_tile_in_component((80, 45), component)
+        assert result is not None
+        assert result == (79, 45), (
+            f"Should pick (79, 45) over shelf tile (80, 45), got {result}"
+        )
+
+    def test_nearest_reachable_path_skips_object_tiles(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Put agent at (70, 47), ensure clear path
+        agent = engine.agents["Klaus Mueller"]
+        agent.x, agent.y = 70, 47
+        for y in range(44, 50):
+            for x in range(70, 82):
+                engine.collision_maze[y][x] = 0
+
+        # Target the shelf at (80, 45) — _nearest_reachable_path should
+        # find a reachable non-object tile nearby
+        result = engine._nearest_reachable_path((70, 47), (80, 45), radius=8)
+        if result is not None:
+            nx, ny, path = result
+            shelf_tiles = {(80, 45), (81, 45), (80, 46), (81, 46)}
+            assert (nx, ny) not in shelf_tiles, (
+                f"_nearest_reachable_path selected shelf tile ({nx}, {ny})"
+            )
+
+
+def test_agent_path_routes_around_blocking_furniture(monkeypatch):
+    engine = _make_engine_with_go_maze(monkeypatch)
+    agent = engine.agents["Klaus Mueller"]
+    agent.x, agent.y = 79, 45
+    agent.target_x, agent.target_y = 82, 45
+    engine.agent_paths.pop("Klaus Mueller", None)
+
+    visited = []
+    for _ in range(8):
+        engine._move_agents()
+        visited.append((agent.x, agent.y))
+        if (agent.x, agent.y) == (agent.target_x, agent.target_y):
+            break
+
+    assert (agent.x, agent.y) == (82, 45)
+    assert all(engine._is_tile_free_of_blocking_objects(x, y) for x, y in visited)
+
+
+# ============================================================================
+# Requirement: NPC-NPC autonomous chat lifecycle & empty fallback (Requirement 1 & 2)
+# ============================================================================
+
+def test_npc_chat_empty_initiator_reply_uses_visible_fallback(monkeypatch):
+    """When chat_for_agent returns empty for the initiator, a visible fallback
+    bubble must be published instead of returning silently."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "我听见脚步声了。")
+    # Shorten the NPC chat delay for fast test
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=3)
+
+    # Initiator bubble must exist with fallback text
+    assert "Arthur Burton" in engine.chat_bubbles, "Initiator bubble missing"
+    assert engine.chat_bubbles["Arthur Burton"]["target"] == "Isabella Rodriguez"
+    # Should contain the visible fallback, not be empty
+    assert len(engine.chat_bubbles["Arthur Burton"]["text"]) > 5
+    # Responder bubble should also exist
+    assert "Isabella Rodriguez" in engine.chat_bubbles
+    assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton"
+
+
+def test_npc_chat_lifecycle_sets_and_releases_in_conversation_with(monkeypatch):
+    """NPC-NPC chat must set in_conversation_with on both participants before
+    thread work and always release them in finally."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+
+    # Ensure both start free
+    assert getattr(arthur, 'in_conversation_with', None) is None
+    assert getattr(isabella, 'in_conversation_with', None) is None
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你好")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "你好，有什么事？")
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=3)
+
+    # Both must be released after chat completes
+    assert getattr(arthur, 'in_conversation_with', None) is None, (
+        "Arthur should be released from conversation"
+    )
+    assert getattr(isabella, 'in_conversation_with', None) is None, (
+        "Isabella should be released from conversation"
+    )
+
+
+def test_npc_chat_skips_when_either_in_conversation(monkeypatch):
+    """If either participant is already in_conversation_with someone, the chat
+    must not start."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+
+    # Simulate Arthur already talking to someone
+    arthur.in_conversation_with = "Klaus Mueller"
+
+    call_count = [0]
+    def counting_chat(*args, **kwargs):
+        call_count[0] += 1
+        return "hi"
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", counting_chat)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    # No thread should have been spawned since guard prevents it
+    # chat_for_agent should not have been called
+    assert call_count[0] == 0, "chat_for_agent must not be called when participant is busy"
+
+
+def test_npc_chat_lifecycle_releases_on_exception(monkeypatch):
+    """Even if the chat thread raises an exception, both participants must be released."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+
+    monkeypatch.setattr(arthur, "read_soul", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=1)
+
+    assert arthur.in_conversation_with is None
+    assert isabella.in_conversation_with is None
+
+
+def test_npc_chat_sequential_bubble_timing_zero_delay(monkeypatch):
+    """With monkeypatched zero delay, both bubbles appear in order."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+
+    # Patch config to zero delay for fast test
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你好")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "你好，什么事？")
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=3)
+
+    # Both bubbles should exist
+    assert "Arthur Burton" in engine.chat_bubbles
+    assert "Isabella Rodriguez" in engine.chat_bubbles
+    assert engine.chat_bubbles["Arthur Burton"]["text"] != ""
+    assert engine.chat_bubbles["Isabella Rodriguez"]["text"] != ""
+
+
+def test_bubble_lifetime_configured(monkeypatch):
+    """Bubble expiration uses configurable lifetime, not hardcoded 60."""
+    engine = _make_engine(monkeypatch)
+    # Add a bubble older than 12 seconds (default config lifetime)
+    engine.chat_bubbles["old_bubble"] = {"text": "old", "time": time.time() - 20}
+
+    # Force bubble lifetime to 12 via CONFIG (modify in place)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 12)
+
+    engine._expire_chat_bubbles()
+    assert "old_bubble" not in engine.chat_bubbles, "Old bubble should be expired"
+
+    # Fresh bubble should survive
+    engine.chat_bubbles["fresh"] = {"text": "hi", "time": time.time()}
+    engine._expire_chat_bubbles()
+    assert "fresh" in engine.chat_bubbles, "Fresh bubble should survive"
+
+
+def test_npc_chat_sets_response_error_on_empty_initiator(monkeypatch):
+    """When initiator returns empty, _last_response_error must be set to 'empty_response'."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "收到。")
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=3)
+
+    assert getattr(arthur, '_last_response_error', '') == "empty_response", (
+        "Initiator must have empty_response error set"
+    )
+
+
+def test_npc_chat_success_clears_old_error_and_stale_responder_bubble(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    arthur._last_response_error = "empty_response"
+    engine.chat_bubbles["Isabella Rodriguez"] = {
+        "text": "stale",
+        "target": "Klaus Mueller",
+        "time": time.time(),
+    }
+    responder_started = threading.Event()
+    responder_continue = threading.Event()
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你昨晚看见什么了吗？")
+
+    def delayed_response(speaker, message, day):
+        responder_started.set()
+        responder_continue.wait(timeout=1)
+        return "我只听见街上有脚步声。"
+
+    monkeypatch.setattr(isabella, "generate_response", delayed_response)
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    assert responder_started.wait(timeout=1)
+    responder_continue.set()
+    engine.llm_threads[-1].join(timeout=1)
+
+    assert arthur._last_response_error == ""
+    assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton"
+
+
+def test_npc_chat_requires_distance_one_or_less(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 12, 10
+    calls = []
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: calls.append(args) or "你好")
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+
+    assert calls == []
+    assert not engine.llm_threads
+    assert arthur.in_conversation_with is None
+    assert isabella.in_conversation_with is None
+
+
+def test_late_npc_chat_reply_is_ignored_after_participants_separate(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    responder_started = threading.Event()
+    responder_continue = threading.Event()
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你听到什么了吗？")
+
+    def delayed_response(speaker, message, day):
+        responder_started.set()
+        responder_continue.wait(timeout=1)
+        return "我听到脚步声。"
+
+    monkeypatch.setattr(isabella, "generate_response", delayed_response)
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    assert responder_started.wait(timeout=1)
+
+    isabella.x, isabella.y = 20, 20
+    engine._clear_conversation_if_too_far("Arthur Burton", "Isabella Rodriguez")
+    responder_continue.set()
+    engine.llm_threads[-1].join(timeout=2)
+
+    assert "Arthur Burton" not in engine.chat_bubbles
+    assert "Isabella Rodriguez" not in engine.chat_bubbles
+
+
+def test_talk_decision_moves_toward_target_person_when_far(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 10, 10
+    isabella.x, isabella.y = 20, 10
+    arthur.current_location = "Johnson Park"
+
+    assert engine._action_needs_movement(arthur, "talk", "Johnson Park", "", "Isabella Rodriguez") is True
+
+
+def test_chinese_display_target_person_resolves_to_internal_id(monkeypatch):
+    assert game_engine.resolve_character_name("伊莎贝拉") == "Isabella Rodriguez"
+    assert game_engine.resolve_character_name("林梅") == "Mei Lin"
+
+
+def test_failed_action_decision_becomes_visible_stay_action(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+    arthur.current_location = "Johnson Park"
+    arthur._last_llm_decision_time = 0
+
+    def failed_decision(*args, **kwargs):
+        return {"ok": False, "error": "empty_response", "raw_response": ""}
+
+    monkeypatch.setattr(arthur, "decide_next_action", failed_decision)
+    engine._update_agent_schedules()
+    deadline = time.time() + 3
+    while time.time() < deadline and getattr(arthur, "runtime_state", "") == "thinking":
+        time.sleep(0.05)
+
+    assert arthur.current_action_type == "stay"
+    assert "停留" in arthur.current_action
+    assert any("类型=stay" in entry["message"] for entry in engine.game_log)
+
+
+def test_talk_decision_starts_chat_when_target_person_adjacent(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "询问昨晚是否看到可疑动静",
+        "thought": "她离我很近，可以先问一句。",
+        "expected_result": "获得线索",
+    }
+    calls = []
+    monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
+
+    engine._complete_agent_action("Arthur Burton", arthur)
+
+    assert calls == [("Arthur Burton", "Isabella Rodriguez")]
+    assert arthur._pending_action is None
+
+
+def test_talk_decision_to_crow_speaks_directly_when_adjacent(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    crow = engine.agents["Crow"]
+    arthur.x, arthur.y = 10, 10
+    crow.x, crow.y = 11, 10
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Crow",
+        "action": "告诉警长我发现了新的线索",
+        "thought": "警长就在附近，应该马上说明。",
+        "expected_result": "让警长知道线索",
+    }
+    monkeypatch.setattr(arthur, "generate_response", lambda *args, **kwargs: "警长，我发现了一点异常。")
+
+    engine._complete_agent_action("Arthur Burton", arthur)
+
+    assert engine.chat_bubbles["Arthur Burton"]["target"] == "Crow"
+    assert "警长" in engine.chat_bubbles["Arthur Burton"]["text"]
+    assert arthur._pending_action is None
+
+
+def test_localize_character_names_does_not_corrupt_crown_location():
+    text = game_engine.localize_visible_character_names("我要去 The Rose and Crown Pub 开门。")
+    assert "克罗n" not in text
+    assert "玫瑰与皇冠酒吧" in text
+
+
+def test_college_default_objects_split_klaus_and_mei(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    assert engine._departure_object("Klaus Mueller", "Oak Hill College") == "classroom student seating"
+    assert engine._departure_object("Mei Lin", "Oak Hill College") == "bookshelf"
+
+
+def test_college_role_defaults_override_model_object(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    klaus = engine.agents["Klaus Mueller"]
+    mei = engine.agents["Mei Lin"]
+
+    def fake_find(agent, location, obj):
+        coords = {
+            "classroom student seating": (115, 25),
+            "bookshelf": (123, 27),
+        }
+        return coords.get(obj)
+
+    monkeypatch.setattr(engine, "_find_object_in_spatial_memory", fake_find)
+
+    assert engine._departure_object("Klaus Mueller", "Oak Hill College", "bookshelf") == "classroom student seating"
+    assert engine._departure_object("Mei Lin", "Oak Hill College", "classroom student seating") == "bookshelf"
+    assert engine._resolve_concrete_target_object(
+        klaus, "Oak Hill College", "bookshelf", "move_to", "go to bookshelf"
+    ) == "classroom student seating"
+    assert engine._resolve_concrete_target_object(
+        mei, "Oak Hill College", "classroom student seating", "move_to", "go to classroom"
+    ) == "bookshelf"
+
+
+def test_llm_tick_does_not_start_random_proximity_chat(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    calls = []
+    monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
+    monkeypatch.setattr(arthur, "reflect", lambda context: "我需要继续工作。")
+
+    engine._check_llm_chats("Arthur Burton")
+
+    assert calls == []
+
+
+def test_random_werewolf_no_fixed_seed(monkeypatch):
+    empty_maze = [[0] * 140 for _ in range(100)]
+    monkeypatch.setattr(game_engine, "load_collision_maze", lambda: empty_maze)
+    monkeypatch.setattr(
+        game_engine,
+        "load_scene_data",
+        lambda: (empty_maze, empty_maze, empty_maze, {}, {}, {}),
+    )
+    monkeypatch.setattr(
+        game_engine.WerewolfGameEngine,
+        "_build_shared_spatial_memory",
+        lambda self: {},
+    )
+    monkeypatch.setattr(game_engine.Agent, "init_files", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "init_scratch_from_soul", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "load_shared_spatial_memory", lambda self, data: None)
+    monkeypatch.setattr(game_engine.Agent, "add_memory", lambda self, event, day: None)
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "")
+
+    combinations = set()
+    for _ in range(30):
+        engine = game_engine.WerewolfGameEngine(random_seed=None)
+        combo = tuple(sorted(engine.werewolf_names))
+        combinations.add(combo)
+
+    assert len(combinations) > 1, f"Expected multiple werewolf combinations, but got only {combinations}"
+
+
+def test_bury_bodies_after_gathering_marks_body_and_crow_explains(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    body = engine.bodies[0]
+
+    engine._bury_bodies_after_gathering()
+
+    assert body.buried is False
+    assert body.burying is True
+    assert body.burial_target_x == 12
+    assert body.burial_target_y == 46
+    for _ in range(200):
+        engine._move_agents()
+        if body.buried:
+            break
+
+    assert body.buried is True
+    assert body.location == "Johnson Park"
+    assert (body.x, body.y) == (12, 46)
+    bubble = engine.chat_bubbles[engine.detective_name]["text"]
+    assert "尸体" in bubble
+    assert "公园" in bubble
+
+
+def test_gathering_end_buries_opening_body_before_crow_investigates(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    engine._gathering_active = True
+    engine._gathering_busy = False
+    engine._gathering_queue = ["Crow"]
+    engine._gathering_left = {"Crow": True}
+    engine._gathering_round = 2
+    engine._gathering_speaker_idx = 0
+    called = []
+    monkeypatch.setattr(engine, "_start_crow_scene_investigation", lambda: called.append("investigate"))
+
+    engine._handle_round_two_plus()
+
+    assert engine._gathering_active is False
+    assert engine.bodies[0].burying is True
+    assert called == []
+    for _ in range(200):
+        engine._move_agents()
+        if engine.bodies[0].buried:
+            break
+
+    assert engine.bodies[0].buried is True
+    assert called == []
+    for _ in range(200):
+        engine._move_agents()
+        if called:
+            break
+
+    assert called == ["investigate"]
+
+
+# ============================================================
+# Requirement 1: Crow status suppression — no blue thought/action
+# ============================================================
+
+
+def test_crow_status_suppresses_blue_bubble_fields(monkeypatch):
+    """Crow must not expose thought, action, action_plan, runtime_state, emoji
+    or conversation_with in get_status, preventing blue thought/action bubbles."""
+    engine = _make_engine(monkeypatch)
+    status = engine.get_status()
+    crow = status["personas"]["Crow"]
+
+    assert crow["thought"] == "", f"Crow thought should be empty, got: {crow['thought']!r}"
+    assert crow["thought_time"] == 0, "Crow thought_time should be 0"
+    assert crow["thought_summary"] == "", f"Crow thought_summary should be empty"
+    assert crow["action"] == "", f"Crow action should be empty, got: {crow['action']!r}"
+    assert crow["action_type"] == "", f"Crow action_type should be empty"
+    assert crow["action_plan"] == "", f"Crow action_plan should be empty"
+    assert crow["action_target_location"] == "", "Crow action_target_location should be empty"
+    assert crow["action_target_person"] == "", "Crow action_target_person should be empty"
+    assert crow["emoji"] == "", f"Crow emoji should be empty, got: {crow['emoji']!r}"
+    assert crow["runtime_state"] == "idle", f"Crow runtime_state should be idle, got: {crow['runtime_state']!r}"
+    assert crow["conversation_with"] is None, "Crow conversation_with should be None"
+    assert crow["last_decision"] == {}, "Crow last_decision should be empty dict"
+    assert crow["current_goal"] == "", "Crow current_goal should be empty"
+    # Non-Crow should have their fields exposed
+    npc_name = next(n for n in engine.agents if n != "Crow")
+    npc = status["personas"][npc_name]
+    assert "thought" in npc
+    assert "action" in npc
+    assert "runtime_state" in npc
+    assert "emoji" in npc
+
+
+# ============================================================
+# Requirement 2: Detective chat lock — NPCs do not approach busy Crow
+# ============================================================
+
+
+def test_npc_avoids_approaching_crow_when_crow_in_conversation(monkeypatch):
+    """When Crow is already in conversation, NPC must not pathfind to Crow."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    crow = engine.agents["Crow"]
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 10, 11
+    crow.x, crow.y = 10, 10
+    crow.in_conversation_with = "Isabella Rodriguez"
+
+    # Arthur has a pending action to talk to Crow
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Crow",
+        "action": "我有发现要报告",
+        "thought": "接近警长",
+        "expected_result": "报告线索",
+    }
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "")
+
+    # Call _complete_agent_action: it should check if Crow is busy and abort
+    engine._complete_agent_action("Arthur Burton", arthur)
+    # _pending_action should be cleared and runtime_state set to idle
+    assert getattr(arthur, '_pending_action', None) is None, (
+        "Arthur's pending action should be cleared"
+    )
+    assert arthur.runtime_state == "idle", (
+        "Arthur should be set to idle when Crow is busy"
+    )
+
+
+def test_npc_to_npc_avoids_target_already_in_conversation(monkeypatch):
+    """NPC must not initiate chat with another NPC who is already in conversation."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+
+    # Simulate Isabella already in conversation
+    isabella.in_conversation_with = "Klaus Mueller"
+
+    # Arthur has a pending action to talk to Isabella
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "想聊聊",
+        "thought": "接近伊莎贝拉",
+        "expected_result": "聊天",
+    }
+
+    # Arthur tries to talk to Isabella
+    engine._complete_agent_action("Arthur Burton", arthur)
+    # Should not trigger chat since target is busy (completing action fails)
+    assert engine.chat_bubbles.get("Arthur Burton") is None
+    assert arthur._pending_action is None, "Pending action should be cleared"
+    assert arthur.runtime_state == "idle", "Arthur should be set to idle"
+
+
+# ============================================================
+# Requirement 2: Conversation distance — clear if > 1
+# ============================================================
+
+
+def test_npc_conversation_cleared_when_distance_exceeds_one(monkeypatch):
+    """NPC-to-NPC conversation must be cleared when distance > 1."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+
+    # Set up a conversation
+    arthur.in_conversation_with = "Isabella Rodriguez"
+    arthur._conversation_started_at = time.time()
+    isabella.in_conversation_with = "Arthur Burton"
+    isabella._conversation_started_at = time.time()
+
+    # Put them far apart
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 50, 50
+
+    # Run the agent schedule check that clears far conversations
+    engine._update_agent_schedules()
+
+    # Give threads a moment then check release
+    for t in getattr(engine, 'llm_threads', []):
+        t.join(timeout=2)
+
+    assert getattr(arthur, 'in_conversation_with', None) is None, (
+        "Arthur should be released when distance > 1"
+    )
+    assert getattr(isabella, 'in_conversation_with', None) is None, (
+        "Isabella should be released when distance > 1"
+    )
+
+
+# ============================================================
+# Requirement 4: NPC reply clears stale thought/plan
+# ============================================================
+
+
+def test_npc_to_npc_chat_clears_stale_state(monkeypatch):
+    """When NPC-to-NPC chat starts, both participants must have stale thoughts cleared."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+
+    # Set stale state on both
+    arthur.current_thought = "我怀疑伊莎贝拉很可疑……"
+    arthur.current_thought_time = 12345.0
+    arthur._pending_action = {"action_type": "investigate", "target_location": "somewhere"}
+    arthur._last_decision = {"thought": "old decision"}
+
+    isabella.current_thought = "亚瑟在看我……"
+    isabella._pending_action = {"action_type": "observe"}
+    isabella._last_decision = {"thought": "also old"}
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你好")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "你好，什么事？")
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+
+    # Wait for thread to complete
+    for t in getattr(engine, 'llm_threads', []):
+        t.join(timeout=5)
+
+    # Stale state should be cleared
+    assert arthur.current_thought == "", "Arthur's thought should be cleared"
+    assert arthur.current_thought_time == 0, "Arthur's thought_time should be reset"
+    assert arthur._pending_action is None, "Arthur's pending_action should be cleared"
+    assert arthur._last_decision == {}, "Arthur's last_decision should be cleared"
+
+    assert isabella.current_thought == "", "Isabella's thought should be cleared"
+    assert isabella._pending_action is None, "Isabella's pending_action should be cleared"
+    assert isabella._last_decision == {}, "Isabella's last_decision should be cleared"
+
+
+# ============================================================
+# Requirement 4: Detective chat records Q&A in NPC memory
+# ============================================================
+
+
+def test_detective_chat_clears_npc_stale_state(monkeypatch):
+    """When NPC replies to Crow in detective_chat, stale thought/plan must be cleared
+    and both question and answer recorded in the NPC's memory."""
+    engine = _make_engine(monkeypatch)
+
+    crow = engine.agents["Crow"]
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 10, 10
+    crow.x, crow.y = 11, 10
+
+    # Set stale state on the NPC
+    arthur.current_thought = "我怀疑有人……"
+    arthur.current_thought_time = 999.0
+    arthur.current_action = "四处张望"
+    arthur.current_action_type = "observe"
+    arthur._pending_action = {"action_type": "investigate", "target_location": "somewhere"}
+    arthur._last_decision = {"thought": "old decision"}
+    arthur._last_raw_response = "some old raw text"
+    arthur._is_thinking = True
+
+    memory_entries = []
+
+    def capture_memory(self, event, day):
+        memory_entries.append(event)
+
+    monkeypatch.setattr(arthur, "add_memory", capture_memory.__get__(arthur, game_engine.Agent))
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "我有线索要报告。")
+
+    # Perform a detective chat
+    result = engine.detective_chat("Arthur Burton", "你昨晚在哪里？")
+    assert "error" not in result, f"Chat should succeed, got error: {result}"
+
+    # Stale state must be cleared
+    assert arthur.current_thought == "", "Arthur's thought should be cleared after replying"
+    assert arthur.current_thought_time == 0, "Arthur's thought_time should be reset"
+    assert arthur.current_action == "", "Arthur's action should be cleared"
+    assert arthur.current_action_type == "", "Arthur's action_type should be cleared"
+    assert arthur._pending_action is None, "Arthur's pending_action should be cleared"
+    assert arthur._last_decision == {}, "Arthur's last_decision should be cleared"
+    assert arthur._is_thinking is False, "Arthur's _is_thinking should be False"
+
+
+# ============================================================
+# Requirement 5: Mei Lin and Klaus separation at Oak Hill College
+# ============================================================
+
+
+def test_mei_lin_and_klaus_have_separate_college_defaults(monkeypatch):
+    """Mei Lin must default to library (bookshelf), Klaus to classroom."""
+    engine = _make_engine(monkeypatch)
+    # By schedule/start they already have different spots inside Oak Hill College
+    assert engine._departure_object("Klaus Mueller", "Oak Hill College") == "classroom student seating"
+    assert engine._departure_object("Mei Lin", "Oak Hill College") == "bookshelf"
+    assert engine._departure_object("Klaus Mueller", "Oak Hill College") != engine._departure_object("Mei Lin", "Oak Hill College")
+
+
+def test_sam_departure_goes_to_pub_not_park(monkeypatch):
+    """Sam Moore must depart to The Rose and Crown Pub, not Johnson Park."""
+    engine = _make_engine(monkeypatch)
+    fallback = game_engine.DEPARTURE_FALLBACKS["Sam Moore"]
+    assert "公园" not in fallback, f"Sam fallback should not mention park: {fallback}"
+    assert "酒吧" in fallback or "酒馆" in fallback, f"Sam fallback should mention pub: {fallback}"

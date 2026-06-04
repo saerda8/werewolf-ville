@@ -1,0 +1,96 @@
+agent:
+  debug_coordinates: false
+  max_act_seconds: 15
+  min_act_seconds: 5
+conversation:
+  deep_dive_per_day: 3
+  deep_dive_quota:
+    kill_1: 3
+    kill_2: 2
+    kill_3: 1
+  detective_normal_chat_limit: 1
+  end_keywords:
+  - 再见
+  - 谢谢
+  - 告辞
+  - 下次再说
+  - 就这样
+  max_rounds_per_side: 5
+deepseek_api:
+  api_base: https://api.deepseek.com/v1
+  api_key: ${DEEPSEEK_API_KEY}
+  model: deepseek-chat
+detective:
+  character: Crow
+  notebook_compression: 0.8
+game:
+  active_agents:
+  - Arthur Burton
+  - Crow
+  - Isabella Rodriguez
+  - Klaus Mueller
+  - Maria Lopez
+  - Sam Moore
+  - Jane Moreno
+  - Mei Lin
+  bubble_lifetime_seconds: 12
+  crow_intro_line_delay_seconds: 2.0
+  day_duration_seconds: 1800
+  gathering_speech_visible_seconds: 2.5
+  gathering_departure_gap_seconds: 1.0
+  max_days: 5
+  move_steps_per_tick: 1
+  night_duration_seconds: 300
+  npc_chat_delay_seconds: 1.0
+  tick_interval_seconds: 0.16
+llm:
+  action_decision_interval_seconds: 20
+  agent_models:
+    Arthur Burton: Qwen3.6-35B-A3B
+    Crow: MiMo-V2.5-Pro
+    Isabella Rodriguez: Kimi-K2.6
+    Klaus Mueller: deepseek-v4-flash
+    Maria Lopez: Qwen3.6-35B-A3B
+    Sam Moore: MiMo-V2.5-Pro
+    Jane Moreno: Kimi-K2.6
+    Mei Lin: deepseek-v4-flash
+  api_base: http://127.0.0.1:8000/v1
+  api_key: ${CHAT2API_API_KEY}
+  available_models:
+  - Qwen3.6-35B-A3B
+  - Kimi-K2.6
+  - deepseek-v4-flash
+  - MiMo-V2.5-Pro
+  enable_daily_plan_on_start: false
+  max_concurrent_requests: 3
+  max_retries: 3
+  max_tokens: 4096
+  reflect_interval_ticks: 6
+  request_timeout_seconds: 60
+  retry_delay_seconds: 5
+  temperature: 0.7
+memory:
+  compress_threshold: 50
+  daily_reflection_enabled: true
+  retain_full_days: 1
+night_behavior:
+  forced_completion_seconds: 20
+  night_move_steps_per_tick: 3
+  npc_go_out_chance: 0.2
+  npc_stay_home_chance: 0.6
+  npc_with_companion_chance: 0.2
+  replan_interval_seconds: 20
+  werewolf_hunt_duration_seconds: 120
+  werewolf_transform_delay_seconds: 60
+perception:
+  hear_range: 5
+  max_range: 20
+  occlusion_enabled: false
+ui:
+  host: 127.0.0.1
+  port: 5000
+  recent_log_limit: 200
+werewolf:
+  avoid_silver: true
+  kill_detective_last: true
+  randomize_each_game: true
