@@ -1,6 +1,6 @@
 # Werewolf Ville 项目连续性文档
 
-更新日期：2026-06-04
+更新日期：2026-06-04（本节新增 12-13）
 
 ## 1. 文档目的
 
@@ -130,11 +130,11 @@ Werewolf Ville 的目标不是单纯复刻狼人杀，也不是纯粹看 NPC 自
 
 ## 7. 当前最重要的工程风险
 
-### 7.1 缺少可靠版本控制
+### 7.1 版本控制已建立，但仍需严格使用
 
-当前 worker 报告显示项目不是 Git 仓库。之前还出现过 `game_engine.py` 被清空后从临时快照恢复的情况。这是长期项目最大的风险之一。
+项目已经建立 Git 仓库，并创建了初始基线提交。之前曾出现 `game_engine.py` 被清空后从临时快照恢复的情况，因此版本控制不再是“待建立事项”，而是必须持续执行的安全底座。
 
-建议尽快建立 Git 仓库或至少建立可恢复的快照流程。没有版本控制时，不应该让 worker 大范围修改运行态文件。
+后续任何非平凡改动都必须先确认 `git status`，再按频道和任务边界提交。大文件拆分、玩法修改、Bug 修复不能混在同一个提交里。worker 可以参与实际修改，但主 agent 必须在提交前审查 diff、测试结果和文档同步状态。
 
 ### 7.2 根目录旧文档编码损坏
 
@@ -272,3 +272,117 @@ worker 不能替代审阅。尤其是当 worker 修改 `personas/`、运行态�
 - 把运行态 persona 与静态角色模板分离。
 - 建立稳定版本控制、回归测试和浏览器验收流程。
 
+## 11. 回归套件与 Bug 关闭门禁
+
+### 11.1 回归套件组成
+
+回归测试套件由以下层次构成，从快到慢：
+
+| 层次 | 命令 | 覆盖范围 | 触发时机 |
+|------|------|---------|---------|
+| L0 编译门禁 | `python -m py_compile agent.py game_engine.py llm.py ui/app.py` 及新增模块 | 所有 Python 文件无语法错误 | 每次提交前 |
+| L1 单元测试 | `pytest -q tests/test_engine_foundation.py` | 引擎核心函数、路径、碰撞 | 每次切片提交 |
+| L2 模块测试 | `pytest -q tests/test_vote_flow.py tests/test_ui_bubble_layout.py tests/test_llm_priority.py` | 投票、气泡、对话优先级 | 涉及对应模块时 |
+| L3 全量回归 | `pytest tests/ -x --tb=short -q --timeout=120` | 所有已有测试 | 大范围修改或合并前 |
+| L4 浏览器验收 | 手动（IAB 截图） | 气泡、UI 布局、交互流程 | 涉及前端改动时 |
+
+### 11.2 Bug 关闭门禁
+
+一个 bug 从 `Fixed` 转为 `Closed` 必须满足以下全部条件（在 BUG_BACKLOG.md 的「关闭门禁」列表中逐项勾选）：
+
+1. **编译通过**：受影响的全部 Python 文件通过 `py_compile`。
+2. **回归测试通过**：新增或依赖的回归测试（见 BUG 记录的「回归测试」字段）全部 Green。
+3. **根因确认**：BUG 记录中的「根因」字段已填写，不能为空。
+4. **浏览器验证**（仅 UI 相关 bug）：截图确认修复有效。
+5. **关联需求追溯**：BUG 中的「关联需求」字段已填写对应的 REQ 编号。
+6. **验收状态更新**：BUG 记录状态从 `Fixed` 更新为 `Closed`，并记录相关提交。
+
+如果 bug 属于 **External**（外部模型服务、第三方库），验收状态可以标记为 `Deferred`，但必须在记录中说明缓解措施。
+
+### 11.3 回归测试新增规则
+
+修改代码时，如果改变了已有行为或修复了 bug，**必须**：
+
+1. **新增测试覆盖**：在受影响模块对应的测试文件中新增至少一个测试用例，验证修复后的行为。
+2. **标记覆盖的 REQ**：新增测试的 docstring 或头部注释标注 `# covers REQ-XXX`。
+3. **不可删除旧测试**：除非旧测试逻辑与修改后的正确行为明确冲突（需在注释中写明原因）。
+
+## 12. 单一事实来源与文档去重原则
+
+### 12.1 文件职责矩阵
+
+以下是每个根目录治理文件的唯一职责。**同一个事实只写在一个文件中，其他文件引用而非重复**：
+
+| 文件 | 唯一职责 | 不应包含 |
+|------|---------|---------|
+| `PROJECT_CONTINUITY.md`（本文档） | 产品方向、核心玩法规则、系统架构、工程风险、工作流规范 | bug 列表、具体任务、逐条需求细节 |
+| `USER_REQUIREMENTS_LEDGER.md` | 用户提出的所有可执行要求，含 REQ 编号体系 | bug 描述、代码结构分析 |
+| `BUG_BACKLOG.md` | 全部 bug 记录，含复现、根因、回归测试、关闭门禁 | 产品设计讨论、长期路线 |
+| `ROADMAP.md` | 阶段路线和设计取舍，不含零碎 bug | bug 清单、需求细节 |
+| `CURRENT_SPRINT.md` | 当前一次 sprint 的任务清单和验证要求 | 长期方向、设计讨论 |
+| `AGENTS.md` | worker 协作规则、能力矩阵、审查流程、任务派发模板 | 产品玩法、bug 列表 |
+| `GAME_ENGINE_SPLIT_PLAN.md` | 游戏引擎拆分执行计划（切片顺序、验证、回滚） | 产品玩法、协作规则 |
+
+### 12.2 文档引用规则
+
+- 当需要引用另一个文件中的事实时，使用 `见 xxx.md §N` 格式，不复制内容。
+- 例如：BUG 的「关联需求」引用 `USER_REQUIREMENTS_LEDGER.md` 中的 REQ 编号，而非重复需求全文。
+- 例如：回归测试规则见本文档 §11，不复制到其他文件。
+
+### 12.3 `docs/` 目录文档定位
+
+`docs/` 下的文档（`docs/deepseek-*.md`、`docs/antigravity-*.md` 等）是 worker 产出的辅助审阅材料：
+
+- 它们是某一时间点的分析快照，**不是**最新事实来源。
+- 主 agent 使用其中的建议后，应将稳定结论吸收到根目录治理文件。
+- 如果 `docs/` 文档与根目录文件冲突，以根目录文件为准。
+- 旧版 `docs/antigravity-project-channels-plan.md` 中的频道定义已吸收到 `PROJECT_CHANNELS.md`，该文件不再作为活跃引用源。
+
+### 12.4 旧文档处理
+
+- `REQUIREMENTS.md`、`TASK.md`、`TECHNICAL_REPORT.md`：编码损坏，不再更新。历史线索如需恢复则修复编码，否则逐步废弃。
+- `IMPLEMENTATION_PLAN.md`、`TECHNICAL_REVIEW.md`：已完成历史使命，不再作为活跃开发参考。
+
+## 13. 长期项目上下文恢复与初始化规范 (Context Recovery SOP)
+
+当项目开发中断（如跨天、跨会话重置、或者更换主 Agent）后，新进入的 Agent 必须严格执行以下四步以恢复上下文，严禁在未拉齐信息的情况下盲目开改。
+
+```mermaid
+flowchart TD
+    Start[新 Agent 启动或长中断后恢复] --> Step1[第一步: 运行状态扫描 <br> git/restart/pytest]
+    Step1 --> Step2[第二步: 读取治理核心 <br> CONTINUITY/DECISIONS/SPRINT]
+    Step2 --> Step3[第三步: 扫描规划目录 <br> .planning/ 活跃任务]
+    Step3 --> Step4[第四步: 清理与对齐 <br> 清理日志与运行态记忆]
+    Step4 --> End[就绪: 汇报进度并启动任务]
+```
+
+### 13.1 第一步：物理环境与状态检查
+1.  **代码状态扫描**：运行 `rtk git status` 和 `rtk git log -n 5`，确认当前处于哪条分支，最近几次提交修改了什么，是否有未提交的修改。
+2.  **基线编译检查**：确保当前代码无语法错误：
+    ```powershell
+    rtk python -m py_compile agent.py game_engine.py llm.py ui/app.py
+    ```
+3.  **运行回归测试**：运行 pytest 评估基线健康度：
+    ```powershell
+    rtk pytest -q tests/test_engine_foundation.py
+    ```
+
+### 13.2 第二步：读取治理核心文档
+按照以下固定顺序阅读核心文档，重塑全局认知：
+1.  **[PROJECT_CONTINUITY.md](file:///G:/Trae-Project/werewolf-ville/PROJECT_CONTINUITY.md)**（当前文件）：重新理解项目的核心玩法、系统架构和当前重点工程风险。
+2.  **[DECISIONS.md](file:///G:/Trae-Project/werewolf-ville/DECISIONS.md)**：查看最近的决策与规则修改，确保不违反新立下的约定。
+3.  **[CURRENT_SPRINT.md](file:///G:/Trae-Project/werewolf-ville/CURRENT_SPRINT.md)**：锁定当前 Sprint 的核心目标、所属频道以及当前要做的事情。
+
+### 13.3 第三步：扫描活跃任务规划
+1.  进入 [.planning/](file:///G:/Trae-Project/werewolf-ville/.planning/) 目录，查看当前有哪些处于激活状态（进行中）的子任务目录。
+2.  阅读对应任务目录下的 `task_plan.md`（理解方案）与 `progress.md`（查看当前卡点、最近一次测试验证结果和下一步 TODO）。
+3.  如果发现没有活跃的任务目录，但在 `CURRENT_SPRINT.md` 中有进行中的任务，应立即按规范建立新的规划目录。
+
+### 13.4 第四步：环境清理与启动对齐
+1.  **日志与进程清理**：如果有旧的服务器进程残留，运行 `restart.bat` 重启，确保占用 5000 端口的是最新代码。同时清理体积过大的 `server.stdout.log` / `server.stderr.log`。
+2.  **隔离运行态记忆**：检查 `personas/` 目录下是否有单局游戏运行留下来的脏 memory 文件。如果需要开启新一轮游戏测试，必须确保运行态记忆已初始化，不被脏数据污染。
+3.  **与用户握手**：在前述步骤完成后，向用户输出一个精简的“上下文恢复报告”，说明：
+    *   目前处于哪个任务切片。
+    *   当前物理编译和测试状态（Pass/Fail）。
+    *   下一步的计划动作。
+    *   如有疑虑，提示用户决策。
