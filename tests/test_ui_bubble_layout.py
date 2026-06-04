@@ -325,7 +325,7 @@ def test_frontend_version_displayed_in_start_overlay():
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert 'id="app-version-badge"' in html
     assert 'class="frontend-version"' in html
-    assert "v{{ frontend_version }}" in html
+    assert "版本 {{ frontend_version }}" in html
 
 
 def test_frontend_name_localization_does_not_corrupt_crown_location():

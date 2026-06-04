@@ -147,19 +147,19 @@ def _test_anthropic_messages(llm_override):
 
 def _frontend_version() -> str:
     try:
-        commit = subprocess.check_output(
-            ["git", "-C", PROJECT_ROOT, "rev-parse", "--short", "HEAD"],
+        count = int(subprocess.check_output(
+            ["git", "-C", PROJECT_ROOT, "rev-list", "--count", "HEAD"],
             text=True,
             stderr=subprocess.DEVNULL,
-        ).strip()
+        ).strip())
         dirty = subprocess.check_output(
             ["git", "-C", PROJECT_ROOT, "status", "--short"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-        return f"{commit}{'-dirty' if dirty else ''}"
+        return str(count + 1 if dirty else count)
     except Exception:
-        return "dev"
+        return "0"
 
 
 @app.route("/")

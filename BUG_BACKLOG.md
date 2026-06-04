@@ -264,7 +264,7 @@ ID:
 根因：BUG-007 修复时将 #log-panel 和 updateLog() 完全移除，导致智能体日志在前端无处呈现。且前端版本号未在界面上体现。
 
 修复方案：
-  1. 在首页（#start-overlay）左上角添加前端版本号 div，由 Flask 注入当前 Git 短哈希，最终显示为 `v<commit>`。
+  1. 在首页（#start-overlay）左上角添加纯数字前端版本号 div，由 Flask 注入 Git 提交总数；有未提交改动时预显示下一版数字，最终显示为 `版本 <数字>`。
   2. 在 #side-panel 底部恢复 #log-panel 面板与 updateLog() 渲染逻辑，只读取后端 status.recent_log 进行显示，不影响左侧游戏区域的 bottom 布局，并对日志文本做 HTML 转义。
   3. 在 tests/test_ui_bubble_layout.py 中更新对应断言。
 
