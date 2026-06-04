@@ -51,3 +51,10 @@ pytest -q tests/test_ui_bubble_layout.py
 
 验收后更新 `BUG_BACKLOG.md` 状态（如有相关 bug）并在 commit 中标注关联 REQ。
 
+## 项目线程状态
+
+- [x] 项目结构与治理线程：`019e8322-7e35-71b1-aba5-0148fb57347d`
+- [x] 玩法设计线程：`019e92f1-c30c-7e42-a14c-b695433729bf`
+- [x] Bug 修复线程：`019e92f1-e1b0-7153-9b92-859a70f450d4`
+
+Codex 项目目标使用工作区路径 `G:\Trae-Project\werewolf-ville`。后续创建线程不强行传模型名。

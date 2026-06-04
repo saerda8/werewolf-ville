@@ -6,6 +6,24 @@
 
 把长期项目拆成多个工作频道，减少聊天上下文污染。每个频道只讨论自己范围内的问题，并通过项目文件同步事实。
 
+## Codex Threads
+
+Codex `create_thread` 的项目目标使用工作区路径：
+
+```text
+G:\Trae-Project\werewolf-ville
+```
+
+已建立并固定的项目线程：
+
+| 频道 | 线程标题 | Thread ID | 用途 |
+| --- | --- | --- | --- |
+| 项目工具与结构 | Werewolf Ville｜项目结构与治理 | `019e8322-7e35-71b1-aba5-0148fb57347d` | Git、文档、MCP、worker、启动脚本、模块拆分、项目治理 |
+| 玩法修改 | Werewolf Ville｜玩法设计 | `019e92f1-c30c-7e42-a14c-b695433729bf` | 玩法规则、NPC 智能、日夜流程、银器、小刀、投票、胜负条件 |
+| Bug 修改 | Werewolf Ville｜Bug 修复 | `019e92f1-e1b0-7153-9b92-859a70f450d4` | 具体 bug 的复现、定位、修复、测试、关闭 |
+
+注意：此前用显式 model override 创建的两个线程进入过 `systemError`，已经归档。后续创建项目线程时不要强行传模型名，优先使用默认模型配置。
+
 ---
 
 ## 频道一：玩法修改 (Gameplay Design)

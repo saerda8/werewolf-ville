@@ -17,6 +17,22 @@
 7. 如果是 bug，读 [BUG_BACKLOG.md](BUG_BACKLOG.md)，不要只靠聊天截图。
 8. 如果是 `game_engine.py` 拆分，读 [GAME_ENGINE_SPLIT_PLAN.md](GAME_ENGINE_SPLIT_PLAN.md)。
 
+## Codex 项目线程
+
+Codex `create_thread` 的项目目标使用工作区路径：
+
+```text
+G:\Trae-Project\werewolf-ville
+```
+
+当前固定线程：
+
+- 项目结构与治理：`019e8322-7e35-71b1-aba5-0148fb57347d`
+- 玩法设计：`019e92f1-c30c-7e42-a14c-b695433729bf`
+- Bug 修复：`019e92f1-e1b0-7153-9b92-859a70f450d4`
+
+频道使用规则见 [PROJECT_CHANNELS.md](PROJECT_CHANNELS.md)。
+
 ## 单一事实来源
 
 | 问题 | 权威文件 |
@@ -46,4 +62,3 @@ python -m py_compile agent.py game_engine.py llm.py ui/app.py
 - 给出任务目标、允许改动的文档或模块范围、禁止碰的运行态文件、验收命令。
 - 允许 DeepSeek 和 Antigravity 在范围内实际改文件。
 - 主 agent 最后用 `git diff`、测试和浏览器验收兜底。
-

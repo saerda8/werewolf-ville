@@ -57,3 +57,15 @@
 1. **不要直接删除或覆盖历史决策**：在日志表中将对应决策状态置为 `Deprecated` (已废弃) 或 `Superceded by DEC-xxx` (被DEC-xxx替代)。
 2. **新增决策条目**：在详情部分新增 `DEC-xxx`，说明新的背景、决策内容以及对旧规则的修改。
 3. **通知机制**：在 `CURRENT_SPRINT.md` 中记录本次规则变动，确保下一次 Subagent 或主 Agent 启动时能通过 Sprint 关注到。
+
+---
+
+### DEC-005：真实 Codex 项目线程落地
+
+* **背景**：此前项目只完成了文件化频道，但没有真实 Codex 聊天线程。`create_thread` 工具需要 `projectId`，而列表接口不直接暴露单独的 Project ID。
+* **发现**：对本工具而言，项目目标可以使用工作区路径 `G:\Trae-Project\werewolf-ville`。第一次创建时传入显式 model override 导致线程 `systemError`；去掉 model override、使用默认模型后创建成功。
+* **决策**：
+  1. 固定三个 Codex 项目线程：项目结构与治理、玩法设计、Bug 修复。
+  2. 线程 ID 记录在 `PROJECT_CHANNELS.md` 和 `PROJECT_INDEX.md`。
+  3. 后续创建项目线程时，优先使用工作区路径作为项目目标，不强行传模型名。
+* **状态**：已执行。
