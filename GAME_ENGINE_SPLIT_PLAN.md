@@ -230,3 +230,17 @@ refactor(engine): extract daily task state
 4. worker 改动超出授权范围。
 5. 前端状态协议被改动但没有同步 UI。
 
+## 2026-06-04 第一阶段执行结果
+
+第一阶段低风险结构收口已经完成并提交：
+
+| 模块 | 已抽离职责 | 提交 |
+| --- | --- | --- |
+| `engine_navigation.py` | 碰撞矩阵、场景矩阵、附近物件、BFS 寻路纯工具 | `1771da9` |
+| `engine_tasks.py` | 警长每日任务状态构建 | `8cb5284` |
+| `engine_bubbles.py` | 引擎侧气泡计时、过期清理、思考摘要 | `fe5fc1c` |
+| `engine_dusk.py` | 黄昏阶段、NPC 投票、投票历史、拘留与监狱 | `743e00f` |
+
+`WerewolfGameEngine` 对外方法名保持不变，通过 mixin 继续暴露原 API。
+
+后续高风险拆分（银器、对话、调度、晨会）不在第一阶段继续强拆。它们应在对应 Bug/玩法任务启动时，以独立切片实施和验证，避免为拆分而拆分。

@@ -34,4 +34,9 @@
 - A first combined vote/foundation run accidentally reached real model calls and took about 19 minutes. The compatibility routing fixed that; `tests/test_vote_flow.py` now completes in about 3 seconds.
 
 ## Existing Bug Kept Out Of Structure Scope
-- `tests/test_daytime_npc_behavior.py::test_mei_lin_and_klaus_have_different_destinations` fails because the Mei Lin persona file lacks expected Chinese library keywords. This maps to existing BUG-006 and is deferred to the Bug 修复 thread.
+- `tests/test_daytime_npc_behavior.py::test_mei_lin_and_klaus_have_different_destinations` failed once during a broader run, then passed when isolated and in the final full suite. It remains covered by existing BUG-006 rather than being treated as fixed here.
+
+## Final Verification
+- Full test suite: `python -m pytest tests -q` => 345 passed.
+- Full compile gate passed for the main modules and all four extracted engine modules.
+- `git diff --check` passed.

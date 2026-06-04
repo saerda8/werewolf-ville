@@ -25,3 +25,7 @@
 - Verified shared foundation with `python -m pytest tests/test_engine_foundation.py -q` => 148 passed.
 - Verified focused dusk/gathering regression with `python -m pytest tests/test_gathering_timeout.py::test_crow_starts_scene_investigation_after_gathering_ends tests/test_vote_flow.py -q` => 13 passed.
 - Broader behavior test run found one pre-existing BUG-006 persona failure; it is deferred to the Bug 修复 thread.
+- Committed dusk/vote/prison slice as `743e00f refactor(engine): extract dusk vote flow`.
+- Updated prompt-boundary structural test to include the extracted dusk module.
+- Updated project continuity, sprint, index, decisions, and split-plan documents with the completed module boundaries.
+- Final full regression: `python -m pytest tests -q` => 345 passed, 1 pytest cache warning.

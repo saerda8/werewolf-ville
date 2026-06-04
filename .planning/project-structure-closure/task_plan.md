@@ -14,7 +14,12 @@ Finish the first-stage project structure closure before returning to gameplay bu
 3. Extract bubble/status presentation helpers where safe - complete
 4. Extract sheriff task/day-progress helpers where safe - complete
 5. Extract dusk/vote/prison helpers where safe - complete
-6. Update project continuity documents and final verification - in progress
+6. Update project continuity documents and final verification - complete
+
+## Completion
+- First-stage project structure closure is complete.
+- Future gameplay/UI bug fixes belong in the Bug 修复 thread.
+- High-risk extraction areas remain documented for future independent tasks.
 
 ## Verification Gates
 - `rtk git status --short`

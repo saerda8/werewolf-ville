@@ -58,3 +58,16 @@ pytest -q tests/test_ui_bubble_layout.py
 - [x] Bug 修复线程：`019e92f1-e1b0-7153-9b92-859a70f450d4`
 
 Codex 项目目标使用工作区路径 `G:\Trae-Project\werewolf-ville`。后续创建线程不强行传模型名。
+
+## 结构阶段收口结果（2026-06-04）
+
+- [x] 抽离导航与地图纯工具：`engine_navigation.py`
+- [x] 抽离警长每日任务构建：`engine_tasks.py`
+- [x] 抽离引擎侧气泡计时与摘要：`engine_bubbles.py`
+- [x] 抽离黄昏、投票与监狱流程：`engine_dusk.py`
+- [x] 每个结构切片独立验证并提交
+- [x] 记录后续高风险拆分边界
+
+项目结构阶段完成。下一项工作应在 **Bug 修复线程** 中，按照 `BUG_BACKLOG.md` 逐条修复和验收，不再在本线程混入体验 Bug 修改。
+
+最终结构回归：`python -m pytest tests -q`，结果 `345 passed`。

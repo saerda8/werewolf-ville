@@ -55,6 +55,16 @@ python -m py_compile agent.py game_engine.py llm.py ui/app.py
 
 涉及 UI 时，必须确保 `http://127.0.0.1:5000/` 跑的是最新代码，并用浏览器实际验证。
 
+## 当前引擎模块边界（2026-06-04）
+
+- `game_engine.py`：主状态机、晨会、白天/夜晚调度、银器、对话与状态聚合。
+- `engine_navigation.py`：地图、碰撞、场景查询、BFS 寻路工具。
+- `engine_tasks.py`：警长每日任务状态构建。
+- `engine_bubbles.py`：引擎侧气泡计时、过期清理与思考摘要。
+- `engine_dusk.py`：黄昏、投票、投票历史、拘留与监狱流程。
+
+第一阶段结构收口已完成。后续恢复项目时，不要把已抽离职责重新写回 `game_engine.py`。
+
 ## Worker 使用原则
 
 限制不要细到让 coworker 无法干活。推荐做法是：

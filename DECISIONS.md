@@ -69,3 +69,10 @@
   2. 线程 ID 记录在 `PROJECT_CHANNELS.md` 和 `PROJECT_INDEX.md`。
   3. 后续创建项目线程时，优先使用工作区路径作为项目目标，不强行传模型名。
 * **状态**：已执行。
+# 2026-06-04：第一阶段结构收口完成
+
+- 决定：第一阶段只抽离低风险、已有测试覆盖的职责。
+- 已完成：`engine_navigation.py`、`engine_tasks.py`、`engine_bubbles.py`、`engine_dusk.py`。
+- 兼容策略：`WerewolfGameEngine` 通过 mixin 保持外部方法入口不变。
+- 后续策略：银器、对话、NPC 调度、晨会不继续强拆；在对应 Bug/玩法任务中独立实施。
+- 频道规则：结构阶段结束后，具体体验 Bug 转入 Bug 修复线程。
