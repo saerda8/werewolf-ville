@@ -310,8 +310,8 @@ def test_frontend_renders_agent_log_panel():
     assert "escapeHtml(parts[0])" in html
 
 
-def test_bottom_right_keeps_tasks_without_unnamed_log_block():
-    """Right-bottom UI keeps sheriff tasks only. Agent log panel is now structured inside side-panel without squeezing game area."""
+def test_bottom_right_keeps_tasks_and_log_panel_layout():
+    """Right-bottom UI keeps sheriff tasks only, while #log-panel is placed at the bottom area next to it without squeezing the right panel."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert '<div id="task-panel">' in html
@@ -319,6 +319,24 @@ def test_bottom_right_keeps_tasks_without_unnamed_log_block():
     assert 'id="log-content"' in html
     assert "智能体日志" in html
     assert "right: 320px; bottom: 0;" in html or "bottom: 0;" in html
+
+    # Assert #log-panel is NOT inside #side-panel
+    chat_panel_close = html.find('</div>', html.find('id="chat-panel"'))
+    log_panel_open = html.find('id="log-panel"')
+    between = html[chat_panel_close:log_panel_open]
+    assert '</div>' in between, "#log-panel must be outside of #side-panel"
+
+    side_panel_open = html.index('<div id="side-panel">')
+    log_panel_open = html.index('<div id="log-panel">')
+    task_panel_open = html.index('<div id="task-panel">')
+    side_panel_markup = html[side_panel_open:log_panel_open]
+    assert log_panel_open < task_panel_open
+    assert 'id="log-panel"' not in side_panel_markup
+    assert "#game-container { position: absolute; top: 0; left: 0; right: 320px; bottom: 160px; overflow: hidden; }" in html
+    assert "position: absolute; top: 0; left: 0; right: 320px; bottom: 160px;" in html
+    assert "#log-panel {" in html
+    assert "right: 320px;" in html
+    assert "height: 160px;" in html
 
 
 def test_frontend_version_displayed_in_start_overlay():

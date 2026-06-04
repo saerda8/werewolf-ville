@@ -310,6 +310,40 @@ ID:
 
 相关提交：本次修复提交。
 
+### BUG-010：智能体日志被错误放置在右侧边栏，导致布局挤压及遮挡
+
+严重度：Major
+关联需求：无
+回归测试：`tests/test_ui_bubble_layout.py`
+回归频率：每次必现
+状态：Closed
+验收状态：Closed
+
+期望：智能体日志面板位于主页面底部区域（游戏区域下方/底部横条），不放在右侧边栏；右侧边栏只保留警长任务、角色列表、聊天/投票等关键 UI；底部日志区存在且不遮挡右侧警长任务。
+
+验证方式：运行 `pytest tests/test_ui_bubble_layout.py -q`
+
+根因：之前修复中为了不影响游戏区域，将 #log-panel 放在了 #side-panel 内部的底部，但由于 #side-panel 为 flex 布局且 bottom: 160px，将日志挤在了右侧中部，导致右侧关键 UI 被严重压缩，且不符合日志位于底部区域的设计。
+
+修复方案：
+  1. 将 #log-panel 从 #side-panel 中移出，放在外层 body 下，作为独立绝对定位面板。
+  2. 调整样式：#log-panel 设置为 position: absolute; left: 0; right: 320px; bottom: 0; height: 160px; 与右侧 #task-panel（height: 160px; bottom: 0; right: 0; width: 320px;）完美水平对齐，不遮挡警长任务。
+  3. 调整游戏区域 #game-container 和 #bubble-layer 的 bottom 为 160px，以容纳底部的日志面板，确保气泡层和游戏区域不与日志重叠。
+  4. 保持 #side-panel bottom 为 160px，其内部由于去除了 #log-panel，高度完全留给角色列表和聊天等关键 UI。
+  5. 更新 tests/test_ui_bubble_layout.py 中的测试断言，确保 #log-panel 不在 #side-panel 内，并验证其定位约束。
+
+验证结果（2026-06-05）：
+- `tests/test_ui_bubble_layout.py` 全部通过。
+- `tests` 全量回归通过：351 passed。
+- UI 静态回归确认智能体日志已移出侧边栏并在底部横条显示。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次修复提交。
+
 ## 已知外部问题
 
 ### EXT-001：模型供应商超时、限流或余额不足
