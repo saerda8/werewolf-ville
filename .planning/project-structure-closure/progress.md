@@ -13,3 +13,7 @@
 - Extracted sheriff daily task display construction to `engine_tasks.py`.
 - Verified task slice with `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_navigation.py engine_tasks.py`.
 - Verified task slice with `python -m pytest tests/test_engine_foundation.py -q` => 148 passed, 1 pytest cache warning.
+- Committed daily task slice as `8cb5284 refactor(engine): extract daily task helpers`.
+- Extracted engine-side bubble timing/expiry and compact thought-summary helpers to `engine_bubbles.py`.
+- Verified bubble slice with `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_navigation.py engine_tasks.py engine_bubbles.py`.
+- Verified bubble slice with `python -m pytest tests/test_engine_foundation.py tests/test_ui_bubble_layout.py -q` => 181 passed, 1 pytest cache warning.

@@ -11,7 +11,7 @@ Finish the first-stage project structure closure before returning to gameplay bu
 ## Phases
 1. Baseline and planning records - complete
 2. Extract navigation/map helpers from `game_engine.py` - complete
-3. Extract bubble/status presentation helpers where safe - pending
+3. Extract bubble/status presentation helpers where safe - complete
 4. Extract sheriff task/day-progress helpers where safe - complete
 5. Extract dusk/vote/prison helpers where safe - pending
 6. Update project continuity documents and final verification - pending

@@ -21,3 +21,8 @@
 - Extracted `_build_daily_tasks()` into `EngineTasksMixin` in `engine_tasks.py`.
 - The method only depends on engine state and does not require prompt/model imports, so it is a safe mixin boundary.
 - Silver acquisition/crafting actions remain in `game_engine.py`; they are behavior-heavy and should not be mixed with task display extraction.
+
+## Bubble Slice
+- Extracted engine-side bubble timing/expiry and thought-summary helpers into `EngineBubbleMixin` in `engine_bubbles.py`.
+- This does not alter browser/UI layout code; it only moves engine-side state helpers.
+- `engine_bubbles.py` loads config directly to avoid importing back from `game_engine.py`.
