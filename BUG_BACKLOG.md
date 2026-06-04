@@ -102,12 +102,28 @@ ID:
 关联需求：REQ-067, REQ-068, REQ-077
 回归测试：`tests/test_llm_priority.py`
 回归频率：高概率
-状态：Open
-验收状态：Open
+状态：Closed
+验收状态：Closed
 
 期望：玩家发起的克罗对话应打断 NPC 后台行为，NPC 优先回复，其他 NPC 不插入。
 
 验证方式：点击右侧交谈/深挖，确认克罗到达后立即开口，NPC 回复期间其他 NPC 不围过来。
+
+根因：后端只在 `detective_chat()` 真正开始后锁定目标 NPC；克罗移动接近目标期间没有服务端 reservation，目标仍可能被日程调度或 NPC-NPC 对话抢走。
+
+修复方案：新增克罗待对话目标 reservation，`move_detective_to_agent()` 成功规划路径时立即占用目标；NPC 调度、NPC-NPC 对话和 NPC 主动接近均检查该 reservation；手动移动、新局、对话开始/结束时清理 reservation。
+
+验证结果（2026-06-05）：
+- 新增 `tests/test_llm_priority.py::test_detective_move_to_agent_reserves_target_from_npc_chat`，覆盖克罗接近目标期间 NPC 不被后台对话抢占。
+- `tests/test_llm_priority.py` 通过。
+- 全量回归 `python -m pytest tests -q` 通过：349 passed；编译门禁通过。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次批量修复提交。
 
 ### BUG-004：黄昏投票流程缺少玩家发言前置讨论环节
 
@@ -115,51 +131,122 @@ ID:
 关联需求：REQ-040, REQ-041
 回归测试：`tests/test_vote_flow.py`
 回归频率：每次必现
-状态：Open
-验收状态：Open
+状态：Closed
+验收状态：Closed
 
 期望：黄昏先讨论，NPC 发言后玩家/克罗打字发言，之后才投票。
 
 验证方式：端到端手测 + vote flow 测试。
 
+根因：`_transition_to_dusk()` 进入黄昏后立即生成 NPC 投票并打开投票 UI，没有讨论状态，也没有克罗发言解锁投票的服务端门禁。
+
+修复方案：黄昏转换先进入 `dusk_discussion_active`，生成 NPC 讨论发言并等待克罗提交发言；新增 `submit_dusk_statement()`，克罗发言后才生成 NPC 投票并打开投票；前端增加黄昏发言面板、HTTP 和 Socket.IO 提交入口，投票面板只在 vote summary active 时显示。
+
+验证结果（2026-06-05）：
+- 新增 `tests/test_vote_flow.py::test_transition_to_dusk_starts_discussion_before_votes`。
+- 新增 `tests/test_vote_flow.py::test_crow_dusk_statement_unlocks_npc_votes`。
+- `tests/test_vote_flow.py` 通过。
+- UI 静态回归确认黄昏讨论面板存在、投票按钮文案已调整。
+- 全量回归 `python -m pytest tests -q` 通过：349 passed；编译门禁通过。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] UI DOM 检查确认新版入口存在。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次批量修复提交。
+
 ### BUG-005：新游戏可能残留旧局 persona 运行态记忆
 
 严重度：Major
 关联需求：REQ-122
-回归测试：需新增跨局隔离测试
+回归测试：`tests/test_daytime_npc_behavior.py`, `tests/test_gathering_timeout.py`
 回归频率：每次必现
-状态：Open
-验收状态：Open
+状态：Closed
+验收状态：Closed
 
 期望：新游戏前清空单局运行态，静态角色模板不被覆盖。
 
 验证方式：连续开始两局，确认记忆、对话历史、行动状态不串局。
 
+根因：该条目记录的是跨局隔离风险；当前实现已经在 `new_game()` 和 `Agent.init_files()` 中清理运行态记忆、临时认知、对话历史、行动状态和 scratch 文件，backlog 状态未同步。
+
+修复方案：不新增生产代码；以现有运行态清理逻辑和跨局隔离回归测试作为关闭依据，修复过程中未写入或保留 `personas/` 运行态文件。
+
+验证结果（2026-06-05）：
+- `tests/test_daytime_npc_behavior.py::test_new_game_resets_runtime_memory_and_agent_state` 通过。
+- `tests/test_gathering_timeout.py::test_agent_init_files_clears_runtime_state` 通过。
+- 全量回归 `python -m pytest tests -q` 通过：349 passed；编译门禁通过。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] `personas/` 运行态文件未被本次修复污染。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次批量修复提交。
+
 ### BUG-006：林梅和克劳斯仍可能在大学同一房间挤在一起
 
 严重度：Minor
 关联需求：REQ-127
-回归测试：需新增锚点分配测试
+回归测试：`tests/test_engine_foundation.py`
 回归频率：偶发
-状态：Open
-验收状态：Open
+状态：Closed
+验收状态：Closed
 
 期望：林梅使用图书馆/书架锚点，克劳斯使用教室/学生座位锚点。
 
 验证方式：开始游戏散场后观察两人目标与坐标。
 
+根因：该条目记录的是大学锚点分配风险；当前角色默认和位置锚点已经将林梅/克劳斯分流，backlog 状态未同步。
+
+修复方案：不新增生产代码；用现有锚点默认和模型对象覆盖测试确认林梅、克劳斯不会落到同一大学房间。
+
+验证结果（2026-06-05）：
+- `tests/test_engine_foundation.py::test_mei_lin_and_klaus_have_separate_college_defaults` 通过。
+- `tests/test_engine_foundation.py::test_college_role_defaults_override_model_object` 通过。
+- 全量回归 `python -m pytest tests -q` 通过：349 passed；编译门禁通过。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次批量修复提交。
+
 ### BUG-007：右下角可能出现未要求的杂项日志块
 
 严重度：Minor
 关联需求：REQ-086
-回归测试：浏览器布局检查
+回归测试：`tests/test_ui_bubble_layout.py`
 回归频率：每次必现
-状态：Open
-验收状态：Open
+状态：Closed
+验收状态：Closed
 
 期望：右下角只服务警长任务/关键玩法 UI，不放无需求的长文本日志。
 
 验证方式：浏览器检查右侧布局。
+
+根因：前端模板仍保留底部 agent log 面板、CSS 和日志更新脚本，导致右下角/底部出现未要求的长文本日志区域，并挤占游戏和气泡层空间。
+
+修复方案：移除底部 log panel DOM、CSS、resize 脚本和 `updateLog()` 更新逻辑；保留右侧警长任务面板和关键玩法 UI；游戏容器与气泡层恢复到底部 0。
+
+验证结果（2026-06-05）：
+- 新增 `tests/test_ui_bubble_layout.py::test_frontend_does_not_render_agent_log_panel`。
+- 新增 `tests/test_ui_bubble_layout.py::test_bottom_right_keeps_tasks_without_extra_log_block`。
+- `tests/test_ui_bubble_layout.py` 通过。
+- 5000 最新服务 HTTP 验证新版模板：`HasDuskStatement=True`, `HasLogPanel=False`, `GameBottom0=True`。
+- IAB Playwright DOM 验证：`hasDuskStatementPanel=true`, `hasLogPanel=false`, `hasTaskPanel=true`, `gameBottom=0px`, `bubbleBottom=0px`。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] UI DOM 检查确认多余日志块已移除。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次批量修复提交。
 
 ## 已知外部问题
 

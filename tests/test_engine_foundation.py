@@ -39,6 +39,14 @@ def _complete_daily_interviews(engine):
     }
 
 
+def _start_dusk_voting(engine, statement="我听完大家发言了，现在请各自投票。"):
+    _complete_daily_interviews(engine)
+    assert engine.start_dusk_discussion() is True
+    result = engine.submit_dusk_statement(statement)
+    assert result["success"] is True
+    return result
+
+
 def test_random_werewolf_models_and_initial_body(monkeypatch):
     engine = _make_engine(monkeypatch, seed=11)
     second = _make_engine(monkeypatch, seed=11)
@@ -1115,17 +1123,12 @@ def test_start_dusk_succeeds_after_all_interviews(monkeypatch):
 
 
 def test_dusk_generates_npc_votes(monkeypatch):
-    """After start_dusk_discussion, NPC votes must be populated."""
+    """After Crow's dusk statement, NPC votes must be populated."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
 
-    # Complete all interviews
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
     assert engine._dusk_vote_active is True
     assert len(engine._dusk_votes) > 0  # At least some votes
 
@@ -1151,11 +1154,7 @@ def test_jail_vote_target_success(monkeypatch):
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
 
-    # Complete interviews and start dusk
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
 
     target = "Arthur Burton"
     result = engine.jail_vote_target(target)
@@ -1181,10 +1180,7 @@ def test_jail_vote_target_rejects_duplicate(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
 
     engine.jail_vote_target("Arthur Burton")
     result = engine.jail_vote_target("Isabella Rodriguez")
@@ -1196,10 +1192,7 @@ def test_jail_vote_target_rejects_crow(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
 
     result = engine.jail_vote_target("Crow")
     assert "error" in result
@@ -1210,10 +1203,7 @@ def test_jail_vote_target_rejects_dead(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
 
     engine.agents["Arthur Burton"].is_alive = False
     result = engine.jail_vote_target("Arthur Burton")
@@ -1225,10 +1215,7 @@ def test_vote_summary_includes_counts(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
 
     status = engine.get_status()
     vote_summary = status["vote_summary"]
@@ -1251,7 +1238,7 @@ def test_dusk_vote_can_abstain_and_history_tracks_it(monkeypatch):
             engine._daily_interviewed.add(name)
 
     monkeypatch.setattr(engine, "_generate_single_dusk_vote", lambda voter, dead, clues: ("证据不足，先弃票。", ""))
-    assert engine.start_dusk_discussion() is True
+    _start_dusk_voting(engine)
 
     status = engine.get_status()
     summary = status["vote_summary"]
@@ -1801,11 +1788,7 @@ def test_primary_cta_jail_choice_during_vote_active(monkeypatch):
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
 
-    # Complete all interviews
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
 
     status = engine.get_status()
     assert status["primary_cta"] == "jail_choice"
@@ -1819,10 +1802,7 @@ def test_jail_choice_transitions_to_night(monkeypatch):
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
 
-    for name in engine.agents:
-        if name != "Crow" and engine.agents[name].is_alive:
-            engine._daily_interviewed.add(name)
-    engine.start_dusk_discussion()
+    _start_dusk_voting(engine)
     engine.jail_vote_target("Arthur Burton")
 
     status = engine.get_status()

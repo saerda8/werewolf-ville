@@ -95,15 +95,42 @@ def test_dusk_vote_skipped_for_jailed_npcs(monkeypatch):
     target_jail = [n for n in engine.agents if n != "Crow"][0]
     engine._jailed = [target_jail]
     engine._transition_to_dusk()
+    engine.submit_dusk_statement("我认为证据还不够，大家先说明自己的判断。")
     assert target_jail not in engine._dusk_votes, (
         f"Jailed '{target_jail}' should not be in dusk votes"
     )
+
+
+def test_transition_to_dusk_starts_discussion_before_votes(monkeypatch):
+    """Dusk must gather NPC discussion first; votes wait for Crow's statement. # covers REQ-040 REQ-041"""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+
+    assert engine._dusk_discussion_active is True
+    assert engine._dusk_vote_active is False
+    assert engine._dusk_votes == {}
+    assert engine._vote_history == []
+
+
+def test_crow_dusk_statement_unlocks_npc_votes(monkeypatch):
+    """Crow's typed dusk statement is the gate between discussion and voting. # covers REQ-040 REQ-041"""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+
+    result = engine.submit_dusk_statement("我听完大家发言了，现在请各自投票。")
+
+    assert result["success"] is True
+    assert engine._dusk_discussion_active is False
+    assert engine._dusk_vote_active is True
+    assert engine._dusk_votes
+    assert engine._vote_history
 
 
 def test_dusk_vote_all_living_non_jailed_npcs_vote(monkeypatch):
     """All living non-jailed non-Crow NPCs must cast a vote."""
     engine = _make_engine(monkeypatch)
     engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
     eligible = [n for n, a in engine.agents.items()
                 if n != "Crow" and a.is_alive and n not in engine._jailed]
     for voter in eligible:
@@ -116,6 +143,7 @@ def test_dusk_vote_targets_are_alive_and_not_jailed(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._jailed = []
     engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
     for voter, target in engine._dusk_votes.items():
         if target:
             assert engine.agents[target].is_alive, f"Target '{target}' is dead"
@@ -132,6 +160,7 @@ def test_vote_history_snapshot_recorded(monkeypatch):
     """After generating dusk votes, a snapshot must be in vote_history."""
     engine = _make_engine(monkeypatch)
     engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
     assert len(engine._vote_history) >= 1
     latest = engine._vote_history[-1]
     assert latest["day"] == engine.day
@@ -143,6 +172,7 @@ def test_vote_history_includes_jail_target(monkeypatch):
     """After player chooses jail target, vote history must include it."""
     engine = _make_engine(monkeypatch)
     engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
     target = [n for n in engine._dusk_votes.keys()][0]
     result = engine.jail_vote_target(target)
     assert "error" not in result, f"jail_vote_target failed: {result}"

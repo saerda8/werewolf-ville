@@ -311,6 +311,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._dusk_votes = {}          # name -> voted_target (who each NPC accuses)
         self._dusk_vote_reasons = {}   # name -> reason string
         self._dusk_vote_active = False # True when NPC votes have been generated
+        self._dusk_discussion_active = False
+        self._dusk_discussion_statements = []
+        self._dusk_crow_statement = ""
         self._dusk_jail_target = None  # player's choice for jail
         self._vote_history = []        # daily dusk vote snapshots for player review
 
@@ -374,6 +377,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._log_id = 0
         self._socketio = None
         self._detective_chat_active_target = None
+        self._detective_chat_pending_target = None
         self._detective_chat_job_id = 0
         self._npc_chat_tokens = {}
         
@@ -1800,6 +1804,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._dusk_votes.clear()
         self._dusk_vote_reasons.clear()
         self._dusk_vote_active = False
+        self._dusk_discussion_active = False
+        self._dusk_discussion_statements = []
+        self._dusk_crow_statement = ""
         self._dusk_jail_target = None
         self._vote_history.clear()
         self.chat_bubbles.clear()
@@ -1815,6 +1822,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._silver_knife_used = False
         self._silver_task_done_today = None
         self._detective_chat_active_target = None
+        self._detective_chat_pending_target = None
         self._detective_chat_job_id = 0
         self._silver_jewelry_holder = ""
         self._silver_knife_holder = ""
@@ -2694,6 +2702,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 continue
             # Crow 由玩家操控移动和交谈，不参与居民自主行动决策。
             if name == self.detective_name:
+                continue
+            if self._detective_chat_target_reserved(name):
+                agent.runtime_state = "idle"
                 continue
             # Jailed residents cannot move or act on their own
             if name in self._jailed:
@@ -3909,6 +3920,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         with self._lock:
             if getattr(self, "_detective_chat_active_target", None):
                 return False
+            self._detective_chat_pending_target = None
             if self.phase not in (GamePhase.DAY, GamePhase.DUSK_DISCUSSION) or self.game_over or getattr(self, "_gathering_active", False):
                 return False
             detective = self.agents.get(self.detective_name)
@@ -3957,15 +3969,18 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 return False
             target = self.agents.get(target_name)
             if not target or not target.is_alive or target_name == self.detective_name:
+                self._detective_chat_pending_target = None
                 return False
 
 
             detective = self.agents.get(self.detective_name)
             if not detective or not detective.is_alive:
+                self._detective_chat_pending_target = None
                 return False
 
 
             if self.phase not in (GamePhase.DAY, GamePhase.DUSK_DISCUSSION) or self.game_over or getattr(self, "_gathering_active", False):
+                self._detective_chat_pending_target = None
                 return False
 
 
@@ -3986,10 +4001,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 detective.current_location = location
                 detective.current_action = "investigating"
                 detective.current_emoji = "🔍"
+                self._detective_chat_pending_target = target_name
                 self._log(f"[开始行动] {self.detective_name}: 前往 {location}，接近 {target_name}", "action")
                 return True
 
 
+            self._detective_chat_pending_target = None
             return False
 
 
@@ -4083,6 +4100,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             return False, "目标不存在或已经无法交谈"
         if getattr(target, "in_conversation_with", None) is not None:
             return False, f"{display_name_for_person(target_name)}正在交谈"
+        if self._detective_chat_target_reserved(target_name):
+            return False, f"{display_name_for_person(target_name)}正等待克罗问话"
         if target_name == self.detective_name and getattr(self, "_detective_chat_active_target", None):
             return False, "克罗正在询问其他人"
         if not self._target_area_is_clear_for_approach(actor_name, target_name):
@@ -4171,6 +4190,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         except (TypeError, ValueError):
             pass
         return agent.generate_response(partner_name, message, day)
+
+
+    def _detective_chat_target_reserved(self, target_name: str) -> bool:
+        return target_name in {
+            getattr(self, "_detective_chat_active_target", None),
+            getattr(self, "_detective_chat_pending_target", None),
+        }
 
 
     def _trigger_npc_to_detective_chat(self, source_name: str, action: str = "",
@@ -4266,6 +4292,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self._detective_chat_job_id += 1
             chat_job_id = self._detective_chat_job_id
             self._detective_chat_active_target = target_name
+            self._detective_chat_pending_target = None
 
             # 锁定目标 NPC 的对话状态
             target.in_conversation_with = self.detective_name
@@ -4336,6 +4363,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 if target_name in self.agents:
                     self.agents[target_name].in_conversation_with = None
                 self._detective_chat_active_target = None
+                self._detective_chat_pending_target = None
                 detective.in_conversation_with = None
                 return {"error": f"{target_name} 已死亡，无法继续对话"}
 
@@ -4387,6 +4415,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             detective._is_thinking = False
             detective._is_reflecting = False
             self._detective_chat_active_target = None
+            self._detective_chat_pending_target = None
 
             self.chat_bubbles[target_name] = {
                 "text": self._limit_gathering_speech(response, max_chars=84),
@@ -4562,6 +4591,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         # Lifecycle guard: avoid starting if either participant already in conversation
         with self._lock:
             if getattr(self, "_detective_chat_active_target", None):
+                return
+            if self._detective_chat_target_reserved(name1) or self._detective_chat_target_reserved(name2):
                 return
             if not agent1.is_alive or not agent2.is_alive:
                 return
@@ -4944,6 +4975,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "vote_summary": vote_summary,
                 "vote_history": list(getattr(self, "_vote_history", [])),
                 "dusk_votes": vote_summary["votes"] if vote_summary else {},
+                "dusk_discussion_active": getattr(self, "_dusk_discussion_active", False),
+                "dusk_discussion_statements": list(getattr(self, "_dusk_discussion_statements", [])),
+                "dusk_crow_statement": getattr(self, "_dusk_crow_statement", ""),
                 "silver_bullet_acquired": self._silver_bullet_acquired,
                 "silver_jewelry_acquired": self._silver_jewelry_acquired,
                 "silver_bullet_crafted": self._silver_bullet_crafted,

@@ -19,7 +19,7 @@ def test_right_panel_uses_dusk_discussion_as_primary_cta():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert 'id="end-turn-btn" onclick="startDuskDiscussion()"' in html
-    assert "结束本回合，进入黄昏讨论投票" in html
+    assert "结束本回合，进入黄昏讨论" in html
     assert 'socket.emit("start_dusk_discussion")' in html
     assert '<button id="night-btn" onclick="enterNight()" style="display: none;"' in html
     assert '<button id="announce-btn" onclick="showAnnounce()" style="display: none;"' in html
@@ -296,15 +296,25 @@ def test_chinese_titles_and_log_labels():
     assert "<title>狼人小镇</title>" in html
     assert "<h1>狼人小镇</h1>" in html
     assert '<span class="panel-title">狼人小镇' in html
-    assert "<div>智能体日志</div>" in html
     assert "Werewolf Ville" not in html
     assert "Agent Log" not in html
 
 
-def test_agent_log_hides_raw_llm_json_by_default():
+def test_frontend_does_not_render_agent_log_panel():
     html = INDEX_HTML.read_text(encoding="utf-8")
-    assert 'const showTypes = ["think", "chat", "kill", "memory", "action"];' in html
-    assert "if (!showTypes.includes(logType)) continue;" in html
+    assert "function updateLog(state)" not in html
+    assert "#log-panel" not in html
+    assert "log-content" not in html
+
+
+def test_bottom_right_keeps_tasks_without_extra_log_block():
+    """Right-bottom UI keeps sheriff tasks only, not the extra long log block. # covers REQ-086"""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert '<div id="task-panel">' in html
+    assert '<div id="log-panel">' not in html
+    assert 'id="log-content"' not in html
+    assert "智能体日志" not in html
 
 
 def test_frontend_name_localization_does_not_corrupt_crown_location():

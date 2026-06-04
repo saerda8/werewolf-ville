@@ -71,19 +71,94 @@ class EngineDuskMixin:
 
 
     def _transition_to_dusk(self):
-        """进入黄昏讨论阶段：居民聚集，生成 NPC 投票，等待玩家最终拘留决定。"""
+        """进入黄昏讨论阶段：居民先讨论，Crow 发言后才投票。"""
         self.phase = type(self.phase).DUSK_DISCUSSION
         self.dusk_start_time = time.time()
         self._dusk_votes = {}
         self._dusk_vote_reasons = {}
         self._dusk_vote_active = False
+        self._dusk_discussion_active = True
+        self._dusk_discussion_statements = []
+        self._dusk_crow_statement = ""
         self._dusk_jail_target = None
         self._log("🌅 黄昏降临，居民们聚集讨论今天的发现...", "action")
-        # Generate NPC votes (deterministic fallback; LLM-enriched when available)
-        self._generate_dusk_votes()
-        self._dusk_vote_active = True
-        self._log("🗳️ NPC 投票已生成，等待玩家选择拘留目标", "system")
+        # Collect NPC discussion statements before Crow is allowed to trigger voting.
+        self._generate_dusk_discussion_statements()
+        self._dusk_vote_active = False
+        self._log("请克罗总结发言。克罗发言后，居民再进入投票。", "system")
         self._broadcast_state()
+
+
+    def _generate_dusk_discussion_statements(self):
+        """Collect short NPC discussion statements before any vote is cast."""
+        statements = []
+        eligible_speakers = [
+            n for n, a in self.agents.items()
+            if n != self.detective_name and a.is_alive and n not in self._jailed
+        ]
+        recent_dead = "、".join(display_name_for_person(d) for d in self.dead_list[-3:]) if self.dead_list else "暂无"
+        clue_summaries = [c.summary for c in getattr(self, "clues", [])[-5:]]
+        clue_text = "；".join(clue_summaries[:3]) if clue_summaries else "暂无明确线索"
+
+        for speaker_name in eligible_speakers:
+            text = ""
+            try:
+                text = _chat_for_agent(
+                    speaker_name,
+                    (
+                        f"你是{display_name_for_person(speaker_name)}，现在是第{self.day}天黄昏讨论。"
+                        f"最近死者：{recent_dead}。已知线索：{clue_text}。"
+                        "请先发表讨论意见，不要投票，不要要求马上拘留。80字以内。"
+                    ),
+                    "请发表黄昏讨论发言，不要投票。",
+                    max_retries=0,
+                )
+            except Exception:
+                text = ""
+            text = str(text or "").strip()
+            if not text:
+                text = "我会根据今天的线索谨慎判断，先听完大家和克罗的意见。"
+            text = self._limit_gathering_speech(text, max_chars=90)
+            statements.append({"speaker": speaker_name, "text": text})
+            self.chat_bubbles[speaker_name] = {
+                "text": text,
+                "target": self.detective_name,
+                "time": time.time(),
+            }
+            self._log(f"💬 黄昏讨论 {display_name_for_person(speaker_name)}: {text}", "chat")
+
+        self._dusk_discussion_statements = statements
+
+
+    def submit_dusk_statement(self, statement: str) -> dict:
+        """Crow speaks after NPC discussion; only then do residents vote."""
+        with self._lock:
+            if self.phase != type(self.phase).DUSK_DISCUSSION:
+                return {"success": False, "error": "Not in dusk discussion phase"}
+            if not getattr(self, "_dusk_discussion_active", False):
+                return {"success": False, "error": "Dusk discussion statement already submitted"}
+            text = str(statement or "").strip()
+            if not text:
+                return {"success": False, "error": "Crow statement is required before voting"}
+
+            text = self._limit_gathering_speech(text, max_chars=120)
+            self._dusk_crow_statement = text
+            self._dusk_discussion_active = False
+            self.chat_bubbles[self.detective_name] = {
+                "text": text,
+                "target": "",
+                "time": time.time(),
+            }
+            self._log(f"💬 克罗黄昏发言: {text}", "chat")
+            self._generate_dusk_votes()
+            self._dusk_vote_active = True
+            self._log("🗳️ 黄昏发言结束，NPC 投票已生成，等待玩家选择拘留目标", "system")
+            self._broadcast_state()
+            return {
+                "success": True,
+                "statement": text,
+                "vote_summary": self._build_vote_summary(),
+            }
 
 
     def _generate_dusk_votes(self):
@@ -371,6 +446,9 @@ class EngineDuskMixin:
             "counts": [{"target": t, "display": display_name_for_person(t), "count": c} for t, c in sorted_votes],
             "abstain_count": abstain_count,
             "active": self._dusk_vote_active,
+            "discussion_active": getattr(self, "_dusk_discussion_active", False),
+            "discussion_statements": list(getattr(self, "_dusk_discussion_statements", [])),
+            "crow_statement": getattr(self, "_dusk_crow_statement", ""),
             "jail_target": self._dusk_jail_target,
             "jail_target_display": display_name_for_person(self._dusk_jail_target) if self._dusk_jail_target else None,
         }

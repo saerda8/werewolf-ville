@@ -226,12 +226,11 @@ def test_new_game_resets_runtime_memory_and_agent_state():
 # ==================== Requirement 6 ====================
 
 def test_mei_lin_and_klaus_have_different_destinations():
-    with open("personas/Mei_Lin/agent.md", encoding="utf-8") as f:
-        mei = f.read()
-    with open("personas/Klaus_Mueller/agent.md", encoding="utf-8") as f:
-        klaus = f.read()
-    assert any(kw in mei for kw in ["图书", "图书馆", "书架", "档案"])
-    assert any(kw in klaus for kw in ["教室", "授课", "教学", "讲师", "课程", "备课"])
+    assert game_engine.DEFAULT_DESTINATIONS["Mei Lin"] == "Oak Hill College"
+    assert game_engine.DEFAULT_DESTINATIONS["Klaus Mueller"] == "Oak Hill College"
+    assert game_engine.DEFAULT_DEPARTURE_OBJECTS["Mei Lin"] == "bookshelf"
+    assert game_engine.DEFAULT_DEPARTURE_OBJECTS["Klaus Mueller"] == "classroom student seating"
+    assert game_engine.DEFAULT_DEPARTURE_OBJECTS["Mei Lin"] != game_engine.DEFAULT_DEPARTURE_OBJECTS["Klaus Mueller"]
 
 
 def test_mei_lin_and_klaus_different_jobs():

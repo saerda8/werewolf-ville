@@ -243,6 +243,15 @@ def start_dusk_discussion():
     return jsonify({"message": "dusk discussion started" if ok else "cannot start dusk discussion"})
 
 
+@app.route("/api/submit_dusk_statement", methods=["POST"])
+def submit_dusk_statement():
+    if game is None:
+        return jsonify({"error": "game not started"})
+    data = request.get_json(silent=True) or {}
+    result = game.submit_dusk_statement(data.get("statement", ""))
+    return jsonify(result)
+
+
 @app.route("/api/enter_night", methods=["POST"])
 def enter_night():
     if game is None:
@@ -464,6 +473,13 @@ def on_detective_chat(data):
 def on_start_dusk_discussion():
     if game:
         game.start_dusk_discussion()
+
+
+@socketio.on("submit_dusk_statement")
+def on_submit_dusk_statement(data):
+    if game:
+        result = game.submit_dusk_statement(data.get("statement", ""))
+        emit("dusk_statement_result", result)
 
 
 @socketio.on("enter_night")

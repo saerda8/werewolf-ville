@@ -9,7 +9,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
 
-#game-container { position: absolute; top: 0; left: 0; right: 320px; bottom: 160px; overflow: hidden; }
+#game-container { position: absolute; top: 0; left: 0; right: 320px; bottom: 0; overflow: hidden; }
 
 /* 右侧面板 */
 #side-panel {
@@ -108,37 +108,6 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
 }
 #announce-btn:hover { background: #d93550; }
 
-/* 底部日志窗口 */
-#log-panel {
-  position: absolute; left: 0; right: 320px; bottom: 0; height: 160px;
-  background: #0d1117; border-top: 2px solid #0f3460;
-  display: flex; flex-direction: column;
-  z-index: 100;
-}
-#log-header {
-  background: #161b22; padding: 6px 12px; font-size: 13px; font-weight: bold;
-  color: #8b949e; border-bottom: 1px solid #21262d;
-  display: flex; justify-content: space-between; align-items: center;
-  cursor: ns-resize;
-  user-select: none;
-  min-height: 20px;
-}
-#log-header span { color: #58a6ff; }
-#log-content {
-  flex: 1; overflow-y: auto; padding: 8px 12px;
-  font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
-  line-height: 1.6; color: #c9d1d9;
-}
-#log-content .log-entry { margin-bottom: 2px; }
-#log-content .log-time { color: #484f58; margin-right: 6px; }
-#log-content .log-agent { color: #58a6ff; font-weight: bold; }
-#log-content .log-action { color: #7ee787; }
-#log-content .log-think { color: #d2a8ff; font-style: italic; }
-#log-content .log-error { color: #f85149; }
-#log-content .log-system { color: #8b949e; }
-#log-content .log-llm-raw { color: #ffa657; white-space: pre-wrap; word-break: break-word; font-family: monospace; font-size: 11px; }
-#log-content .log-kill { color: #e94560; font-weight: bold; }
-
 /* 游戏结束遮罩 */
 #game-over-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -170,7 +139,7 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
 
 /* 发言气泡层 — 覆盖全窗口，不受游戏容器和侧面板裁剪 */
 #bubble-layer {
-  position: absolute; top: 0; left: 0; right: 320px; bottom: 160px;
+  position: absolute; top: 0; left: 0; right: 320px; bottom: 0;
   pointer-events: none; z-index: 50; overflow: hidden;
 }
 
@@ -546,13 +515,20 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
       <div id="vote-history-content" style="max-height: 86px; overflow-y: auto; color: #cfd8ee;">暂无投票记录</div>
     </div>
   </div>
-  <button id="end-turn-btn" onclick="startDuskDiscussion()" disabled>结束本回合，进入黄昏讨论投票</button>
+  <button id="end-turn-btn" onclick="startDuskDiscussion()" disabled>结束本回合，进入黄昏讨论</button>
   <button id="night-btn" onclick="enterNight()" style="display: none;" disabled>进入夜晚</button>
 
   <div id="crow-card-container"></div>
   <div id="agent-list"></div>
 
   <button id="announce-btn" onclick="showAnnounce()" style="display: none;" disabled>宣布推理</button>
+
+  <div id="dusk-statement-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #ffdd57; padding: 12px 16px;">
+    <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px;">黄昏讨论发言</div>
+    <div id="dusk-discussion-list" style="font-size: 11px; line-height: 1.45; color: #ddd; max-height: 120px; overflow-y: auto; margin-bottom: 8px;"></div>
+    <textarea id="dusk-statement-input" placeholder="输入克罗的黄昏总结..." style="width: 100%; height: 58px; resize: vertical; box-sizing: border-box; background: #0f172a; color: #eee; border: 1px solid #334155; border-radius: 4px; padding: 6px; font-size: 12px;"></textarea>
+    <button id="dusk-statement-submit" onclick="submitDuskStatement()" style="width:100%; margin-top:6px; padding:8px; background:#e94560; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">提交发言，进入投票</button>
+  </div>
 
   <div id="voting-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #e94560; padding: 12px 16px;">
     <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">🌅 黄昏投票与指控 (Dusk Voting)</div>
@@ -579,14 +555,6 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
 <div id="task-panel">
   <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">📋 警长每日任务 (Sheriff Tasks)</div>
   <div id="sheriff-tasks" style="font-size: 12px; line-height: 1.6; color: #eee;"></div>
-</div>
-
-<div id="log-panel">
-  <div id="log-header">
-    <div>智能体日志</div>
-    <span id="log-count">0条</span>
-  </div>
-  <div id="log-content"></div>
 </div>
 
 <div id="game-over-overlay">
@@ -717,9 +685,6 @@ let nightOverlay = null;
 let selectedAgent = null;
 let isNight = false;
 let isDusk = false;
-let logEntries = 0;
-let lastLogTime = 0;
-let lastLogId = -1;
 let firstStateReceived = false;
 let pendingChatTarget = null;
 let pendingChatPhase = ""; // "moving" | "waiting"
@@ -795,6 +760,14 @@ function initSocket() {
     showGameOver(resp);
   });
   socket.on("jail_result", (resp) => {
+    if (resp && resp.error) {
+      addChatMsg("系统", resp.error, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("dusk_statement_result", (resp) => {
+    const submit = document.getElementById("dusk-statement-submit");
+    if (submit) submit.disabled = false;
     if (resp && resp.error) {
       addChatMsg("系统", resp.error, true);
     }
@@ -1016,14 +989,6 @@ function postGameLifecycle(url) {
 }
 
 function resetAgentLog() {
-  const logEl = document.getElementById("log-content");
-  if (logEl) logEl.innerHTML = "";
-  logEntries = 0;
-  lastLogTime = 0;
-  lastLogId = -1;
-  const countEl = document.getElementById("log-count");
-  if (countEl) countEl.textContent = "0条";
-
   // Reset local chat/pending variables to prevent carrying over from previous game
   clearPendingChat();
 
@@ -1084,6 +1049,25 @@ function startDuskDiscussion() {
   } else {
     fetch("/api/start_dusk_discussion", {method: "POST"})
       .then(() => fetchCurrentState());
+  }
+}
+
+function submitDuskStatement() {
+  const input = document.getElementById("dusk-statement-input");
+  const submit = document.getElementById("dusk-statement-submit");
+  const statement = (input && input.value ? input.value : "").trim();
+  if (!statement) return;
+  if (submit) submit.disabled = true;
+  if (socket && socket.connected) {
+    socket.emit("submit_dusk_statement", { statement });
+  } else {
+    fetch("/api/submit_dusk_statement", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ statement })
+    }).then(() => fetchCurrentState()).finally(() => {
+      if (submit) submit.disabled = false;
+    });
   }
 }
 
@@ -1284,8 +1268,8 @@ function updateUI(state) {
     const canStart = tasksComplete || (state.can_start_dusk_discussion !== undefined && !!state.can_start_dusk_discussion);
     endTurnBtn.disabled = isNight || isDusk || !canStart || !!state.game_over || state.primary_cta === "gathering";
     endTurnBtn.textContent = isDusk
-      ? "黄昏讨论投票进行中"
-      : (!canStart ? "请先完成今日警长任务" : "结束本回合，进入黄昏讨论投票");
+      ? "黄昏讨论进行中"
+      : (!canStart ? "请先完成今日警长任务" : "结束本回合，进入黄昏讨论");
   }
 
   // Update deep-dive count in side panel
@@ -1299,13 +1283,32 @@ function updateUI(state) {
   updateTasks(state);
   maybeTriggerPendingAutoChat(state);
 
+  const voteSummary = state.vote_summary || {};
+  const discussionActive = !!(state.dusk_discussion_active || voteSummary.discussion_active);
+  const discussionPanel = document.getElementById("dusk-statement-panel");
+  if (discussionPanel) {
+    discussionPanel.style.display = isDusk && discussionActive ? "block" : "none";
+    const discussionList = document.getElementById("dusk-discussion-list");
+    if (discussionList) {
+      const statements = state.dusk_discussion_statements || voteSummary.discussion_statements || [];
+      if (Array.isArray(statements) && statements.length) {
+        discussionList.innerHTML = statements.map(item => {
+          const speaker = getDisplayName(item.speaker || "", state);
+          const text = item.text || "";
+          return `<div style="margin-bottom:5px;"><strong style="color:#ffdd57;">${speaker}</strong>：${text}</div>`;
+        }).join("");
+      } else {
+        discussionList.innerHTML = '<div style="color:#888; font-style:italic;">居民正在整理发言。</div>';
+      }
+    }
+  }
+
   // 🌅 Update Dusk Voting Panel when voting fields are exposed in status
   const votingPanel = document.getElementById("voting-panel");
   if (votingPanel) {
     const hasVotingFields = state.vote_summary !== undefined || state.dusk_votes !== undefined || state.votes !== undefined || state.voting !== undefined || state.voting_results !== undefined;
-    if (hasVotingFields && isDusk) {
+    if (hasVotingFields && isDusk && !!voteSummary.active) {
       votingPanel.style.display = "block";
-      const voteSummary = state.vote_summary || {};
       const votesObj = voteSummary.votes || state.dusk_votes || state.votes || state.voting || state.voting_results || {};
       const reasonsObj = voteSummary.reasons || {};
       const votesEl = document.getElementById("voting-votes");
@@ -1401,81 +1404,6 @@ function updateUI(state) {
   }
 
   if (state.game_over) showGameOver(state);
-
-  updateLog(state);
-}
-
-function updateLog(state) {
-  const logs = state.recent_log || [];
-  if (!logs.length) return;
-
-  const logEl = document.getElementById("log-content");
-  // 显示所有有意义的日志类型
-  const showTypes = ["think", "chat", "kill", "memory", "action"];
-
-  for (let i = 0; i < logs.length; i++) {
-    const entry = logs[i];
-    // 基于自增 id 去重：跳过已显示的日志（避免同一秒内多条日志丢失）
-    if (entry.id !== undefined && entry.id <= lastLogId) continue;
-    if (entry.id === undefined && entry.time <= lastLogTime) continue;
-
-    const logType = entry.type || "system";
-    if (!showTypes.includes(logType)) continue;
-
-    const div = document.createElement("div");
-    div.className = "log-entry";
-
-    const timeStr = new Date(entry.time * 1000).toLocaleTimeString("en-US",
-      {hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit"});
-
-    let cls = "log-system";
-    let prefix = "";
-    if (logType === "think") {
-      cls = "log-think";
-      prefix = "";
-    } else if (logType === "system") {
-      cls = "log-system";
-      prefix = "";
-    } else if (logType === "action") {
-      cls = "log-action";
-      prefix = "";
-    } else if (logType === "chat") {
-      cls = "log-action";
-      prefix = "💬 ";
-    } else if (logType === "kill") {
-      cls = "log-kill";
-      prefix = "💀 ";
-    } else if (logType === "memory") {
-      cls = "log-agent";
-      prefix = "🧠 ";
-    } else if (logType === "llm_raw") {
-      cls = "log-llm-raw";
-      prefix = "";
-    }
-
-    let found = false;
-    for (const name of PERSONA_NAMES) {
-      if (entry.message.includes(name)) {
-        const displayName = getDisplayName(name, state);
-        const parts = entry.message.split(name);
-        div.innerHTML = `<span class="log-time">${timeStr}</span>${prefix}<span class="${cls}">${parts[0]}</span><span class="log-agent">${displayName}</span><span class="${cls}">${parts.slice(1).join(name)}</span>`;
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      div.innerHTML = `<span class="log-time">${timeStr}</span>${prefix}<span class="${cls}">${entry.message}</span>`;
-    }
-    logEl.appendChild(div);
-    logEntries++;
-    document.getElementById("log-count").textContent = logEntries + "条";
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-  // 更新最新日志时间戳 and id
-  lastLogTime = logs[logs.length - 1].time;
-  if (logs[logs.length - 1].id !== undefined) {
-    lastLogId = logs[logs.length - 1].id;
-  }
 }
 
 let deepDiveTarget = null;
@@ -3443,33 +3371,6 @@ document.getElementById("conn-indicator").onclick = () => {
 window.addEventListener("resize", () => {
   resolveBubbleLayout();
 });
-
-// ==================== 日志面板拖拽调整大小 ====================
-(function() {
-  const logPanel = document.getElementById("log-panel");
-  const logHeader = document.getElementById("log-header");
-  let dragging = false;
-  let startY = 0;
-  let startHeight = 0;
-
-  logHeader.addEventListener("mousedown", (e) => {
-    dragging = true;
-    startY = e.clientY;
-    startHeight = logPanel.offsetHeight;
-    e.preventDefault();
-  });
-
-  document.addEventListener("mousemove", (e) => {
-    if (!dragging) return;
-    const dy = startY - e.clientY;
-    const newHeight = Math.max(40, Math.min(window.innerHeight * 0.8, startHeight + dy));
-    logPanel.style.height = newHeight + "px";
-  });
-
-  document.addEventListener("mouseup", () => {
-    dragging = false;
-  });
-})();
 
 function translateEnglishLabels(text) {
   if (!text) return "";
