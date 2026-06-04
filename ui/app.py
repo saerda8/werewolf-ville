@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import json
+import subprocess
 import urllib.error
 import urllib.request
 
@@ -144,9 +145,26 @@ def _test_anthropic_messages(llm_override):
     return "".join(parts).strip()
 
 
+def _frontend_version() -> str:
+    try:
+        commit = subprocess.check_output(
+            ["git", "-C", PROJECT_ROOT, "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "-C", PROJECT_ROOT, "status", "--short"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return f"{commit}{'-dirty' if dirty else ''}"
+    except Exception:
+        return "dev"
+
+
 @app.route("/")
 def index():
-    response = make_response(render_template("index.html"))
+    response = make_response(render_template("index.html", frontend_version=_frontend_version()))
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"

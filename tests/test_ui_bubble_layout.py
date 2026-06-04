@@ -300,21 +300,32 @@ def test_chinese_titles_and_log_labels():
     assert "Agent Log" not in html
 
 
-def test_frontend_does_not_render_agent_log_panel():
+def test_frontend_renders_agent_log_panel():
     html = INDEX_HTML.read_text(encoding="utf-8")
-    assert "function updateLog(state)" not in html
-    assert "#log-panel" not in html
-    assert "log-content" not in html
+    assert "function updateLog(state)" in html
+    assert 'id="log-panel"' in html
+    assert 'id="log-content"' in html
+    assert 'const showTypes = ["think", "chat", "kill", "memory", "action", "system", "error"];' in html
+    assert 'escapeHtml(entry.message || "")' in html
+    assert "escapeHtml(parts[0])" in html
 
 
-def test_bottom_right_keeps_tasks_without_extra_log_block():
-    """Right-bottom UI keeps sheriff tasks only, not the extra long log block. # covers REQ-086"""
+def test_bottom_right_keeps_tasks_without_unnamed_log_block():
+    """Right-bottom UI keeps sheriff tasks only. Agent log panel is now structured inside side-panel without squeezing game area."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert '<div id="task-panel">' in html
-    assert '<div id="log-panel">' not in html
-    assert 'id="log-content"' not in html
-    assert "智能体日志" not in html
+    assert 'id="log-panel"' in html
+    assert 'id="log-content"' in html
+    assert "智能体日志" in html
+    assert "right: 320px; bottom: 0;" in html or "bottom: 0;" in html
+
+
+def test_frontend_version_displayed_in_start_overlay():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="app-version-badge"' in html
+    assert 'class="frontend-version"' in html
+    assert "v{{ frontend_version }}" in html
 
 
 def test_frontend_name_localization_does_not_corrupt_crown_location():

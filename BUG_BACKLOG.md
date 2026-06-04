@@ -248,6 +248,68 @@ ID:
 
 相关提交：本次批量修复提交。
 
+### BUG-008：首页缺失版本号且智能体日志无法显示
+
+严重度：Major
+关联需求：REQ-086, REQ-011
+回归测试：`tests/test_ui_bubble_layout.py`
+回归频率：每次必现
+状态：Closed
+验收状态：Closed
+
+期望：首页左上角可见前端版本号。恢复一个明确的智能体日志面板，渲染后端 status.recent_log，但放在右侧边栏底部，不影响游戏区域。
+
+验证方式：运行 `pytest tests/test_ui_bubble_layout.py -q`
+
+根因：BUG-007 修复时将 #log-panel 和 updateLog() 完全移除，导致智能体日志在前端无处呈现。且前端版本号未在界面上体现。
+
+修复方案：
+  1. 在首页（#start-overlay）左上角添加前端版本号 div，由 Flask 注入当前 Git 短哈希，最终显示为 `v<commit>`。
+  2. 在 #side-panel 底部恢复 #log-panel 面板与 updateLog() 渲染逻辑，只读取后端 status.recent_log 进行显示，不影响左侧游戏区域的 bottom 布局，并对日志文本做 HTML 转义。
+  3. 在 tests/test_ui_bubble_layout.py 中更新对应断言。
+
+验证结果（2026-06-05）：
+- `tests/test_ui_bubble_layout.py` 全部通过。
+- `python -m py_compile ui/app.py` 通过。
+- 全量回归 `python -m pytest tests -q` 通过：351 passed。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次修复提交。
+
+### BUG-009：警长案情说明句间缺少可见停顿
+
+严重度：Minor
+关联需求：REQ-011
+回归测试：`tests/test_gathering_timeout.py`
+回归频率：每次必现
+状态：Closed
+验收状态：Closed
+
+期望：警长克罗案情说明每说完一句后，按 `crow_intro_line_delay_seconds` 出现可见停顿，再显示下一句。
+
+验证方式：自动化测试验证第一句和第二句之间存在空白气泡间隔。
+
+根因：当前实现是“显示一句 -> sleep(delay) -> 直接替换下一句”，只有显示时长，没有清空气泡后的句间停顿。
+
+修复方案：在 Crow 开场说明线程中增加 `_pause_after_intro_line()`，每句显示后先等待配置时长，再清空 Crow 气泡和当前发言，再等待配置时长后发布下一句。
+
+验证结果（2026-06-05）：
+- 新增 `tests/test_gathering_timeout.py::test_crow_intro_has_visible_pause_between_lines`。
+- `tests/test_gathering_timeout.py::test_crow_intro_line_delay_waits_after_estimated_speech` 通过。
+- `tests/test_gathering_timeout.py::test_crow_intro_line_delay_reads_config` 通过。
+- 全量回归 `python -m pytest tests -q` 通过：351 passed。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次修复提交。
+
 ## 已知外部问题
 
 ### EXT-001：模型供应商超时、限流或余额不足

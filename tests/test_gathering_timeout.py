@@ -795,6 +795,31 @@ def test_crow_intro_line_delay_reads_config(monkeypatch):
     assert game_engine.WerewolfGameEngine._crow_intro_line_delay("任何长度") == 0.75
 
 
+def test_crow_intro_has_visible_pause_between_lines(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "crow_intro_line_delay_seconds", 0.05)
+    engine._gathering_queue = ["Crow"]
+    engine._gathering_speech_history = []
+    engine._gathering_speaker_idx = 0
+    engine._gathering_busy = True
+    monkeypatch.setattr(engine, "_case_intro_fallback_lines", lambda: ["第一句", "第二句", "第三句"])
+    monkeypatch.setattr(
+        engine,
+        "_balance_crow_intro_lines",
+        lambda raw_lines, fallback_lines, immediate_line: ["第二句", "第三句"],
+    )
+
+    engine._trigger_crow_case_intro("Crow")
+    assert engine.chat_bubbles["Crow"]["text"] == "第一句"
+
+    time.sleep(0.07)
+    assert "Crow" not in engine.chat_bubbles
+    assert engine._gathering_current_speech == ""
+
+    time.sleep(0.06)
+    assert engine.chat_bubbles["Crow"]["text"] == "第二句"
+
+
 def test_departure_delay_seconds_from_config(monkeypatch):
     """_departure_delay_seconds reads from config."""
     monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 4.0)

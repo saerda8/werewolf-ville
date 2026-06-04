@@ -1219,10 +1219,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         turn_id = self._begin_gathering_turn(name, 1)
 
+        def _pause_after_intro_line(line: str):
+            time.sleep(self._crow_intro_line_delay(line))
+            with self._lock:
+                bubble = self.chat_bubbles.get(name)
+                if bubble and bubble.get("text") == line:
+                    self.chat_bubbles.pop(name, None)
+                if self._gathering_current_speech == line:
+                    self._gathering_current_speech = ""
+            time.sleep(self._crow_intro_line_delay(line))
+
         def _do_intro_preset():
             try:
                 lines = self._balance_crow_intro_lines(fallback_lines[1:], fallback_lines, immediate_line)
-                time.sleep(self._crow_intro_line_delay(immediate_line))
+                _pause_after_intro_line(immediate_line)
                 if not self._complete_gathering_turn(turn_id, name, 1):
                     self._log(f"[聚集迟到响应] {name} 开场说明已过期，忽略预设台词", "system")
                     return
@@ -1235,7 +1245,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     self._gathering_current_speech = line
                     self._show_gathering_bubble(name, line)
                     self._log(f"💬 [案情说明] {name}: {line}", "chat")
-                    time.sleep(self._crow_intro_line_delay(line))
+                    _pause_after_intro_line(line)
                 self._gathering_speaker_idx += 1
                 self._gathering_next_tick = time.time() + self._gathering_departure_gap_seconds()
                 self._gathering_busy = False
