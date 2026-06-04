@@ -13,7 +13,13 @@
 - Before delegating a task to Antigravity, run the Antigravity CLI doctor and confirm that the configured `antigravity.exe` reports ready. Use the CLI worker path, not the desktop language-server integration.
 - When the user asks to use DeepSeek as a subagent, this always means the Claude Code CLI-driven DeepSeek worker. It does not mean a direct model API call or an in-game NPC model.
 - When the use of Antigravity as a subagent is requested, this always means the Antigravity CLI worker. It does not mean the Antigravity desktop language-server integration.
-- When the user asks to use the in-app Browser, do not conclude it is unavailable just because no direct `browser` tool appears. First follow the Browser plugin skill and connect through the Node REPL browser-client (`agent.browsers.get("iab")`), then use that in-app browser for localhost navigation, screenshots, and inspection.
+- When the user asks to use the in-app Browser, do not conclude it is unavailable just because no direct `browser` tool appears. First follow the Browser plugin skill and connect through the Node REPL browser-client, then use that in-app browser for localhost navigation, screenshots, and inspection.
+  - Read `browserClientPath` from `C:\Users\XD\.codex\chrome-native-hosts-v2.json`.
+  - In Node REPL, import that exact `.mjs` file, call `await browserClient.setupBrowserRuntime({globals: globalThis})`, then call `await agent.browsers.get("iab")`.
+  - Do not guess package names such as `agent-browser`; the browser client is a local ESM file, not a normal installed package.
+- Do not silently wait on stalled operations. If a worker, restart command, browser connection, or test produces no useful progress for about 30 seconds, inspect its status, report the concrete state to the user, and switch to a viable fallback or stop the failed operation.
+- `restart.bat` ends with `pause`; do not treat an attached invocation as a long-running health check. After starting or restarting, independently verify port 5000 and `http://127.0.0.1:5000/`. If the service is healthy, continue; if it is not, report the failure promptly and ask the user to run it only when automated startup genuinely cannot proceed.
+- Treat worker output and edits as untrusted until reviewed. Immediately inspect `git status` and `git diff` when a worker finishes or fails. Reject premature backlog status changes, risky speculative fixes, and any `personas/` runtime pollution.
 
 ---
 
