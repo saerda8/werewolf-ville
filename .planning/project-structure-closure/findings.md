@@ -16,3 +16,8 @@
 - Kept same names imported from `game_engine.py` so tests and callers that import from `game_engine` remain compatible.
 - `game_engine.py` keeps `import os` only as compatibility surface for existing tests that monkeypatch `game_engine.os.path`.
 - Full movement methods remain in `game_engine.py`; those are more coupled to NPC state and should be split separately.
+
+## Daily Task Slice
+- Extracted `_build_daily_tasks()` into `EngineTasksMixin` in `engine_tasks.py`.
+- The method only depends on engine state and does not require prompt/model imports, so it is a safe mixin boundary.
+- Silver acquisition/crafting actions remain in `game_engine.py`; they are behavior-heavy and should not be mixed with task display extraction.

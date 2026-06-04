@@ -9,3 +9,7 @@
 - Extracted pure map/collision/scene/pathfinding helpers to `engine_navigation.py`.
 - Verified navigation slice with `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_navigation.py`.
 - Verified navigation slice with `python -m pytest tests/test_engine_foundation.py -q` => 148 passed, 1 pytest cache warning.
+- Committed navigation slice as `1771da9 refactor(engine): extract navigation helpers`.
+- Extracted sheriff daily task display construction to `engine_tasks.py`.
+- Verified task slice with `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_navigation.py engine_tasks.py`.
+- Verified task slice with `python -m pytest tests/test_engine_foundation.py -q` => 148 passed, 1 pytest cache warning.
