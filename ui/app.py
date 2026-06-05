@@ -20,6 +20,7 @@ from flask_socketio import SocketIO, emit
 from openai import OpenAI
 from game_engine import WerewolfGameEngine
 from config_loader import load_config
+from llm import chat_for_agent, get_last_error_for_agent, get_model_for_agent
 
 app = Flask(__name__,
             static_folder=os.path.join(PROJECT_ROOT, "static"),
@@ -73,6 +74,25 @@ def _runtime_llm_override_from_data(data):
 
 def _runtime_llm_override_from_request():
     return _runtime_llm_override_from_data(request.get_json(silent=True) or {})
+
+
+def _local_chat2api_override() -> dict:
+    llm_config = CONFIG.get("llm", {})
+    model = str(llm_config.get("default_model", "") or "")
+    if not model:
+        agent_models = llm_config.get("agent_models", {})
+        if isinstance(agent_models, dict):
+            model = next((str(value) for value in agent_models.values() if str(value or "").strip()), "")
+    if not model:
+        available_models = llm_config.get("available_models", [])
+        if isinstance(available_models, list):
+            model = next((str(value) for value in available_models if str(value or "").strip()), "")
+    return {
+        "provider": "chat2api",
+        "api_key": str(llm_config.get("api_key", "") or ""),
+        "model": model,
+        "api_base": str(llm_config.get("api_base", "") or ""),
+    }
 
 
 def _classify_llm_test_error(exc: Exception) -> str:
@@ -145,6 +165,45 @@ def _test_anthropic_messages(llm_override):
     return "".join(parts).strip()
 
 
+def _test_openai_compatible_chat(llm_override: dict) -> str:
+    client_kwargs = {
+        "api_key": llm_override["api_key"],
+        "base_url": llm_override["api_base"],
+    }
+    if llm_override.get("provider") != "chat2api":
+        client_kwargs["default_headers"] = {
+            "HTTP-Referer": "http://127.0.0.1:5000",
+            "X-Title": "Werewolf Ville",
+        }
+    client = OpenAI(**client_kwargs)
+    response = client.chat.completions.create(
+        model=llm_override["model"],
+        messages=[
+            {"role": "system", "content": "You are a connectivity test."},
+            {"role": "user", "content": "Reply with OK."},
+        ],
+        max_tokens=8,
+        temperature=0,
+        timeout=20,
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
+def _test_local_chat2api_agent() -> tuple[str, str]:
+    agent_name = "Arthur Burton"
+    sample = chat_for_agent(
+        agent_name,
+        "You are a connectivity test.",
+        "Reply with OK.",
+        temperature=0,
+        max_retries=0,
+    )
+    if not sample:
+        last_error = get_last_error_for_agent(agent_name)
+        raise RuntimeError(last_error or "empty local Chat2API response")
+    return get_model_for_agent(agent_name), sample
+
+
 def _frontend_version() -> str:
     try:
         count = int(subprocess.check_output(
@@ -184,34 +243,18 @@ def test_llm_provider():
     if isinstance(llm_override, dict) and llm_override.get("error"):
         return jsonify({"ok": False, "error": llm_override["error"]}), 400
     if llm_override is None:
-        return jsonify({"ok": True, "provider": "chat2api", "message": "Using local Chat2API config."})
+        llm_override = _local_chat2api_override()
 
     provider = llm_override["provider"]
     model = llm_override["model"]
     api_base = llm_override["api_base"]
     try:
-        if provider in ("anthropic", "custom_anthropic"):
+        if provider == "chat2api":
+            model, sample = _test_local_chat2api_agent()
+        elif provider in ("anthropic", "custom_anthropic"):
             sample = _test_anthropic_messages(llm_override)
         else:
-            client = OpenAI(
-                api_key=llm_override["api_key"],
-                base_url=api_base,
-                default_headers={
-                    "HTTP-Referer": "http://127.0.0.1:5000",
-                    "X-Title": "Werewolf Ville",
-                },
-            )
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are a connectivity test."},
-                    {"role": "user", "content": "Reply with OK."},
-                ],
-                max_tokens=8,
-                temperature=0,
-                timeout=20,
-            )
-            sample = (response.choices[0].message.content or "").strip()
+            sample = _test_openai_compatible_chat(llm_override)
         return jsonify({
             "ok": True,
             "provider": provider,

@@ -1,29 +1,37 @@
-# Project Collaboration Preferences
+# 项目协作规则
 
-- Before starting any task, first assess whether analysis or implementation can be delegated to available subagents.
-- For any non-trivial investigation or code change, begin by planning subagent delegation first, before doing the work locally. Prefer launching clearly scoped tasks to both DeepSeek and Antigravity in parallel whenever their scopes can be separated.
-- If only one subagent can be used, or if a task is too small/unsafe/sequential to delegate, state that reason briefly before proceeding locally.
-- Do not leave DeepSeek or Antigravity idle on substantial work merely to save coordination effort; use them to save primary-agent context and tokens.
-- For work that requires non-trivial investigation or code changes, prefer splitting clearly scoped tasks between DeepSeek and Antigravity.
-- Antigravity can own backend investigation and implementation tasks as well as frontend work. When backend work can be divided into independent scopes, distribute it across both CLI workers instead of queueing all backend tasks behind DeepSeek.
-- The primary agent remains responsible for task boundaries, reviewing changes, integration, and final verification.
-- Prefix ordinary shell commands with `rtk` in this project to reduce terminal output and token use. Use direct commands only for MCP calls, approved Windows management commands, or cases where `rtk` would interfere with the required operation.
-- Before delegating a task to DeepSeek, run a Claude Code CLI preflight with the configured native Windows executable and DeepSeek key file. Confirm that the CLI starts successfully before launching the DeepSeek worker.
-- On Windows, use the native Claude Code `claude.exe` configured through `CLAUDE_BIN`; do not rely on `claude.ps1`, because the DeepSeek launcher starts Claude Code through Node.js `spawn()`.
-- Before delegating a task to Antigravity, run the Antigravity CLI doctor and confirm that the configured `antigravity.exe` reports ready. Use the CLI worker path, not the desktop language-server integration.
-- When the user asks to use DeepSeek as a subagent, this always means the Claude Code CLI-driven DeepSeek worker. It does not mean a direct model API call or an in-game NPC model.
-- When the use of Antigravity as a subagent is requested, this always means the Antigravity CLI worker. It does not mean the Antigravity desktop language-server integration.
-- When the user asks to use the in-app Browser, do not conclude it is unavailable just because no direct `browser` tool appears. First follow the Browser plugin skill and connect through the Node REPL browser-client, then use that in-app browser for localhost navigation, screenshots, and inspection.
-  - Read `browserClientPath` from `C:\Users\XD\.codex\chrome-native-hosts-v2.json`.
-  - In Node REPL, import that exact `.mjs` file, call `await browserClient.setupBrowserRuntime({globals: globalThis})`, then call `await agent.browsers.get("iab")`.
-  - Do not guess package names such as `agent-browser`; the browser client is a local ESM file, not a normal installed package.
-- Do not silently wait on stalled operations. If a worker, restart command, browser connection, or test produces no useful progress for about 30 seconds, inspect its status, report the concrete state to the user, and switch to a viable fallback or stop the failed operation.
-- `restart.bat` ends with `pause`; do not treat an attached invocation as a long-running health check. After starting or restarting, independently verify port 5000 and `http://127.0.0.1:5000/`. If the service is healthy, continue; if it is not, report the failure promptly and ask the user to run it only when automated startup genuinely cannot proceed.
-- Treat worker output and edits as untrusted until reviewed. Immediately inspect `git status` and `git diff` when a worker finishes or fails. Reject premature backlog status changes, risky speculative fixes, and any `personas/` runtime pollution.
+本文件是 `werewolf-ville` 的项目级工作协议，给主 agent、DeepSeek、Antigravity 和其他子 agent 使用。它不是玩法说明，也不是 bug 列表。
 
 ---
 
-## Worker 能力矩阵
+## 1. 工作总原则
+
+- 每个任务开始前，先读项目结构和相关规则，再做最小必要改动。
+- 只修改完成任务必须改的文件；不重排无关代码，不格式化无关文件，不读取 `.env`，除非用户明确要求。
+- 如果需要查看大量文件，先说明查看范围。
+- 默认只查看与当前任务直接相关的模块，不做全局重构。
+- 不把多个不相关目标硬塞进同一条对话。当前任务完成后，如果后续是新方向，转到新线程或对应频道。
+- 输出只保留关键结论、修改文件和验证方式。错误只总结关键错误和涉及文件，不贴完整日志，除非用户要求。
+- 普通 shell 命令优先使用 `rtk`，减少输出和 token 消耗。MCP 调用、已批准的 Windows 管理命令，或 `rtk` 会干扰结果时，可以直接运行原命令。
+
+---
+
+## 2. 子 Agent 使用规则
+
+- 做任何非平凡任务前，先判断能否交给子 agent。
+- 非简单调查或代码修改，要先规划 worker 分配，再自己动手。
+- 中等以上工作尽量并行使用可用子 agent，不只限 DeepSeek / Antigravity。
+- 不要为了省协调成本让 DeepSeek / Antigravity 闲着。
+- 如果任务太小、太危险、必须顺序执行，或不适合委派，可以不派 worker，但要说明原因。
+- DeepSeek 指 Claude Code CLI 驱动的 DeepSeek worker，不是游戏内 NPC 模型，也不是直接模型 API。
+- Antigravity 指 Antigravity CLI worker，不是桌面版语言服务器。
+- Antigravity 不只是前端，也可以做低风险后端、文档和脚本。
+- 主 agent 负责拆任务、审查 worker 改动、整合、测试、浏览器验证和最终结论。
+- worker 输出和改动默认不可信，必须检查 `git status` 和 `git diff`。
+
+---
+
+## 3. Worker 分工
 
 ### DeepSeek（Claude Code CLI）
 
@@ -43,7 +51,7 @@
 | 能力 | 胜任级别 | 说明 |
 |------|---------|------|
 | 前端 UI 布局与微调（Phaser 绘制、CSS、气泡位置、层级） | ★★★★★ | 视觉定位、元素对齐、响应式布局 |
-| WebSocket/Socket.IO 协议适配 | ★★★★★ | 前端事件同步、状态报文调试 |
+| WebSocket / Socket.IO 协议适配 | ★★★★★ | 前端事件同步、状态报文调试 |
 | 后端低风险拆分（纯函数提取、导航、气泡状态、任务系统） | ★★★★☆ | 不涉及深度状态机耦合的模块 |
 | 文档整理与重复检测 | ★★★★★ | 文件结构优化、单一事实来源分析 |
 | 环境清理脚本（运行态隔离、缓存清理） | ★★★★★ | 跨局清理、日志轮转 |
@@ -52,22 +60,81 @@
 
 ---
 
-## Worker 卡住升级流程
+## 4. Worker 前置检查与禁区
 
-当 worker 出现以下情况时，必须**显式**向主 agent 报告，不能静默等待或反复重试：
+- 派 DeepSeek 前，先确认任务能在允许文件范围内完成，不能把天然需要禁区文件的任务交给它。
+- 如果 DeepSeek 因为碰禁区失败，立刻复盘它已有结果，保留可用发现，再派更窄任务，不能让这次 worker 工作白费。
+- 派 DeepSeek 前，先做 Claude Code CLI 预检。
+- Windows 上 DeepSeek 必须使用原生 `claude.exe`（通过 `CLAUDE_BIN` 配置），不要用 `claude.ps1`，因为 DeepSeek launcher 通过 Node.js `spawn()` 启动 Claude Code。
+- 派 Antigravity 前，先跑 Antigravity CLI doctor，确认配置的 `antigravity.exe` 可用。这里使用 CLI worker，不是桌面版语言服务器。
+- `personas/` 同时包含静态模板和运行时状态。跑 `Agent` / `WerewolfGameEngine` 测试可能写入 `personas/*/memory.md`、`cognition.md`、`scratch.json`、`memory_index.json`。
+- 涉及 `personas/` 时，派 worker 前必须明确策略：允许运行态写入并由主 agent 清理/审查，或者禁止写入并避免运行会触发写入的测试路径。
+
+---
+
+## 5. 浏览器与启动
+
+- 用户说“内置浏览器”时，不要因为没有直接 `browser` 工具就判断不可用。
+- 按 Browser plugin skill 的 Node REPL browser-client 方式连接：
+  - 从 `C:\Users\XD\.codex\chrome-native-hosts-v2.json` 读取 `browserClientPath`。
+  - 在 Node REPL 中导入该 `.mjs` 文件。
+  - 调用 `await browserClient.setupBrowserRuntime({globals: globalThis})`。
+  - 再调用 `await agent.browsers.get("iab")` 获取内置浏览器。
+  - 不要猜 `agent-browser` 这类包名；browser client 是本地 ESM 文件，不是普通 npm 包。
+- `restart.bat` 结尾有 `pause`，不能把它当健康检查。
+- 启动或重启后，要单独验证 `http://127.0.0.1:5000/` 和端口 5000。
+- 每次完成代码修改或修复后，最终回复要报告前端显示的 `版本 X`。
+- worker、浏览器连接、重启、测试如果约 30 秒没有有用进展，必须检查状态并说明，不许静默等待。
+
+---
+
+## 6. 上下文与输出纪律
+
+- 长线程不把完整聊天记录当主要记忆。
+- 稳定需求读 `USER_REQUIREMENTS_LEDGER.md`。
+- 协作规则读 `AGENTS.md`。
+- bug 读 `BUG_BACKLOG.md`。
+- 聊天原文主要看用户最近 5~10 条，除非用户要求回看更早记录。
+- assistant 历史输出只采纳最终结论、确认过的计划和设计，不采纳中间排查噪声、worker 卡住闲聊和原始工具输出摘要。
+- 使用 `PROJECT_SKILL_ALLOWLIST.md` 作为本项目默认 skill 子集。除非用户明确要求去 skill 库找，或任务明显超出白名单，否则不要展开无关全局 skill。
+- `keep-codex-fast` 原则常开：少输出过程噪声，优先外置项目记忆，不向聊天灌大段日志。它的维护/报告脚本只在 Codex 本地状态需要维护或用户要求时运行。
+- `caveman` 可在用户要求简短、上下文压力大或总结 worker / 工具输出时使用。线程变长时，可更积极压缩聊天记录摘要、过程记录、worker 输出和工具结果，只保留可执行事实与决策。不要让压缩影响玩法设计、安全说明和复杂步骤的清晰度。
+
+---
+
+## 7. 不可擅改的项目基石
+
+NPC 行为框架是项目基石：
+
+```text
+目标前提 + 观察 + 记忆 -> 思考并计划 -> 行动 -> 记忆沉淀 / 阶段反思
+```
+
+未经用户讨论确认，不得擅自修改：
+
+- 观察、思考、计划、行动、记忆、反思链路
+- 行动类型体系
+- 记忆契约
+- 蓝色气泡语义
+
+---
+
+## 8. Worker 卡住升级流程
+
+worker 出现以下情况时，必须显式向主 agent 报告，不能静默等待或反复重试：
 
 1. **编译失败**：代码无法通过 `py_compile`，且 5 分钟内不能定位根因。
 2. **测试大面积失败**：修改导致相关测试半数以上失败，或同一测试连续 3 次修复仍失败。
-3. **超出授权范围**：worker 需要修改未授权的目录（`personas/`、缓存、`game_engine.py` 全部重写）。
-4. **循环依赖**：提取的模块与 `game_engine.py` 形成反向 import。
+3. **超出授权范围**：worker 需要修改未授权目录，如 `personas/`、缓存，或试图整体重写 `game_engine.py`。
+4. **循环依赖**：提取模块与 `game_engine.py` 形成反向 import。
 5. **环境故障**：CLI 无法启动、Key 无效、模型服务超时。
 6. **任务歧义**：描述不明确，worker 无法确定边界或验收标准。
 
-### 升级报告格式
+升级报告格式：
 
 ```text
 [卡住报告]
-Worker: DeepSeek / Antigravity
+Worker: DeepSeek / Antigravity / 其他
 任务: <任务简述>
 卡住类型: <编号 1-6>
 具体现象: <错误信息 / 失败截图 / 日志>
@@ -77,42 +144,45 @@ Worker: DeepSeek / Antigravity
 
 ---
 
-## 产出审查流程
+## 9. Worker 产出审查
 
-主 agent 审查 worker 产出时，逐项检查以下内容：**不能直接信任 worker 输出**。
+worker 完成或失败后，主 agent 必须审查，不能直接信任 worker 输出。
 
-### A. 审查步骤
+审查步骤：
 
-1. **范围检查**：`git diff` 确认只改了授权文件。红线：`personas/` 运行态、缓存、无关模块。
+1. **范围检查**：`git diff` 确认只改授权文件。红线：`personas/` 运行态、缓存、无关模块。
 2. **语法检查**：`python -m py_compile <所有受影响文件>` 通过。
-3. **回归测试**：运行受影响模块的 pytest，测试结果为 Green。
-4. **UI 浏览器验证**（仅前端修改）：`restart.bat` → 浏览器截图确认气泡、层级、布局。
-5. **逻辑正确性**：抽查 diff 关键逻辑，确认没有顺手修无关 bug 或引入调试 print。
-6. **文档同步**：更新 `BUG_BACKLOG.md` 状态（修复 bug 时）和 `CURRENT_SPRINT.md` 进度（sprint 任务时）。
+3. **回归测试**：运行受影响模块的 pytest，测试结果应为 Green。
+4. **UI 浏览器验证**：涉及前端改动时，重启服务并用浏览器确认气泡、层级、布局、交互。
+5. **逻辑正确性**：抽查关键 diff，确认没有顺手修无关 bug 或引入调试 print。
+6. **文档同步**：修 bug 时更新 `BUG_BACKLOG.md`，阶段任务更新 `CURRENT_SPRINT.md`。
 
-### B. 产出检查清单
+检查清单：
 
-- [ ] 只修改了授权文件（`git diff` 确认），未改 `personas/` 运行态、缓存或无关模块。
-- [ ] 新文件已 `git add` 追踪。
-- [ ] `python -m py_compile <所有文件>` 通过。
-- [ ] **没有**新模块反向 import `game_engine`。
-- [ ] 涉及 UI 的改动已通过浏览器截图确认。
+- [ ] 只修改授权文件，未改 `personas/` 运行态、缓存或无关模块。
+- [ ] 新文件已追踪或明确说明为什么未追踪。
+- [ ] `python -m py_compile <所有受影响文件>` 通过。
+- [ ] 没有新模块反向 import `game_engine`。
+- [ ] 涉及 UI 的改动已通过浏览器截图或实际操作确认。
 - [ ] `git diff` 不含调试 print、注释代码、日志噪声。
 - [ ] 相关 pytest 全部 Green。
-- [ ] `BUG_BACKLOG.md` 状态已更新（如适用）。
-- [ ] `CURRENT_SPRINT.md` 进度已更新（如适用）。
-
-### C. 申请用户介入的检查清单
-
-- [ ] 已在 chat 中清晰陈述阻碍。
-- [ ] 已准备好 2-3 个选择项供用户决策。
-- [ ] 最新调试事实已记录到 `findings.md` 或 `BUG_BACKLOG.md`。
+- [ ] 必要文档已同步。
 
 ---
 
-## Worker 任务派发模板
+## 10. 需要用户介入时
 
-为减少歧义，给 worker 派发任务时建议包含以下字段：
+如果需要用户处理权限、环境、账号、API key、外部服务或产品决策，必须清楚说明：
+
+- 当前阻碍是什么。
+- 已经尝试了什么。
+- 需要用户做什么。
+- 如有必要，给 2~3 个选择项。
+- 最新调试事实应写入 `findings.md`、`BUG_BACKLOG.md` 或相关项目文档。
+
+---
+
+## 11. Worker 任务派发模板
 
 ```text
 ## Task

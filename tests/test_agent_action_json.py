@@ -124,7 +124,7 @@ class TestDecideNextActionExtraction:
         raw = '```json\n{"action_type": "stay", "target_location": "home", "action": "rest", "thought": "tired", "expected_result": "recover"}\n```'
         result = _make_decision_raw(agent, raw, monkeypatch)
         assert result.get("ok") is True
-        assert result.get("action_type") == "stay"
+        assert result.get("action_type") == "continue_current"
 
     def test_explanatory_text_before_json(self, monkeypatch):
         agent = Agent(name="TestAgent", role="villager", model="test")

@@ -1,8 +1,35 @@
-from ui.app import _classify_llm_test_error, _friendly_llm_test_error, _runtime_llm_override_from_data
+from ui.app import (
+    _classify_llm_test_error,
+    _friendly_llm_test_error,
+    _test_local_chat2api_agent,
+    _local_chat2api_override,
+    _runtime_llm_override_from_data,
+)
 
 
 def test_chat2api_provider_uses_local_config():
     assert _runtime_llm_override_from_data({"provider": "chat2api"}) is None
+
+
+def test_local_chat2api_override_uses_config():
+    override = _local_chat2api_override()
+
+    assert override["provider"] == "chat2api"
+    assert override["api_base"].endswith("/v1")
+    assert override["model"]
+    assert "api_key" in override
+
+
+def test_local_chat2api_agent_test_uses_npc_path(monkeypatch):
+    import ui.app as app_module
+
+    monkeypatch.setattr(app_module, "chat_for_agent", lambda *args, **kwargs: "OK")
+    monkeypatch.setattr(app_module, "get_model_for_agent", lambda name: "Qwen3.6-35B-A3B")
+
+    model, sample = _test_local_chat2api_agent()
+
+    assert model == "Qwen3.6-35B-A3B"
+    assert sample == "OK"
 
 
 def test_preset_provider_uses_known_base_url():

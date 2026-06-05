@@ -38,7 +38,7 @@ def test_right_top_uses_vote_history_instead_of_director_summary():
 def test_right_panel_exposes_model_failure_marker_and_readable_task_counts():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    assert 'const modelFailed = !!(p.llm_error || p.last_error || p.response_error || (p.last_decision && p.last_decision.ok === false));' in html
+    assert 'const modelFailed = !!(hasResponseError || hasDecisionError);' in html
     assert 'class="model-health-warning"' in html
     assert 'title="最近一次模型回复未生效"' in html
     assert '.task-progress {' in html
@@ -55,42 +55,44 @@ def test_bubble_speech_prefix_uses_chinese_display_names():
 
 
 def test_bubble_layer_bounds():
-    """#bubble-layer must be constrained to game area only — no overlap with right panel or bottom log."""
+    """#bubble-layer must not clip bubbles; JS clamps them into the game area."""
     html = INDEX_HTML.read_text(encoding="utf-8")
-    assert "right: 320px" in html
-    assert "bottom: 160px" in html
-    assert "overflow: hidden" in html
+    assert "right: 0; bottom: 0;" in html
+    assert "overflow: visible" in html
     assert "width: max-content;" not in html
     assert "overflow-wrap: anywhere;" in html
 
 
-def test_no_right_edge_width_clamp():
-    """Bubble width is NOT dynamically clamped near right edge; overflow hidden handles clipping."""
+def test_right_edge_layout_clamping():
+    """Bubble width is clamped and positioned based on layout calculation near right edge to prevent squeezing/clipping."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     # No JavaScript code dynamically sets maxWidth (camelCase = JS property)
     # — only CSS `max-width` (hyphenated) is allowed.
     assert "maxWidth" not in html, "JS must not dynamically set maxWidth on bubbles"
 
-    # Bubble left positioning is based on screen coordinate, never clamped to viewportWidth
-    assert "bubbleEl.style.left = screenX +" in html
-    assert "tBubbleEl.style.left = screenX +" in html
+    # Bubble left positioning is based on layout.x, never raw screenX
+    assert 'bubbleEl.style.left = layout.x + "px"' in html
+    assert 'tBubbleEl.style.left = layout.x + "px"' in html
 
-    # No code re-calculates bubble width based on residual visible space
-    assert "overflow: hidden" in html or "overflow-x: hidden" in html
+    # Natural width is measured at 0px first to avoid browser squeezing
+    assert 'bubbleEl.style.left = "0px"' in html
+    assert 'tBubbleEl.style.left = "0px"' in html
 
-    # The inVisibleScreen check only cares about anchor point, not bubble extent
-    # — overflow will be clipped by #bubble-layer overflow hidden
+    # No code re-calculates bubble width based on residual visible space or layer clipping
+    assert "overflow: visible" in html
+
+    # The inVisibleScreen check is present
     assert "inVisibleScreen" in html
     assert "screenX <= viewportWidth" in html
 
 
-def test_bubble_layer_clips_overflow():
-    """#bubble-layer clips bubble overflow; bubbles have fixed max-width (not dynamic/percentage)."""
+def test_bubble_layer_does_not_clip_overflow():
+    """#bubble-layer does not clip bubble overflow; bubbles have fixed max-width."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # bubble-layer overflow hidden is present — clips bubble overflow
-    assert "overflow: hidden" in html
+    # bubble-layer must not be the clipping mechanism.
+    assert "overflow: visible" in html
 
     # Bubbles have fixed pixel max-width — never percentage or dynamic JS value
     assert "max-width: 260px" in html
@@ -107,7 +109,7 @@ def test_bubble_layer_clips_overflow():
     # overflow-wrap:anywhere handles long unbreakable strings gracefully.
     assert "overflow-wrap: anywhere;" in html
 
-    # Do not use negative margin hacks; #bubble-layer clips overflow instead.
+    # Do not use negative margin hacks.
     assert "margin-right: -300px;" not in html
 
 
@@ -157,7 +159,7 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert "const chatBtnDisabled = (!chatAvailable || isNight || isDusk || isPendingChat || isGathering) ? \"disabled\" : \"\";" in html
     assert "if (!isNight && gameState && !pendingChatTarget)" in html
     assert "const suppressChatDisplay = isChatSuppressedFor(name);" in html
-    assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(bubblePayload);' in html
+    assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);' in html
     assert 'return !!pendingChatTarget && name === pendingChatTarget;' in html
     assert 'showLocalCrowQuestion(name, msg);' in html
     assert 'let thoughtText = suppressChatDisplay ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
@@ -254,8 +256,10 @@ def test_short_display_names_and_auto_chat_arrival_behaviour():
 def test_bubble_horizontal_boundary_clamping():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    assert "#bubble-layer clips overflow" in html
-    assert "Do not horizontally clamp bubbles at the game edge" in html
+    assert "#bubble-layer" in html
+    assert "Horizontally clamp bubbles at the game edge" in html
+    assert 'const gameContainer = document.getElementById("game-container");' in html
+    assert "gameContainer ? gameContainer.clientWidth : (window.innerWidth - 320)" in html
     assert "right > viewportWidth" not in html
     assert "left < 0" not in html
 
@@ -305,9 +309,25 @@ def test_frontend_renders_agent_log_panel():
     assert "function updateLog(state)" in html
     assert 'id="log-panel"' in html
     assert 'id="log-content"' in html
-    assert 'const showTypes = ["think", "chat", "kill", "memory", "action", "system", "error"];' in html
+    assert 'const showTypes = ["think", "chat", "kill", "action", "error"];' in html
+    assert "function shouldDisplayLogEntry(entry)" in html
     assert 'escapeHtml(entry.message || "")' in html
     assert "escapeHtml(parts[0])" in html
+
+
+def test_agent_log_panel_is_readable_resizable_and_filters_noise():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "#log-resize-handle" in html
+    assert 'id="log-resize-handle"' in html
+    assert "function initLogPanelResize()" in html
+    assert 'document.addEventListener("mousemove", onLogResizeMove)' in html
+    assert "setLogPanelHeight(nextHeight)" in html
+    assert "--log-panel-height" in html
+    assert "font-size: 12px;" in html
+    assert "LLM请求" in html
+    assert "行动解析" in html
+    assert "行动理由" in html
+    assert "思考超时" in html
 
 
 def test_bottom_right_keeps_tasks_and_log_panel_layout():
@@ -332,11 +352,28 @@ def test_bottom_right_keeps_tasks_and_log_panel_layout():
     side_panel_markup = html[side_panel_open:log_panel_open]
     assert log_panel_open < task_panel_open
     assert 'id="log-panel"' not in side_panel_markup
-    assert "#game-container { position: absolute; top: 0; left: 0; right: 320px; bottom: 160px; overflow: hidden; }" in html
-    assert "position: absolute; top: 0; left: 0; right: 320px; bottom: 160px;" in html
+    assert "#game-container { position: absolute; top: 0; left: 0; right: 320px; bottom: var(--log-panel-height); overflow: hidden; }" in html
+    assert "position: absolute; top: 0; left: 0; right: 320px; bottom: var(--log-panel-height);" in html
     assert "#log-panel {" in html
     assert "right: 320px;" in html
-    assert "height: 160px;" in html
+    assert "height: var(--log-panel-height);" in html
+
+
+def test_bubbles_are_clamped_away_from_right_panel_and_owner_sprite():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "function clampBubbleIntoLayer" in html
+    assert "function spriteProtectionRect" in html
+    assert "function bubbleRectFromAnchor" in html
+    assert "gameContainer.clientWidth" in html
+    assert "bubbleRight > viewportWidth - margin" in html
+    assert "rectsOverlap(candidateRect, protectedRect)" in html
+
+
+def test_frontend_keeps_recent_thoughts_and_crow_walk_animation_stable():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'const recentThought = thoughtTime > 0 && ((Date.now() / 1000) - thoughtTime <= BUBBLE_LIFETIME_SECONDS);' in html
+    assert "&& !recentThought" in html
+    assert 'const isMoving = p.runtime_state === "moving" || p.visual_moving === true;' in html
 
 
 def test_frontend_version_displayed_in_start_overlay():
@@ -510,3 +547,117 @@ def test_new_bugfixes_frontend():
     # 7. Detective/NPC chat log must not hide model length by hard-truncating text.
     assert "msg.substring(0, 120)" not in html
     assert 'getDisplayName(who, gameState) + ": " + msg' in html
+
+
+def test_delegated_ui_fixes_and_clamping():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # (1) 底部智能体日志字号偏小，放大一级 (Changed from 11px to 12px)
+    assert "font-size: 12px; /* Increased font-size by one level */" in html
+
+    # (2) 恢复日志面板顶部拖拽调整高度，向上增大、向下减小
+    assert 'handle.addEventListener("mousedown"' in html
+    assert 'document.addEventListener("mousemove", onLogResizeMove)' in html
+    assert 'document.addEventListener("mouseup"' in html
+    assert "function setLogPanelHeight(nextHeight)" in html
+
+    # (3) 前端日志只显示 NPC 思考/计划/行动和必要错误，过滤系统/LLM请求/行动解析/行动理由等噪声
+    assert "function shouldDisplayLogEntry(entry)" in html
+    assert "LLM请求" in html
+    assert "行动解析" in html
+    assert "行动理由" in html
+    assert "思考超时" in html
+
+    # (4) NPC 气泡靠近右侧 UI 时不要被挤压到不可读，也不能遮住 NPC 模型，必要时向左/侧边偏移并保持在 game/bubble layer 内
+    assert "function clampBubbleIntoLayer" in html
+    assert "function spriteProtectionRect" in html
+    assert "function bubbleRectFromAnchor" in html
+    assert "rectsOverlap(candidateRect, protectedRect)" in html
+
+
+def test_bubble_speech_prefix_shows_speaker_and_target_tdd():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'function bubbleSpeechText(speaker, payload)' in html
+    assert 'bubbleSpeechText(name, bubblePayload)' in html
+    assert 'const speakerDisplayName = getDisplayName(speaker, gameState);' in html
+    assert 'target && target.toLowerCase() !== speaker.toLowerCase()' in html
+    assert '`${speakerDisplayName}对${targetDisplayName}说：${text}`' in html
+    assert '`${speakerDisplayName}说：${text}`' in html
+
+
+def test_rules_logs_and_bubbles_requirements():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Rules modal explains bulb and question icons
+    assert "\u706f\u6ce1" in html # 灯泡
+    assert "\u95ee\u53f7" in html # 问号
+    assert "\u503c\u5f97\u8b66\u957f\u6df1\u6316\u7684\u4fe1\u606f" in html # 值得警长深挖的信息
+    assert "\u4e0d\u4e00\u5b9a\u4e3b\u52a8\u6c47\u62a5" in html # 不一定主动汇报
+    assert "\u6700\u8fd1\u4e00\u6b21\u53ef\u89c1\u53d1\u8a00\u6216\u884c\u52a8\u56de\u590d\u672a\u751f\u6548" in html # 最近一次可见发言或行动回复未生效
+
+    # 2. No italic in agent log panel
+    # We check that #log-content .log-think style does not contain "font-style: italic;"
+    assert "#log-content .log-think" in html
+    idx = html.find("#log-content .log-think")
+    style_block = html[idx:idx+150]
+    assert "font-style: italic" not in style_block
+    assert ".log-entry {" in html
+
+    # 3. Explicit labels in logs: 思考, 计划, 行动, 对话, 错误
+    assert 'class="log-tag"' in html
+    assert '"\u601d\u8003"' in html # "思考"
+    assert '"\u8ba1\u5212"' in html # "计划"
+    assert '"\u884c\u52a8"' in html # "行动"
+    assert '"\u5bf9\u8bdd"' in html # "对话"
+    assert '"\u9519\u8bef"' in html # "错误"
+
+
+def test_rules_button_handlers_are_global_for_inline_onclick():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'onclick="showRulesModal()"' in html
+    assert "function showRulesModal()" in html
+    assert "function closeRulesModal()" in html
+    assert "window.showRulesModal = showRulesModal;" in html
+    assert "window.closeRulesModal = closeRulesModal;" in html
+
+
+def test_npc_npc_speech_bubble_display_contract():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Check that bubbleSpeechText logic formats speaker and target correctly for NPC-NPC chats
+    assert 'function bubbleSpeechText(speaker, payload)' in html
+    assert 'const speakerDisplayName = getDisplayName(speaker, gameState);' in html
+    assert 'const targetDisplayName = getDisplayName(target, gameState);' in html
+    assert '`${speakerDisplayName}对${targetDisplayName}说：${text}`' in html
+
+    # 2. Check that resolveBubbleLayout retrieves bubbleSpeechText and generates speechText
+    assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);' in html
+
+    # 3. Check that thought bubble suppression logic does NOT swallow or clear speechText
+    # Verify the suppression logic only sets thoughtText = "" and speechText is not altered
+    assert 'if (speechText && p.alive) {' in html
+    assert 'thoughtText = "";' in html
+    # Ensure speechText is not cleared/swallowed in the suppression logic
+    assert 'speechText = "";' not in html
+
+
+def test_static_regression_icons_and_bubble_clamping():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # Verify modelFailed tracks visible response/action failures, not background llm_error noise.
+    assert 'const hasResponseError = p.response_error && p.response_error !== "None" && p.response_error !== "null" && p.response_error !== "undefined" && String(p.response_error).trim() !== "";' in html
+    assert 'const hasDecisionError = p.last_decision && p.last_decision.ok === false;' in html
+    assert 'const modelFailed = !!(hasResponseError || hasDecisionError);' in html
+
+    # Verify lightbulb (showBulb) is not displayed by default and has strict check conditions
+    assert 'const showBulb = p.alive && p.has_new_clue === true && !isNight && !isDusk && !isGathering && (chatAvailable || deepDiveAvailable);' in html
+    assert 'const bulbHtml = showBulb ?' in html
+
+    # Verify clampBubbleIntoLayer has the final boundary clamping logic for all currentSide cases
+    assert 'Final boundary clamping to prevent any part of the bubble from being cut off' in html
+    assert 'if (currentSide === "left") {' in html
+    assert 'targetX = width + margin;' in html
+    assert 'targetX = viewportWidth - margin;' in html
+    assert '} else if (currentSide === "right") {' in html
+    assert 'targetX = margin;' in html
+    assert 'targetX = viewportWidth - margin - width;' in html

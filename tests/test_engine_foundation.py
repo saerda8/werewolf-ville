@@ -139,6 +139,7 @@ def test_crow_public_status_never_exposes_blue_bubble_state(monkeypatch):
 
     assert public_crow["runtime_state"] == "idle"
     assert public_crow["path_len"] == 0
+    assert public_crow["visual_moving"] is True
     assert public_crow["action"] == ""
     assert public_crow["action_type"] == ""
     assert public_crow["action_plan"] == ""
@@ -356,11 +357,19 @@ def test_clue_stays_pending_until_successful_detective_chat(monkeypatch):
     assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Crow"
 
 
-def test_status_lights_bulb_for_current_clue_like_thought(monkeypatch):
+def test_status_does_not_light_bulb_for_keyword_only_thought(monkeypatch):
     engine = _make_engine(monkeypatch)
     source = engine.agents["Isabella Rodriguez"]
     source.current_thought = "我发现了一个异常线索，但还没决定是否去找警长。"
     source.current_action = "先整理咖啡馆柜台旁的证据"
+
+    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is False
+
+
+def test_status_lights_bulb_for_explicit_detective_hint(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    source = engine.agents["Isabella Rodriguez"]
+    source._last_decision = {"has_detective_hint": True}
 
     assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is True
 
@@ -399,6 +408,63 @@ def test_npc_chat_empty_reply_keeps_visible_fallback_bubble(monkeypatch):
 
     assert engine.chat_bubbles["Isabella Rodriguez"]["text"] == "我现在还没有想清楚，稍后再和你说。"
     assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton"
+
+
+def test_npc_chat_bubbles_at_distance_two_publish_initiator_bubble(monkeypatch):
+    """_trigger_npc_chat must not early-exit at distance 2 (one empty tile
+    between the two NPCs).  At minimum the initiator's white bubble must
+    be published so the player can see that two NPCs are conversing."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 12, 10  # Manhattan distance = 2
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你昨晚在那边看到什么了吗？")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "没看到特别的，不过听到了脚步声。")
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=2)
+
+    assert engine.chat_bubbles["Arthur Burton"]["target"] == "Isabella Rodriguez", (
+        "Initiator bubble must be published for distance-2 NPC chat"
+    )
+    assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton", (
+        "Responder bubble must also be published for distance-2 NPC chat"
+    )
+
+
+def test_npc_chat_at_distance_two_does_not_early_exit(monkeypatch):
+    """Regression: _trigger_npc_chat must treat distance ≤2 identically
+    for initial guard and mid-thread re-check.  The old code incorrectly
+    used >1 after LLM generation, causing distance-2 chats to silently
+    drop their bubbles."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 12, 10  # Manhattan distance = 2
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你听说最近镇上的事了吗？")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "听说了，大家都在议论。")
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=2)
+
+    # Both bubbles must have non-empty text
+    assert engine.chat_bubbles["Arthur Burton"]["text"], (
+        "Initiator bubble text must not be empty for distance-2 chat"
+    )
+    assert engine.chat_bubbles["Isabella Rodriguez"]["text"], (
+        "Responder bubble text must not be empty for distance-2 chat"
+    )
+    # Conversation state must have been cleaned up
+    assert arthur.in_conversation_with is None, (
+        "Arthur should be released from conversation after chat completes"
+    )
+    assert isabella.in_conversation_with is None, (
+        "Isabella should be released from conversation after chat completes"
+    )
 
 
 def test_status_exposes_director_fields(monkeypatch):
@@ -2162,6 +2228,27 @@ def test_npc_chat_sequential_bubble_timing_zero_delay(monkeypatch):
     assert engine.chat_bubbles["Isabella Rodriguez"]["text"] != ""
 
 
+def test_npc_chat_distance_two_keeps_one_gap_and_still_shows_bubbles(monkeypatch):
+    """NPC-NPC chat distance is now 2 so one empty tile can remain between them."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 12, 10
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你好，我想问你昨晚看见了什么。")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "我昨晚在咖啡馆附近听到脚步声。")
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    engine.llm_threads[-1].join(timeout=3)
+
+    assert engine.chat_bubbles["Arthur Burton"]["target"] == "Isabella Rodriguez"
+    assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton"
+    assert engine.chat_bubbles["Arthur Burton"]["text"]
+    assert engine.chat_bubbles["Isabella Rodriguez"]["text"]
+
+
 def test_bubble_lifetime_configured(monkeypatch):
     """Bubble expiration uses configurable lifetime, not hardcoded 60."""
     engine = _make_engine(monkeypatch)
@@ -2232,12 +2319,40 @@ def test_npc_chat_success_clears_old_error_and_stale_responder_bubble(monkeypatc
     assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Arthur Burton"
 
 
-def test_npc_chat_requires_distance_one_or_less(monkeypatch):
+def test_npc_chat_requires_distance_two_or_less(monkeypatch):
+    """NPC-NPC chat works at center distance 2 (one empty space between)."""
     engine = _make_engine(monkeypatch)
     arthur = engine.agents["Arthur Burton"]
     isabella = engine.agents["Isabella Rodriguez"]
     arthur.x, arthur.y = 10, 10
-    isabella.x, isabella.y = 12, 10
+    isabella.x, isabella.y = 12, 10  # center distance = 2, one empty space between
+    calls = []
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: calls.append(args) or "你好")
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "收到。")
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+
+    # A thread should have been spawned (guard lets distance 2 through)
+    assert len(engine.llm_threads) > 0, "Chat thread should be spawned at distance 2"
+
+    # Wait for thread to complete
+    for t in getattr(engine, 'llm_threads', []):
+        t.join(timeout=3)
+
+    # Distance 2 should be allowed now
+    assert len(calls) > 0, "Chat should proceed at distance 2 (one empty space)"
+    assert arthur.in_conversation_with is None, "Conversation should release after completion"
+    assert isabella.in_conversation_with is None, "Conversation should release after completion"
+
+
+def test_npc_chat_blocked_at_distance_three(monkeypatch):
+    """NPC-NPC chat must be blocked at center distance >=3."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 13, 10  # center distance = 3 (> 2)
     calls = []
     monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: calls.append(args) or "你好")
 
@@ -2297,7 +2412,7 @@ def test_chinese_display_target_person_resolves_to_internal_id(monkeypatch):
     assert game_engine.resolve_character_name("林梅") == "Mei Lin"
 
 
-def test_failed_action_decision_becomes_visible_stay_action(monkeypatch):
+def test_failed_action_decision_becomes_continue_current_action(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     arthur = engine.agents["Arthur Burton"]
@@ -2315,9 +2430,10 @@ def test_failed_action_decision_becomes_visible_stay_action(monkeypatch):
     while time.time() < deadline and getattr(arthur, "runtime_state", "") == "thinking":
         time.sleep(0.05)
 
-    assert arthur.current_action_type == "stay"
-    assert "停留" in arthur.current_action
-    assert any("类型=stay" in entry["message"] for entry in engine.game_log)
+    assert arthur.current_action_type == "continue_current"
+    assert "继续当前" in arthur.current_action
+    assert "停留" not in arthur.current_action
+    assert any("类型=continue_current" in entry["message"] for entry in engine.game_log)
 
 
 def test_talk_decision_starts_chat_when_target_person_adjacent(monkeypatch):
@@ -2335,6 +2451,63 @@ def test_talk_decision_starts_chat_when_target_person_adjacent(monkeypatch):
         "action": "询问昨晚是否看到可疑动静",
         "thought": "她离我很近，可以先问一句。",
         "expected_result": "获得线索",
+    }
+    calls = []
+    monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
+
+    engine._complete_agent_action("Arthur Burton", arthur)
+
+    assert calls == [("Arthur Burton", "Isabella Rodriguez")]
+    assert arthur._pending_action is None
+
+
+def test_talk_decision_starts_chat_when_target_person_distance_two(monkeypatch):
+    """_complete_agent_action must trigger _trigger_npc_chat for NPC-NPC
+    talk / socialize at distance 2 (one empty tile between them),
+    because the chat range is ≤2, not only adjacent."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 12, 10  # distance 2
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "隔着几步问她昨晚的情况",
+        "thought": "虽然隔了一个身位，但我还是想确认一下。",
+        "expected_result": "获得线索",
+    }
+    calls = []
+    monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
+
+    engine._complete_agent_action("Arthur Burton", arthur)
+
+    assert calls == [("Arthur Burton", "Isabella Rodriguez")], (
+        f"Expected _trigger_npc_chat call for distance-2 NPC talk, got {calls}"
+    )
+    assert arthur._pending_action is None
+
+
+def test_talk_decision_starts_chat_socialize_distance_two(monkeypatch):
+    """Same as above but action_type = socialize, ensuring both talk and
+    socialize are treated identically for the ≤2 chat range."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 12, 10  # distance 2
+    arthur._pending_action = {
+        "action_type": "socialize",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "和她聊聊镇上最近的传言",
+        "thought": "社交一下，看看有没有新消息。",
+        "expected_result": "增进信任",
     }
     calls = []
     monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
@@ -2368,6 +2541,52 @@ def test_talk_decision_to_crow_speaks_directly_when_adjacent(monkeypatch):
     assert engine.chat_bubbles["Arthur Burton"]["target"] == "Crow"
     assert "警长" in engine.chat_bubbles["Arthur Burton"]["text"]
     assert arthur._pending_action is None
+
+
+def test_detective_target_not_inferred_for_weak_suspicion_without_target_person(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    should_report = engine._should_infer_detective_target(
+        "talk",
+        "tell Crow that Arthur borrowed a tool yesterday",
+        "I suspect it may matter, but it is only a weak clue",
+    )
+
+    assert should_report is False
+
+
+def test_detective_target_not_inferred_for_chinese_weak_tip_without_target_person(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    should_report = engine._should_infer_detective_target(
+        "talk",
+        "我想找警长说一下，有人昨天借过工具",
+        "这只是可疑事实和怀疑，不是明确线索，也不是必须立即汇报的事情",
+    )
+
+    assert should_report is False
+
+
+def test_detective_target_inferred_for_urgent_direct_report_without_target_person(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    should_report = engine._should_infer_detective_target(
+        "talk",
+        "tell Crow immediately",
+        "urgent direct evidence: I saw the werewolf murder someone",
+    )
+
+    assert should_report is True
+
+
+def test_visible_action_omits_reasoning_prefix(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    display = engine._action_for_display(
+        "我觉得Arthur的说法很奇怪，所以去五金店检查昨天的借工具记录"
+    )
+
+    assert display == "去五金店检查昨天的借工具记录"
 
 
 def test_localize_character_names_does_not_corrupt_crown_location():
@@ -2614,8 +2833,8 @@ def test_npc_to_npc_avoids_target_already_in_conversation(monkeypatch):
 # ============================================================
 
 
-def test_npc_conversation_cleared_when_distance_exceeds_one(monkeypatch):
-    """NPC-to-NPC conversation must be cleared when distance > 1."""
+def test_npc_conversation_cleared_when_distance_exceeds_two(monkeypatch):
+    """NPC-to-NPC conversation must be cleared when distance > 2 (more than one empty space)."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
 
@@ -2628,7 +2847,7 @@ def test_npc_conversation_cleared_when_distance_exceeds_one(monkeypatch):
     isabella.in_conversation_with = "Arthur Burton"
     isabella._conversation_started_at = time.time()
 
-    # Put them far apart
+    # Put them far apart (distance 3 — more than 2)
     arthur.x, arthur.y = 10, 10
     isabella.x, isabella.y = 50, 50
 
@@ -2640,11 +2859,162 @@ def test_npc_conversation_cleared_when_distance_exceeds_one(monkeypatch):
         t.join(timeout=2)
 
     assert getattr(arthur, 'in_conversation_with', None) is None, (
-        "Arthur should be released when distance > 1"
+        "Arthur should be released when distance > 2"
     )
     assert getattr(isabella, 'in_conversation_with', None) is None, (
-        "Isabella should be released when distance > 1"
+        "Isabella should be released when distance > 2"
     )
+
+
+def test_npc_conversation_kept_at_distance_two(monkeypatch):
+    """NPC-to-NPC conversation must persist at center distance 2 (one empty space)."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+
+    # Set up a conversation
+    arthur.in_conversation_with = "Isabella Rodriguez"
+    arthur._conversation_started_at = time.time()
+    isabella.in_conversation_with = "Arthur Burton"
+    isabella._conversation_started_at = time.time()
+
+    # Put them at distance 2 — one empty space
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 12, 10
+
+    # Run the agent schedule check
+    engine._update_agent_schedules()
+
+    assert arthur.in_conversation_with == "Isabella Rodriguez", (
+        "Arthur should remain in conversation at distance 2"
+    )
+    assert isabella.in_conversation_with == "Arthur Burton", (
+        "Isabella should remain in conversation at distance 2"
+    )
+
+
+# ============================================================
+# Requirement: NPC positioning — left/right priority for talk
+# ============================================================
+
+
+def test_path_adjacent_to_prefers_horizontal_one_empty_gap(monkeypatch):
+    """NPC-NPC talk positioning should prefer left/right with one empty gap."""
+    engine = _make_engine(monkeypatch)
+    # Start at (10, 10), target at (30, 20). Open maze — all nearby tiles reachable.
+    # The function should pick left or right of target at distance 2 when requested.
+    engine.collision_maze = [[0] * 50 for _ in range(50)]
+
+    result = engine._path_adjacent_to(
+        (10, 10), (30, 20), prefer_horizontal=True, preferred_distance=2
+    )
+    assert result is not None, "Should find a reachable tile"
+    adj_x, adj_y, _ = result
+
+    dist = abs(adj_x - 30) + abs(adj_y - 20)
+    assert dist == 2, f"Expected one empty gap from target, got distance {dist}"
+    is_horizontal = adj_y == 20 and abs(adj_x - 30) == 2
+    assert is_horizontal, (
+        f"Expected horizontal one-gap tile for target (30,20), "
+        f"got vertical tile ({adj_x},{adj_y})"
+    )
+
+
+def test_path_adjacent_to_horizontal_priority_with_blocked_sides(monkeypatch):
+    """When both horizontal tiles are blocked, prefer_horizontal falls back to vertical."""
+    engine = _make_engine(monkeypatch)
+    maze = [[0] * 50 for _ in range(50)]
+    maze[20][28] = 1  # block one-gap left of target (30,20)
+    maze[20][32] = 1  # block one-gap right of target (30,20)
+    maze[20][29] = 1  # block adjacent left fallback too
+    maze[20][31] = 1  # block adjacent right fallback too
+    engine.collision_maze = maze
+
+    result = engine._path_adjacent_to(
+        (10, 10), (30, 20), prefer_horizontal=True, preferred_distance=2
+    )
+    assert result is not None, "Should fall back to vertical tile"
+    adj_x, adj_y, _ = result
+
+    dist = abs(adj_x - 30) + abs(adj_y - 20)
+    assert dist == 2, f"Should keep one empty vertical tile when available, got dist={dist}"
+    is_vertical = adj_x == 30 and abs(adj_y - 20) == 2
+    assert is_vertical, f"Expected vertical fallback, got ({adj_x},{adj_y})"
+
+
+def test_talk_action_moves_to_left_right_of_target(monkeypatch):
+    """When NPC decides to talk to another NPC, path_adjacent_to should
+    prefer horizontal (left/right) positioning."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.collision_maze = [[0] * 50 for _ in range(50)]
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 5, 10
+    arthur.target_x, arthur.target_y = 5, 10
+    isabella.x, isabella.y = 20, 10
+
+    # Trigger an LLM-thread style talk approach simulation
+    # (This exercises the code path at line ~3176 where _path_adjacent_to is called for talk)
+    path_res = engine._path_adjacent_to(
+        (arthur.x, arthur.y),
+        (isabella.x, isabella.y),
+        blocked=engine._occupied_tiles({"Arthur Burton", "Isabella Rodriguez"}),
+        prefer_horizontal=True,
+        preferred_distance=2,
+    )
+    assert path_res is not None, "Should find path to a conversation stand tile"
+    adj_x, adj_y, path = path_res
+
+    dist = abs(adj_x - isabella.x) + abs(adj_y - isabella.y)
+    assert dist == 2, f"Should leave one empty gap to target, got dist={dist}"
+
+    is_horizontal = adj_y == isabella.y and abs(adj_x - isabella.x) == 2
+    assert is_horizontal, (
+        f"Should prefer horizontal one-gap tile next to Isabella, got ({adj_x},{adj_y})"
+    )
+
+
+def test_third_party_does_not_insert_into_existing_conversation(monkeypatch):
+    """A third NPC must not insert itself into an NPC-NPC pair already in conversation."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    klaus = engine.agents["Klaus Mueller"]
+
+    # Arthur and Isabella are in conversation
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    klaus.x, klaus.y = 11, 12  # adjacent to Isabella but she's busy
+    arthur.in_conversation_with = "Isabella Rodriguez"
+    isabella.in_conversation_with = "Arthur Burton"
+
+    # Klaus has a pending action to talk to Isabella
+    klaus._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "想聊聊",
+        "thought": "找伊莎贝拉问问",
+        "expected_result": "聊天",
+    }
+
+    # Complete agent action — should detect Isabella is busy
+    engine._complete_agent_action("Klaus Mueller", klaus)
+    assert klaus._pending_action is None, "Klaus's pending action should be cleared"
+    assert klaus.runtime_state == "idle", "Klaus should be set to idle"
+    assert engine.chat_bubbles.get("Klaus Mueller") is None, (
+        "Klaus should not have a chat bubble"
+    )
+    # Arthur and Isabella should still be in conversation
+    assert arthur.in_conversation_with == "Isabella Rodriguez"
+    assert isabella.in_conversation_with == "Arthur Burton"
 
 
 # ============================================================

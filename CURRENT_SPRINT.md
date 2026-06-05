@@ -10,7 +10,7 @@
 
 ## 当前频道
 
-项目工具/结构频道。
+项目工具/结构频道收口中。后续新方向转入玩法设计线程。
 
 ## 任务清单
 
@@ -23,7 +23,7 @@
 - [x] 汇总 DeepSeek 的 `game_engine.py` 拆分建议并建立 `GAME_ENGINE_SPLIT_PLAN.md`。
 - [x] 汇总 Antigravity 的频道/流程建议并落实在 `PROJECT_CHANNELS.md`。
 - [x] 写出最终 `game_engine.py` 拆分执行计划与 Worker 协作 SOP。
-- [ ] 执行第一个低风险拆分切片并提交。
+- [x] 执行低风险拆分切片并提交。
 
 ## 本轮不做
 
@@ -68,6 +68,6 @@ Codex 项目目标使用工作区路径 `G:\Trae-Project\werewolf-ville`。后�
 - [x] 每个结构切片独立验证并提交
 - [x] 记录后续高风险拆分边界
 
-项目结构阶段完成。下一项工作应在 **Bug 修复线程** 中，按照 `BUG_BACKLOG.md` 逐条修复和验收，不再在本线程混入体验 Bug 修改。
+项目结构阶段完成，已完成一轮 Bug Backlog 收口。后续新方向应转入 **玩法设计线程**，围绕 NPC 行为框架、行动枚举、线索灯泡、主动汇报和交谈规则形成设计文档，不再在本线程混入新玩法讨论。
 
-最终结构回归：`python -m pytest tests -q`，结果 `345 passed`。
+最终收口回归：`python -m pytest tests -q`，结果 `380 passed`。

@@ -1224,21 +1224,33 @@ def test_departure_speech_uses_chinese_location_not_english(monkeypatch):
 
 
 def test_recent_log_excludes_llm_raw_entries(monkeypatch):
-    """recent_log in get_status must NOT include llm_raw type entries."""
+    """recent_log should expose player-facing NPC thoughts/actions, not debug noise."""
     engine = _make_engine(monkeypatch)
 
     engine._log("[模型原始输出] Crow: {json}", "llm_raw")
-    engine._log("可读的中文行动日志", "action")
-    engine._log("超时保底：使用备用发言", "system")
+    engine._log("[LLM请求] 亚瑟 -> model：发送行动决策请求", "think")
+    engine._log("[行动解析] 亚瑟: 类型=move_to，目标=酒馆", "think")
+    engine._log("[行动理由] 亚瑟: 想去酒馆看看", "think")
+    engine._log("系统消息：进入下一轮", "system")
+    engine._log("💭 亚瑟: 我觉得今晚的脚印很奇怪。", "think")
+    engine._log("📋 亚瑟 计划：去酒馆询问目击者", "action")
+    engine._log("🚶 亚瑟: 前往酒馆询问目击者", "action")
+    engine._log("[LLM状态] 亚瑟: 思考超时释放，稍后重试", "think")
 
     status = engine.get_status()
     assert isinstance(status["recent_log"], list)
     messages = [e["message"] for e in status["recent_log"]]
-    assert "可读的中文行动日志" in messages
-    assert "超时保底：使用备用发言" in messages
+    assert "💭 亚瑟: 我觉得今晚的脚印很奇怪。" in messages
+    assert "📋 亚瑟 计划：去酒馆询问目击者" in messages
+    assert "🚶 亚瑟: 前往酒馆询问目击者" in messages
+    assert "[大模型状态] 亚瑟: 思考超时释放，稍后重试" in messages
     assert not any("模型原始输出" in m for m in messages), (
         f"llm_raw entries should be filtered: {messages}"
     )
+    assert not any("LLM请求" in m for m in messages)
+    assert not any("行动解析" in m for m in messages)
+    assert not any("行动理由" in m for m in messages)
+    assert not any("系统消息" in m for m in messages)
 
 
 def test_normalize_destination_falls_back_to_character_default(monkeypatch):
@@ -1493,3 +1505,53 @@ def test_unified_fallback_log_not_present_on_success(monkeypatch):
     assert len(fallback_logs) == 0, (
         f"Unified fallback log should NOT appear on success: {fallback_logs}"
     )
+
+
+def test_round_one_success_uses_one_second_next_speaker_gap(monkeypatch):
+    """After a valid round-one speech, the next speaker should start after the configured 1s gap."""
+    engine = _make_engine(monkeypatch)
+    engine._init_gathering()
+    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_departure_gap_seconds", 1.0)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_speech_visible_seconds", 2.5)
+    monkeypatch.setattr(
+        game_engine,
+        "chat_for_agent",
+        lambda *args, **kwargs: "昨晚我在店里修工具，关门前核对了清单。今早听到命案心里不安，今天会整理记录。",
+    )
+
+    engine._gathering_busy = True
+    engine._gathering_speaker_idx = engine._gathering_queue.index("Arthur Burton")
+    start = time.time()
+    engine._trigger_round_one_speak("Arthur Burton")
+
+    deadline = time.time() + 3
+    while time.time() < deadline and engine._gathering_busy:
+        time.sleep(0.05)
+
+    assert engine._gathering_speech_history
+    gap = engine._gathering_next_tick - start
+    assert 0.8 <= gap <= 1.8, f"Expected about 1s next-speaker gap, got {gap}"
+
+
+def test_round_one_prompt_keeps_sixty_to_seventy_two_char_contract(monkeypatch):
+    """The opening round prompt should keep the user's 60-72 Chinese character target."""
+    engine = _make_engine(monkeypatch)
+    engine._init_gathering()
+    seen = {}
+
+    def capture_prompt(name, system_prompt, user_prompt, **kwargs):
+        seen["system_prompt"] = system_prompt
+        return "昨晚我在店里修工具，关门前核对了清单。今早听到命案心里不安，今天会整理记录。"
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", capture_prompt)
+    engine._gathering_busy = True
+    engine._gathering_speaker_idx = engine._gathering_queue.index("Arthur Burton")
+    engine._trigger_round_one_speak("Arthur Burton")
+
+    deadline = time.time() + 3
+    while time.time() < deadline and not seen:
+        time.sleep(0.05)
+
+    assert "60-72" in seen["system_prompt"]
+    assert "不要像模板" in seen["system_prompt"]
+    assert "90-130" not in seen["system_prompt"]

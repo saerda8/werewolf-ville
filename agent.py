@@ -1083,10 +1083,10 @@ class Agent:
 ## 决策指导
 你不是一个随机地点选择器。根据你的身份、目标和当前处境，选择一个有意义的行动。
 重要原则：
-- 如果当前位置就能实现当前目标，选择 stay/observe/inspect/work/rest 并在原地做具体的事
+- 如果当前位置就能实现当前目标，选择 continue_current/observe/inspect/work/rest 并继续当前具体事务
 - 只有确实需要去另一个地点时才选择 move_to
 - 如果 action 里写了"去/前往/到达/走向"某个地点，action_type 必须是 move_to，target_location 必须是那个目的地
-- 不要写"准备去某地"却把 action_type 写成 stay；stay 只表示留在原地完成动作
+- 不要写"准备去某地"却把 action_type 写成 continue_current；continue_current 只表示继续当前已经在做的事务
 - 不要在多个地点之间无目的地"散步"或"闲逛"
 - action 必须具体，如"向店员打听昨晚是否有人深夜出现"，而非含糊的"活动"
 - target_location 必须从上方的可选地点列表中选，一字不差！不要自己编造地点名（如"码头"、"广场东侧"等）
@@ -1094,11 +1094,11 @@ class Agent:
 - 如果你发现了线索但暂时不适合当面告诉警长，可以选择 inspect/observe/work，并在 thought 或 expected_result 里明确写出"线索/证据/异常/怀疑"，右侧UI会提示警长来问你。
 
 用JSON格式回复：
-{{"action_type": "move_to|stay|observe|inspect|work|rest|investigate|socialize|talk|hide", "target_location": "地点名", "target_object": "目标物件（可选）", "target_person": "目标人物中文名（可选，只能填8人名单里的中文名）", "action": "具体做什么（60字以内）", "thought": "行动动机（100字以内，如果是move_to必须说明去哪个坐标）", "expected_result": "期望达到什么效果（30字以内）"}}
+{{"action_type": "move_to|continue_current|observe|inspect|work|rest|investigate|socialize|talk|hide", "target_location": "地点名", "target_object": "目标物件（可选）", "target_person": "目标人物中文名（可选，只能填8人名单里的中文名）", "action": "具体做什么（60字以内）", "thought": "行动动机（100字以内，如果是move_to必须说明去哪个坐标）", "expected_result": "期望达到什么效果（30字以内）"}}
 
 action_type 含义：
 - move_to: 需要移动到另一个地点
-- stay: 留在原地做某事
+- continue_current: 继续当前已经在做的事务，不是新的“停留”动作
 - observe: 观察周围环境/人物
 - inspect: 检查某物件/区域
 - work: 做自己的本职工作
@@ -1250,13 +1250,14 @@ action_type 含义：
             "调查": "investigate", "investigating": "investigate",
             "休息": "rest", "sleeping": "rest", "relaxing": "rest",
             "观察": "observe",
-            "日常": "stay",
+            "日常": "continue_current", "stay": "continue_current", "停留": "continue_current",
+            "原地停留": "continue_current", "继续当前": "continue_current",
             "检查": "inspect",
             "交谈": "talk",
             "隐藏": "hide",
         }
         key = raw.strip().lower()
-        return mapping.get(key, key if key else "stay")
+        return mapping.get(key, key if key else "continue_current")
 
     def get_action_result(self, action_type: str, action: str, location: str,
                           target_object: str = "", target_person: str = "",
@@ -1268,7 +1269,8 @@ action_type 含义：
         person = f"{target_person}" if target_person else ""
         templates = {
             "move_to": f"到达了{loc}，准备行动。",
-            "stay": f"在{loc}继续完成当前的事务：{action}。",
+            "continue_current": f"在{loc}继续当前事务：{action}。",
+            "stay": f"在{loc}继续当前事务：{action}。",
             "observe": f"在{loc}观察了周围的情况。",
             "inspect": f"在{loc}检查了{'周围环境' if not obj else obj}。",
             "work": f"在{loc}完成了工作：{action}。",

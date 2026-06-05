@@ -74,13 +74,13 @@ ID:
 状态：Closed
 验收状态：Closed
 
-期望：气泡层只覆盖游戏区域，不穿右侧 UI；边缘处由容器裁切，不动态挤压；近距离对话时左右分布，不重叠。
+期望：气泡不穿右侧 UI；靠近右侧边缘时由 JS 根据游戏容器宽度完整夹回游戏可视区，必要时向左偏移或左右翻转；不能靠容器裁切解决，也不能被挤成长条；近距离对话时左右分布，不重叠。
 
 验证方式：浏览器截图 + `tests/test_ui_bubble_layout.py`。
 
-根因：该条目记录的是结构拆分前的历史体验问题，现有实现已具备固定气泡宽度、游戏区域裁切、对话左右分布和碰撞避让，但 backlog 状态未随实现与测试同步。
+根因：旧实现把 `#bubble-layer` 截到右侧面板左边并设置 `overflow:hidden`，同时测试仍要求“靠 bubble-layer 裁剪”。这与“靠近右侧 UI 时气泡必须完整可读”的体验目标冲突，导致测量或定位稍有滞后时气泡被右侧边界切掉。
 
-修复方案：无需新增生产代码；保留现有 `#bubble-layer` 边界裁切和气泡碰撞解析逻辑，以自动化测试和 IAB 实际布局验收确认关闭。
+修复方案：`#bubble-layer` 改为不裁剪（`overflow: visible`），由 `resolveBubbleLayout()` 使用 `#game-container.clientWidth/clientHeight` 作为可视边界，将气泡完整 clamp 到游戏区内；同步更新 `tests/test_ui_bubble_layout.py`，禁止再把右边缘裁切作为验收标准。
 
 验证结果（2026-06-05）：
 - IAB 中 `#bubble-layer` 实测边界为 `x=0, width=960, right=960`，停在右侧 UI 前。
@@ -344,7 +344,44 @@ ID:
 
 相关提交：本次修复提交。
 
+### BUG-011：智能体日志字号偏小、缺乏拖拽调整高度、日志噪声多，且 NPC 气泡在右边缘可能被遮挡或挡住 NPC 模型
+
+严重度：Major
+关联需求：无
+回归测试：`tests/test_ui_bubble_layout.py`
+回归频率：每次必现
+状态：Closed
+验收状态：Closed
+
+期望：
+  1. 底部日志字号放大一级。
+  2. 恢复日志面板顶部拖拽调整高度（向上增大、向下减小），调整高度时，所有邻近元素（game-container, side-panel, bubble-layer, task-panel）同步调整。
+  3. 日志噪声过滤：前端只显示思考/计划/行动和必要错误，通过明确白名单过滤掉系统、LLM 请求、行动解析、行动理由等噪声。
+  4. NPC 气泡在靠近右侧 UI（侧边栏）边界时自动偏移/向左侧移，保持在 game/bubble layer 内，且有安全距离防止遮挡 NPC 模型，必要时在左右两侧自动翻转。
+
+验证方式：运行 `pytest tests/test_ui_bubble_layout.py -q`
+
+根因：之前版本移除了日志面板的拖拽功能，且日志默认字号（11px）偏小；前端未对 `recent_log` 进行精细过滤，直接显示了大量系统、LLM请求与解析的噪声；旧的气泡布局没有考虑右侧 UI 边界的溢出剪裁以及 NPC 模型的遮挡，在边缘时直接被裁剪，且没有防遮挡 NPC 逻辑。
+
+修复方案：
+  1. 将 CSS 中 `#log-content` 和 `.log-llm-raw` 的 `font-size` 从 11px 提升至 12px。
+  2. 在 `#log-header` 上添加 `cursor: ns-resize`；在前端 JS 中恢复 mousedown/mousemove/mouseup 拖拽事件监听器，动态更新 `log-panel`, `task-panel` 高度及 `game-container`, `side-panel`, `bubble-layer` 的 bottom 样式，并分发 `resize` 事件通知 Phaser 重新适应。
+  3. 在 `updateLog` 中添加 `logWhitelist`（白名单正则表达式数组），对日志类型为 `"error"` 或日志消息匹配 `logWhitelist` 的条目予以保留，其余全部过滤掉。
+  4. 在 `resolveBubbleLayout` 中引入 `getClampedBubblePosition` 函数，根据气泡的 actual width、NPC 坐标和 viewport 宽度计算不遮挡 NPC 模型（24px 安全间距）且保持在游戏边界内的最佳偏移位置，并在必要时自动从 right 翻转到 left（反之亦然）。
+
+验证结果（2026-06-05）：
+  - `tests/test_ui_bubble_layout.py` 全部通过（包含新增/收紧的测试）。
+  - `python -m pytest tests -q` 回归测试通过。
+
+关闭门禁：
+  - [x] 对应回归测试通过。
+  - [x] 编译门禁通过。
+  - [x] 根因与关联需求已记录。
+
+相关提交：本次修复提交。
+
 ## 已知外部问题
+
 
 ### EXT-001：模型供应商超时、限流或余额不足
 
