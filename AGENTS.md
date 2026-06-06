@@ -25,6 +25,7 @@
 - 如果任务太小、太危险、必须顺序执行，或不适合委派，可以不派 worker，但要说明原因。
 - DeepSeek 指 Claude Code CLI 驱动的 DeepSeek worker，不是游戏内 NPC 模型，也不是直接模型 API。
 - Antigravity 指 Antigravity CLI worker，不是桌面版语言服务器。
+- DeepSeek / Antigravity 的换频道恢复、调用参数、派工模板和 `personas/` 策略见 `MCP_WORKER_USAGE_GUIDE.md`。
 - Antigravity 不只是前端，也可以做低风险后端、文档和脚本。
 - 主 agent 负责拆任务、审查 worker 改动、整合、测试、浏览器验证和最终结论。
 - worker 输出和改动默认不可信，必须检查 `git status` 和 `git diff`。
