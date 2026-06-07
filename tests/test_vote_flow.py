@@ -544,6 +544,55 @@ def test_confirm_vote_result_jails_only_resolved_winner(monkeypatch):
     assert engine._dusk_stage == "escorting"
 
 
+def test_dusk_discussion_replaces_filler_statement(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    _arrive_dusk_participants(engine)
+    monkeypatch.setattr(
+        engine,
+        "_generate_single_dusk_discussion_statement",
+        lambda *args, **kwargs: "我没意见，先听克罗怎么说。",
+    )
+    monkeypatch.setattr(engine, "_gathering_departure_gap_seconds", lambda: 0)
+
+    engine._generate_dusk_discussion_statements()
+
+    assert engine._dusk_discussion_statements
+    for item in engine._dusk_discussion_statements:
+        assert not engine_dusk._is_dusk_filler_statement(item["text"])
+        assert "先听" not in item["text"]
+
+
+def test_confirm_vote_result_holds_final_words_before_prison(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    _arrive_dusk_participants(engine)
+    engine.submit_dusk_statement("请投票。")
+    engine._dusk_votes = {name: "Arthur Burton" for name in engine.agents if name != "Crow"}
+    engine._dusk_vote_reasons = {name: "test" for name in engine._dusk_votes}
+    engine._dusk_votes["Crow"] = "Isabella Rodriguez"
+    engine._dusk_crow_voted = True
+    engine._resolve_dusk_votes()
+    engine._running = True
+    events = []
+    monkeypatch.setattr(engine, "_jailed_final_words", lambda target: "我还有话要说。")
+    monkeypatch.setattr(engine_dusk.time, "sleep", lambda seconds: events.append(("sleep", seconds)))
+    original_place = engine._place_in_prison
+
+    def record_place(target):
+        events.append(("place", target))
+        original_place(target)
+
+    monkeypatch.setattr(engine, "_place_in_prison", record_place)
+
+    result = engine.confirm_vote_result()
+
+    assert result["success"] is True
+    assert events[0] == ("sleep", engine_dusk._DUSK_FINAL_WORDS_HOLD_SECONDS)
+    assert events[1] == ("place", "Arthur Burton")
+    assert engine.chat_bubbles["Arthur Burton"]["text"] == "我还有话要说。"
+
+
 # ---------------------------------------------------------------------------
 # Requirement: Day 1 fixed knowledge revelation (spec section 3)
 # ---------------------------------------------------------------------------

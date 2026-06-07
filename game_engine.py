@@ -9658,6 +9658,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     "delivered_clues": [],
                 }
             delivered_clues = self._deliver_pending_clues_to_crow(target_name)
+            if is_deep_dive or delivered_clues:
+                pending_action = getattr(target, "_pending_action", None)
+                if isinstance(pending_action, dict):
+                    pending_action.pop("has_detective_hint", None)
+                    pending_action.pop("has_visible_clue_hint", None)
+                last_decision = getattr(target, "_last_decision", None)
+                if isinstance(last_decision, dict):
+                    last_decision.pop("has_detective_hint", None)
+                    last_decision.pop("has_visible_clue_hint", None)
 
             if delivered_clues:
 

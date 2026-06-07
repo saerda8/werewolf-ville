@@ -33,6 +33,22 @@ _CROW_DISCUSSION_TEXT = (
     "怀疑谁就投谁，不确定也可以弃票，得票最高的人我会先暂时关进牢房。"
 )
 _CROW_START_VOTE_TEXT = "现在开始投票。"
+_DUSK_FINAL_WORDS_HOLD_SECONDS = 6.0
+
+_DUSK_FILLER_PATTERNS = (
+    "我没意见",
+    "没有意见",
+    "先听警长",
+    "先听克罗",
+    "听听警长",
+    "听听克罗",
+    "等大家说完",
+    "等别人说",
+    "暂时没有线索",
+    "没有线索",
+    "不好说",
+    "不确定",
+)
 
 
 def active_town_people_rule() -> str:
@@ -50,6 +66,14 @@ def _chat_for_agent(*args, **kwargs):
     game_engine_module = sys.modules.get("game_engine")
     runtime_chat = getattr(game_engine_module, "chat_for_agent", chat_for_agent)
     return runtime_chat(*args, **kwargs)
+
+
+def _is_dusk_filler_statement(text: str) -> bool:
+    """Return True for low-information dusk speeches that dodge discussion."""
+    compact = "".join(str(text or "").split())
+    if not compact:
+        return True
+    return any(pattern in compact for pattern in _DUSK_FILLER_PATTERNS)
 
 
 class EngineDuskMixin:
@@ -321,6 +345,11 @@ class EngineDuskMixin:
         if getattr(self, "_running", False):
             time.sleep(max(3.0, float(self._gathering_speech_visible_seconds())))
 
+    def _pause_for_dusk_final_words(self) -> None:
+        """Keep the jailed target's final words readable before escorting."""
+        if getattr(self, "_running", False):
+            time.sleep(_DUSK_FINAL_WORDS_HOLD_SECONDS)
+
     # ==================== Day 1 knowledge revelation ====================
 
     def _get_plaza_clockwise_order(self) -> list[str]:
@@ -398,6 +427,8 @@ class EngineDuskMixin:
             f"最近死者：{recent_dead}。已知线索：{clue_text}。"
             f"你对白天经历的记忆：{memory_text}。你的当前判断：{cognition_text}。"
             "结合自己的经历、怀疑和阵营目标发表意见，可以辩护、怀疑、说真话或撒谎；"
+            "必须说出一个具体观察、行踪、怀疑对象或自证依据。"
+            "禁止说“我没意见”“先听警长/克罗”“等大家说完”“暂时没有线索”等划水句；"
             "不要投票，不要要求马上拘留。80字以内。"
         )
         result = {"text": ""}
@@ -443,8 +474,13 @@ class EngineDuskMixin:
             except Exception:
                 text = ""
             text = str(text or "").strip()
-            if not text:
-                text = "我会根据今天的线索谨慎判断，先听完大家和克罗的意见。"
+            if _is_dusk_filler_statement(text):
+                speaker = self.agents.get(speaker_name)
+                location = getattr(speaker, "current_location", "") or "白天所在区域"
+                text = (
+                    f"我今天主要在{location}活动，没亲眼看到凶手。"
+                    f"我会把{recent_dead}的死亡和已公开线索对照，重点留意行踪解释不清的人。"
+                )
             text = self._limit_gathering_speech(text, max_chars=90)
             statements.append({"speaker": speaker_name, "text": text})
             self.chat_bubbles[speaker_name] = {
@@ -821,19 +857,28 @@ class EngineDuskMixin:
             winner = getattr(self, "_dusk_winner", None)
             if winner:
                 self._dusk_jail_target = winner
-                self._jailed.add(winner)
-                self._place_in_prison(winner)
-                final_words = self._jailed_final_words(winner)
                 warning = (
-                    f"{display_name_for_person(winner)}得票最高，我先把他带到牢房。"
-                    "马上天黑了，请大家尽量待在室内，不要外出。"
+                    f"{display_name_for_person(winner)}得票最高，我会先把你关押进牢房。"
+                    "你还有什么话要说？"
                 )
                 self.chat_bubbles[self.detective_name] = {
                     "text": warning,
                     "target": winner,
                     "time": time.time(),
                 }
+                self._log(f"💬 克罗（宣布投票结果）: {warning}", "chat")
+                self._broadcast_state()
+                final_words = self._jailed_final_words(winner)
+                self.chat_bubbles[winner] = {
+                    "text": final_words,
+                    "target": self.detective_name,
+                    "time": time.time(),
+                }
                 self._log(f"💬 {display_name_for_person(winner)}（被拘留）: {final_words}", "chat")
+                self._broadcast_state()
+                self._pause_for_dusk_final_words()
+                self._jailed.add(winner)
+                self._place_in_prison(winner)
             crow = self.agents.get(self.detective_name)
             office = SHERIFF_AREA["sheriff_office"]["anchor_points"][0]
             target = self._nearest_walkable_tile(

@@ -93,8 +93,13 @@ body.phase-locked #game-container { pointer-events: none; }
   image-rendering: pixelated;
   margin-bottom: 8px;
 }
+.night-progress-row { margin-top: 12px; text-align: left; }
+.night-progress-label { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; color: #dbe7ff; font-size: 13px; font-weight: 800; }
+.night-progress-label img { width: 22px; height: 22px; object-fit: contain; image-rendering: pixelated; }
 .night-progress-track { height: 10px; overflow: hidden; border-radius: 999px; background: #17233a; }
 #night-progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, #6f87b8, #d6e5ff); transition: width 0.5s ease; }
+#night-wolf-progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, #8b1e3f, #e94560); transition: width 0.5s ease; }
+#night-knife-progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, #8195bd, #e7f0ff); transition: width 0.5s ease; }
 #night-finish-confirm {
   display: none; margin: 20px auto 0; padding: 10px 28px; border: 0; border-radius: 7px;
   background: #d8a928; color: #111827; font-weight: 900; cursor: pointer;
@@ -766,32 +771,48 @@ body.phase-locked #game-container { pointer-events: none; }
   <div id="agent-list"></div>
 
   <button id="announce-btn" onclick="showAnnounce()" style="display: none;" disabled>宣布推理</button>
+</div>
 
-  <div id="dusk-statement-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #ffdd57; padding: 12px 16px;">
-    <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px;">黄昏讨论发言</div>
-    <div id="dusk-stage-label"></div>
-    <div id="dusk-discussion-list" style="display: none; font-size: 11px; line-height: 1.45; color: #ddd; max-height: 120px; overflow-y: auto; margin-bottom: 8px;"></div>
-    <textarea id="dusk-statement-input" placeholder="输入克罗的黄昏总结..." style="width: 100%; height: 58px; resize: vertical; box-sizing: border-box; background: #0f172a; color: #eee; border: 1px solid #334155; border-radius: 4px; padding: 6px; font-size: 12px;"></textarea>
-    <button id="dusk-statement-submit" onclick="submitDuskStatement()" style="width:100%; margin-top:6px; padding:8px; background:#e94560; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">提交发言，进入投票</button>
+<div id="chat-panel" style="display: none !important;">
+  <div id="chat-target" style="display: none;">点击角色开始对话</div>
+  <div id="chat-input-row" style="display: none;">
+    <input id="chat-input" placeholder="输入消息..." disabled>
+    <button id="chat-send" onclick="sendChat()" disabled>发送</button>
+    <button id="chat-btn" onclick="startNpcChat()" style="display:none; padding: 6px 14px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; white-space: nowrap;">前往交谈</button>
   </div>
-
-  <div id="voting-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #e94560; padding: 12px 16px;">
-    <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px; letter-spacing: 0.5px;">黄昏投票</div>
-    <div id="voting-votes" style="font-size: 11px; line-height: 1.5; color: #eee; max-height: 150px; overflow-y: auto; margin-bottom: 10px;"></div>
-    <div id="voting-counts" style="font-size: 11px; line-height: 1.5; color: #ffdd57; margin-bottom: 10px;"></div>
-    <div id="jail-buttons" style="display: flex; flex-direction: column; gap: 4px;"></div>
+  <div id="deep-dive-check" style="display: none;">
+    <label><input type="checkbox" id="deep-dive"> 深度挖掘</label>
+    <span id="deep-dive-remaining">(剩余0)</span>
   </div>
+</div>
 
-  <div id="chat-panel">
-    <div id="chat-target" style="display: none;">点击角色开始对话</div>
-    <div id="chat-input-row" style="display: none;">
-      <input id="chat-input" placeholder="输入消息..." disabled>
-      <button id="chat-send" onclick="sendChat()" disabled>发送</button>
-      <button id="chat-btn" onclick="startNpcChat()" style="display:none; padding: 6px 14px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; white-space: nowrap;">前往交谈</button>
+<div id="dusk-statement-panel" class="modal">
+  <div class="modal-content" style="width: 520px; height: auto; max-height: 85vh;">
+    <div class="modal-header">
+      <span style="font-weight: bold; color: #ffdd57; font-size: 16px;">黄昏讨论发言</span>
     </div>
-    <div id="deep-dive-check" style="display: none;">
-      <label><input type="checkbox" id="deep-dive"> 深度挖掘</label>
-      <span id="deep-dive-remaining">(剩余0)</span>
+    <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px; padding: 20px;">
+      <div id="dusk-stage-label" style="color: #f7d98a; font-size: 14px; font-weight: bold; margin-bottom: 4px;"></div>
+      <div id="dusk-discussion-list" style="display: none; font-size: 12px; line-height: 1.45; color: #ddd; max-height: 200px; overflow-y: auto; margin-bottom: 8px; border: 1px solid rgba(255, 221, 87, 0.2); padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.2);"></div>
+      <textarea id="dusk-statement-input" placeholder="输入克罗的黄昏总结..." style="width: 100%; height: 80px; resize: vertical; box-sizing: border-box; background: #0f172a; color: #eee; border: 1px solid #334155; border-radius: 6px; padding: 10px; font-size: 13px; outline: none;"></textarea>
+      <button id="dusk-statement-submit" onclick="submitDuskStatement()" style="width:100%; margin-top:6px; padding:10px; background:#e94560; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:14px;">提交发言，进入投票</button>
+    </div>
+  </div>
+</div>
+
+<div id="voting-panel" class="modal">
+  <div class="modal-content" style="width: 520px; height: auto; max-height: 85vh;">
+    <div class="modal-header">
+      <span style="font-weight: bold; color: #ffdd57; font-size: 16px; letter-spacing: 0.5px;">黄昏投票</span>
+    </div>
+    <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px; padding: 20px;">
+      <div id="voting-votes" style="font-size: 12px; line-height: 1.5; color: #eee; max-height: 300px; overflow-y: auto; margin-bottom: 10px;"></div>
+      <div id="voting-counts" style="font-size: 12px; line-height: 1.5; color: #ffdd57; margin-bottom: 10px; font-weight: bold;"></div>
+      <div id="voting-abstainers" style="display: none; margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,0.15);">
+        <div style="font-size: 11px; color: #aebbd5; margin-bottom: 4px;">弃票者：</div>
+        <div id="voting-abstainers-list" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+      </div>
+      <div id="jail-buttons" style="display: flex; flex-direction: column; gap: 4px;"></div>
     </div>
   </div>
 </div>
@@ -827,10 +848,17 @@ body.phase-locked #game-container { pointer-events: none; }
     <div id="night-stage-text" style="font-size:28px; font-weight:900; margin-top:8px;">夜幕降临</div>
     <div class="night-actors">
       <div class="night-actor wolf" title="匿名狼人"><img src="/static/assets/effects/wolf_paw_icon.png" alt=""></div>
-      <div class="night-actor wolf" title="匿名狼人"><img src="/static/assets/effects/wolf_paw_icon.png" alt=""></div>
       <div class="night-actor knife" title="匿名银刀执行者"><img src="/static/assets/effects/silver_knife_icon.png" alt=""></div>
     </div>
-    <div class="night-progress-track"><div id="night-progress-fill"></div></div>
+    <div id="night-progress-fill" style="display: none;"></div>
+    <div class="night-progress-row">
+      <div class="night-progress-label"><img src="/static/assets/effects/wolf_paw_icon.png" alt="">狼人行动</div>
+      <div class="night-progress-track"><div id="night-wolf-progress-fill"></div></div>
+    </div>
+    <div class="night-progress-row">
+      <div class="night-progress-label"><img src="/static/assets/effects/silver_knife_icon.png" alt="">银质小刀</div>
+      <div class="night-progress-track"><div id="night-knife-progress-fill"></div></div>
+    </div>
     <div id="night-progress-text" style="margin-top:10px; color:#aebbd5;">夜间行动准备中</div>
     <button id="night-finish-confirm" onclick="confirmNightTransition()">确认天亮</button>
   </div>
@@ -965,6 +993,9 @@ let firstStateReceived = false;
 let pendingChatTarget = null;
 let pendingChatPhase = ""; // "moving" | "waiting"
 let pendingChatWaitShownAt = 0;
+let pendingDeepDiveTarget = null;
+let locallyClearedHintTargets = new Set();
+let crowVoteSubmitting = false;
 let duskCameraPanKey = "";
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
 const BUBBLE_LIFETIME_SECONDS = 6;
@@ -1069,6 +1100,10 @@ function initSocket() {
       fetchCurrentState();
       return;
     }
+    if (responseTarget && responseTarget === pendingDeepDiveTarget) {
+      locallyClearedHintTargets.add(responseTarget);
+      pendingDeepDiveTarget = null;
+    }
     if (!responseTarget || responseTarget === pendingChatTarget) {
       clearPendingChat();
     }
@@ -1125,7 +1160,7 @@ function initSocket() {
 
 function centerCameraOnState(state) {
   if (!sceneRef || !state) return;
-  const site = state.gathering_site;
+  const site = state.initial_gathering_site;
   if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
     sceneRef.cameras.main.centerOn((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2));
     resolveBubbleLayout();
@@ -1152,7 +1187,7 @@ function scheduleDuskDiscussionCameraPan(state, active, stage) {
     const liveStage = duskStage(gameState);
     const liveActive = gameState.phase === "dusk_discussion" || liveStage === "voting";
     if (!liveActive) return;
-    const site = gameState.initial_gathering_site || gameState.gathering_site;
+    const site = gameState.initial_gathering_site;
     if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
       sceneRef.cameras.main.pan((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2), 2000);
     }
@@ -1350,6 +1385,8 @@ function resetAgentLog() {
 
   // Reset local chat/pending variables to prevent carrying over from previous game
   clearPendingChat();
+  locallyClearedHintTargets.clear();
+  pendingDeepDiveTarget = null;
 
   // Clear old gameState and director summary to prevent carrying over old roles
   gameState = null;
@@ -1405,6 +1442,17 @@ function enterNight() {
 function startDuskDiscussion() {
   if (socket && socket.connected) {
     socket.emit("start_dusk_discussion");
+    let attempts = 0;
+    const poll = () => {
+      fetchCurrentState().then(state => {
+        attempts++;
+        const isDuskNow = state && (state.phase === "dusk_discussion" || state.phase === "dusk" || (state.vote_summary && state.vote_summary.stage));
+        if (!isDuskNow && attempts < 20) {
+          setTimeout(poll, 500);
+        }
+      });
+    };
+    setTimeout(poll, 300);
   } else {
     fetch("/api/start_dusk_discussion", {method: "POST"})
       .then(() => fetchCurrentState());
@@ -1509,11 +1557,18 @@ function normalizeVoteCounts(voteSummary) {
 }
 
 function submitCrowVote(name) {
-  if (!name || !gameState) return;
+  if (!name || !gameState || crowVoteSubmitting) return;
   const voteSummary = gameState.vote_summary || {};
   if (hasCrowVoted(voteSummary) || duskStage(gameState) !== "voting") return;
+  crowVoteSubmitting = true;
   voteSummary.crow_vote_submitted = true;
   voteSummary.crow_vote = name;
+  const buttons = document.querySelectorAll(".dusk-vote-button");
+  buttons.forEach(btn => {
+    btn.disabled = true;
+    btn.style.opacity = "0.5";
+    btn.style.pointerEvents = "none";
+  });
   renderDuskVotingFlow(gameState);
   if (socket && socket.connected) {
     socket.emit("submit_crow_vote", {target_name: name});
@@ -1559,25 +1614,38 @@ function renderNightTransition(state) {
 
   let displayStageLabel = "夜间行动进行中";
   let progress = Math.min(100, (elapsed / duration) * 100);
+  let wolfProgress = progress;
+  let knifeProgress = 0;
   const wolfActors = document.querySelectorAll("#night-transition-overlay .night-actor.wolf");
   const knifeActor = document.querySelector("#night-transition-overlay .night-actor.knife");
 
   if (finished) {
     progress = 100;
+    wolfProgress = 100;
+    knifeProgress = 100;
     displayStageLabel = "夜晚结束";
     wolfActors.forEach(el => el.classList.remove("active"));
     if (knifeActor) knifeActor.classList.remove("active");
   } else if (stage === "silver_knife" || stage === "knife") {
     displayStageLabel = "银质小刀阶段";
+    wolfProgress = 100;
+    knifeProgress = progress;
     wolfActors.forEach(el => el.classList.remove("active"));
     if (knifeActor) knifeActor.classList.add("active");
   } else {
     displayStageLabel = "狼人行动中";
+    wolfProgress = progress;
+    knifeProgress = 0;
     wolfActors.forEach(el => el.classList.add("active"));
     if (knifeActor) knifeActor.classList.remove("active");
   }
 
-  document.getElementById("night-progress-fill").style.width = `${Math.max(0, Math.min(100, progress))}%`;
+  const wolfFill = document.getElementById("night-wolf-progress-fill");
+  const knifeFill = document.getElementById("night-knife-progress-fill");
+  const legacyFill = document.getElementById("night-progress-fill");
+  if (legacyFill) legacyFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+  if (wolfFill) wolfFill.style.width = `${Math.max(0, Math.min(100, wolfProgress))}%`;
+  if (knifeFill) knifeFill.style.width = `${Math.max(0, Math.min(100, knifeProgress))}%`;
   document.getElementById("night-stage-text").textContent = finished ? "夜晚结束" : displayStageLabel;
   document.getElementById("night-progress-text").textContent = finished ? "所有匿名行动已结束" : "只显示匿名进度，不展示目标与行动者";
   document.getElementById("night-finish-confirm").style.display = finished ? "block" : "none";
@@ -1586,6 +1654,9 @@ function renderNightTransition(state) {
 function renderDuskVotingFlow(state) {
   const voteSummary = state.vote_summary || {};
   const stage = duskStage(state);
+  if (stage !== "voting" || hasCrowVoted(voteSummary)) {
+    crowVoteSubmitting = false;
+  }
   const discussionPanel = document.getElementById("dusk-statement-panel");
   const votingPanel = document.getElementById("voting-panel");
   const statementInput = document.getElementById("dusk-statement-input");
@@ -1633,6 +1704,13 @@ function renderDuskVotingFlow(state) {
   const winner = voteSummary.winner || voteSummary.jail_target || "";
   const crowHasVoted = hasCrowVoted(voteSummary);
   const showVoteButtons = stage === "voting" && !crowHasVoted;
+  const abstainers = [];
+  Object.entries(voteSummary.votes || {}).forEach(([voter, vote]) => {
+    const target = typeof vote === "string" ? vote : (vote && (vote.target || vote.target_name || vote.voted_for));
+    if (!target || ["none", "null", "abstain"].includes(String(target).toLowerCase())) {
+      abstainers.push(voter);
+    }
+  });
   const rows = document.getElementById("voting-votes");
   rows.innerHTML = "";
   participants.forEach(name => {
@@ -1649,11 +1727,29 @@ function renderDuskVotingFlow(state) {
       const button = document.createElement("button");
       button.className = "dusk-vote-button";
       button.textContent = "投票";
+      if (crowHasVoted || crowVoteSubmitting) {
+        button.disabled = true;
+        button.style.opacity = "0.5";
+        button.style.pointerEvents = "none";
+      }
       button.addEventListener("click", () => submitCrowVote(name));
       row.appendChild(button);
     }
     rows.appendChild(row);
   });
+  const abstainersEl = document.getElementById("voting-abstainers");
+  const abstainersListEl = document.getElementById("voting-abstainers-list");
+  if (abstainersEl && abstainersListEl) {
+    if (abstainers.length) {
+      abstainersEl.style.display = "block";
+      abstainersListEl.innerHTML = abstainers
+        .map(voter => `<span class="dusk-voter-icon" title="${escapeHtml(getDisplayName(voter, state))}" style="background-image:url('${duskPortraitUrl(voter)}')"></span>`)
+        .join("");
+    } else {
+      abstainersEl.style.display = "none";
+      abstainersListEl.innerHTML = "";
+    }
+  }
 
   const countsEl = document.getElementById("voting-counts");
   if (countsEl) {
@@ -2179,7 +2275,11 @@ function isChatSuppressedFor(name, bubblePayload) {
     if (isWaitBubble(bubblePayload)) {
       return false;
     }
-    return !!pendingChatTarget && name === pendingChatTarget;
+    const kind = bubblePayload && typeof bubblePayload === "object" ? String(bubblePayload.kind || "") : "";
+    const text = typeof bubblePayload === "string"
+      ? bubblePayload
+      : (bubblePayload && String(bubblePayload.text || "").trim()) || "";
+    return !text || kind === "action_status";
   }
   return false;
 }
@@ -2315,6 +2415,7 @@ function submitDeepDiveChat(name, msg) {
   const state = gameState;
   if (socket && socket.connected) {
     setPendingChat(name, "waiting");
+    pendingDeepDiveTarget = name;
     const bubbleEl = speechBubbles["Crow"];
     const showMsg = "对" + getDisplayName(name, state) + "说：" + msg;
     if (bubbleEl) {
@@ -2799,16 +2900,17 @@ function updateAgentList(state, isDirectorSummaryViewed) {
       ? state.deep_dive_remaining
       : (state.deep_dive_quota || 0) - (state.deep_dive_used || 0);
 
-    const chatAvailable = p.chat_available !== undefined ? !!p.chat_available : chatsRemaining > 0;
+    const normalChatAvailable = p.chat_available !== undefined ? !!p.chat_available : chatsRemaining > 0;
     const pendingPhase = pendingChatTarget === name ? pendingChatPhase : "";
     const isPendingChat = !!pendingChatTarget;
+    const isPendingThisChat = pendingChatTarget === name;
     const isGathering = state.primary_cta === "gathering";
-    const chatBtnDisabled = (!chatAvailable || isNight || isDusk || isPendingChat || isGathering) ? "disabled" : "";
+    const chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? "disabled" : "";
     const chatBtnLabel = pendingPhase
       ? (pendingPhase === "moving" ? "前往中..." : "等待回复...")
       : "交谈";
     const chatBtnBg = pendingPhase ? "#606a78" : "#4a9eff";
-    const chatBtnCursor = isPendingChat ? "wait" : "pointer";
+    const chatBtnCursor = isPendingThisChat ? "wait" : "pointer";
 
     const hasResponseError = p.response_error && p.response_error !== "None" && p.response_error !== "null" && p.response_error !== "undefined" && String(p.response_error).trim() !== "";
     const hasDecisionError = p.last_decision && p.last_decision.ok === false;
@@ -2819,11 +2921,12 @@ function updateAgentList(state, isDirectorSummaryViewed) {
 
     const deepDiveAvailable = p.deep_dive_available !== undefined ? !!p.deep_dive_available : ddRemaining > 0;
     const hasClueHint = p.has_new_clue === true || p.has_visible_clue_hint === true || p.has_detective_hint === true;
-    const showBulb = p.alive && hasClueHint && !isNight && !isDusk && !isGathering && (chatAvailable || deepDiveAvailable);
+    const locallyClearedHint = locallyClearedHintTargets.has(name);
+    const showBulb = p.alive && hasClueHint && !locallyClearedHint && !isNight && !isDusk && !isGathering && (normalChatAvailable || deepDiveAvailable);
     const bulbHtml = showBulb ? `<span id="clue-bulb-${safeName}" class="clue-bulb" style="margin-left: 6px; font-size: 13px; filter: drop-shadow(0 0 3px #ffd700); cursor: help;" title="有新线索">💡</span>` : '';
 
     // Signature-based diffing to prevent hover flicker
-    const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${showBulb}|${roleVal}|${modelName}|${modelFailed}|${selectedAgent === name}|${chatAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}`;
+    const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${locallyClearedHint}|${showBulb}|${roleVal}|${modelName}|${modelFailed}|${selectedAgent === name}|${normalChatAvailable}|${deepDiveAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}`;
     const targetContainer = name === "Crow" ? crowList : list;
     if (card.dataset.renderSignature === signature) {
       if (card.parentElement !== targetContainer) {
@@ -2836,19 +2939,17 @@ function updateAgentList(state, isDirectorSummaryViewed) {
     let actionButtonsHtml = "";
     if (name !== "Crow" && p.alive && !p.jailed) {
       let buttonsListHtml = "";
-      if (chatAvailable) {
-        buttonsListHtml = `
+      if (normalChatAvailable) {
+        buttonsListHtml += `
           <button id="chat-btn-${safeName}" class="chat-btn-npc" onclick="invokeChat('${name}', false, event)" ${chatBtnDisabled} style="flex: 1; padding: 4px 6px; font-size: 11px; background: ${chatBtnBg}; color: #fff; border: none; border-radius: 4px; cursor: ${chatBtnCursor}; font-weight: bold;">
             ${chatBtnLabel}
           </button>
         `;
-      } else if (globalDdRemaining > 0) {
-        const deepDiveAvailable = p.deep_dive_available !== undefined ? !!p.deep_dive_available : ddRemaining > 0;
-        const ddBtnDisabled = (!deepDiveAvailable || isNight || isDusk || isGathering) ? "disabled" : "";
-        const deepDiveLabel = deepDiveAvailable ? "深挖" : "无深挖";
-        buttonsListHtml = `
+      } else if (deepDiveAvailable) {
+        const ddBtnDisabled = (!deepDiveAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? "disabled" : "";
+        buttonsListHtml += `
           <button id="dd-btn-${safeName}" class="dd-btn-npc" onclick="invokeChat('${name}', true, event)" ${ddBtnDisabled} style="flex: 1; padding: 4px 6px; font-size: 11px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-            ${deepDiveLabel} (${ddRemaining})
+            深挖 (${ddRemaining})
           </button>
         `;
       }

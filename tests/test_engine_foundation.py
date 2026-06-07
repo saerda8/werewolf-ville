@@ -1246,6 +1246,29 @@ def test_status_lights_bulb_for_explicit_detective_hint(monkeypatch):
     assert status["has_detective_hint"] is True
 
 
+def test_deep_dive_clears_explicit_detective_hint(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    source = engine.agents["Isabella Rodriguez"]
+    source._last_decision = {"has_detective_hint": True, "has_visible_clue_hint": True}
+    engine._daily_interviewed.add("Isabella Rodriguez")
+    detective = engine.agents["Crow"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+    monkeypatch.setattr(
+        engine,
+        "_generate_agent_response",
+        lambda *args, **kwargs: "我把能说的细节都说出来了。",
+    )
+
+    result = engine.detective_chat("Isabella Rodriguez", "你再仔细说说。", is_deep_dive=True)
+
+    assert "error" not in result
+    status = engine.get_status()["personas"]["Isabella Rodriguez"]
+    assert status["has_new_clue"] is False
+    assert status["has_visible_clue_hint"] is False
+    assert status["has_detective_hint"] is False
+
+
 def test_npc_chat_bubbles_expose_each_other_as_targets(monkeypatch):
     engine = _make_engine(monkeypatch)
     arthur = engine.agents["Arthur Burton"]

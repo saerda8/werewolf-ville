@@ -46,6 +46,7 @@ G:\Trae-Project\werewolf-ville
 | DeepSeek / Antigravity MCP 调用手册 | `MCP_WORKER_USAGE_GUIDE.md` |
 | 架构/流程决策历史 | `DECISIONS.md` |
 | 大文件拆分计划 | `GAME_ENGINE_SPLIT_PLAN.md` |
+| 2026-06-08 白天交谈/黄昏投票/夜晚过场回归修复计划 | `docs/superpowers/plans/2026-06-08-day-dusk-night-regression-fix.md` |
 | 当前短期任务执行记录 | `.planning/<task>/task_plan.md`、`findings.md`、`progress.md` |
 
 ## 开工前固定检查

@@ -156,7 +156,7 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert "function mergePendingCrowBubble(state)" in html
     assert "mergePendingCrowBubble(state);" in html
     assert 'pendingPhase === "moving" ? "前往中..." : "等待回复..."' in html
-    assert "const chatBtnDisabled = (!chatAvailable || isNight || isDusk || isPendingChat || isGathering) ? \"disabled\" : \"\";" in html
+    assert "const chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? \"disabled\" : \"\";" in html
     assert "if (!isNight && gameState)" in html
     assert "const suppressChatDisplay = isChatSuppressedFor(name, bubblePayload);" in html
     assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);' in html
@@ -452,8 +452,8 @@ def test_gathering_disables_chat_and_clickable_conn_indicator():
     
     # Disable chat and NPC action buttons during gathering
     assert 'isGathering = state.primary_cta === "gathering";' in html
-    assert 'chatBtnDisabled = (!chatAvailable || isNight || isDusk || isPendingChat || isGathering) ? "disabled" : "";' in html
-    assert 'ddBtnDisabled = (!deepDiveAvailable || isNight || isDusk || isGathering) ? "disabled" : "";' in html
+    assert 'chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? "disabled" : "";' in html
+    assert 'ddBtnDisabled = (!deepDiveAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? "disabled" : "";' in html
     assert 'chatInput.placeholder = isGathering' in html
     assert '"聚集讨论中，无法私聊..."' in html
     assert '"靠近后才能交谈..."' in html
@@ -670,9 +670,13 @@ def test_static_regression_icons_and_bubble_clamping():
     assert 'const modelFailed = !!(hasResponseError || hasDecisionError);' in html
 
     # Verify lightbulb can read both the legacy alias and explicit hint fields.
+    assert 'let locallyClearedHintTargets = new Set();' in html
     assert 'const hasClueHint = p.has_new_clue === true || p.has_visible_clue_hint === true || p.has_detective_hint === true;' in html
-    assert 'const showBulb = p.alive && hasClueHint && !isNight && !isDusk && !isGathering && (chatAvailable || deepDiveAvailable);' in html
+    assert 'const showBulb = p.alive && hasClueHint && !locallyClearedHint && !isNight && !isDusk && !isGathering && (normalChatAvailable || deepDiveAvailable);' in html
     assert 'const bulbHtml = showBulb ?' in html
+    assert 'locallyClearedHintTargets.clear();' in html
+    assert 'pendingDeepDiveTarget = name;' in html
+    assert 'locallyClearedHintTargets.add(responseTarget);' in html
 
     # Verify clampBubbleIntoLayer has the final boundary clamping logic for all currentSide cases
     assert 'Final boundary clamping to prevent any part of the bubble from being cut off' in html
@@ -992,8 +996,10 @@ def test_night_transition_is_anonymous_fullscreen_and_confirm_only():
     assert 'id="night-transition-overlay"' in html
     assert "#night-transition-overlay.show" in html
     assert 'class="night-actor wolf"' in html
-    assert html.count('class="night-actor wolf"') == 2
+    assert html.count('class="night-actor wolf"') == 1
     assert 'class="night-actor knife"' in html
+    assert 'id="night-wolf-progress-fill"' in html
+    assert 'id="night-knife-progress-fill"' in html
     assert "function renderNightTransition(state)" in html
     assert "state.night_transition || state.night_sequence" in html
     assert 'id="night-progress-fill"' in html
@@ -1063,7 +1069,7 @@ def test_new_dusk_camera_and_waiting_behavior():
 
     # (3) Dusk/voting camera slow centering
     assert 'const newIsDusk = !isNight &&' in html
-    assert 'const site = gameState.initial_gathering_site || gameState.gathering_site;' in html
+    assert 'const site = gameState.initial_gathering_site;' in html
     assert 'sceneRef.cameras.main.pan((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2), 2000);' in html
     assert 'sceneRef.cameras.main.centerOn((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2));' in html
 
@@ -1133,3 +1139,178 @@ def test_pending_chat_wait_merge_has_no_duplicate_server_bubble_const():
     body = html[start : html.find("function", start + len(marker))]
     assert body.count("const serverBubble") == 1
     assert "const existingBubble" in body
+
+
+def test_dusk_and_voting_panels_outside_side_panel():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    side_panel_open = html.index('<div id="side-panel">')
+    # Track div nesting to find the closing tag of side-panel
+    depth = 1
+    cursor = side_panel_open + len('<div id="side-panel">')
+    while depth > 0:
+        next_open = html.find('<div', cursor)
+        next_close = html.find('</div>', cursor)
+        if next_close == -1:
+            break
+        if next_open != -1 and next_open < next_close:
+            depth += 1
+            cursor = next_open + 4
+        else:
+            depth -= 1
+            cursor = next_close + 6
+
+    side_panel_close = cursor - 6
+
+    dusk_panel_idx = html.index('id="dusk-statement-panel"')
+    voting_panel_idx = html.index('id="voting-panel"')
+
+    assert dusk_panel_idx > side_panel_close, "dusk-statement-panel must be outside and after side-panel"
+    assert voting_panel_idx > side_panel_close, "voting-panel must be outside and after side-panel"
+
+    # Assert they are not inside side-panel's HTML block
+    side_panel_html = html[side_panel_open:side_panel_close]
+    assert 'id="dusk-statement-panel"' not in side_panel_html
+    assert 'id="voting-panel"' not in side_panel_html
+
+
+def test_no_chat_log_or_right_transcript():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="chat-log"' not in html
+    assert '#chat-log' not in html
+    assert 'document.getElementById("chat-log")' not in html
+    # The right sidebar should have no transcript container
+    assert 'chat-msg-detective' not in html
+    assert 'chat-msg-other' not in html
+
+
+def test_night_progress_fills_for_wolf_and_knife():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Verify progress fills for both wolf and knife exist
+    assert 'id="night-wolf-progress-fill"' in html
+    assert 'id="night-knife-progress-fill"' in html
+
+    # 2. Verify night-progress-fill is no longer the sole progress bar (it is hidden / display: none)
+    assert 'id="night-progress-fill"' in html
+    assert 'id="night-progress-fill" style="display: none;"' in html
+
+    # 3. Verify JavaScript logic assigns widths to both fills
+    assert 'const wolfFill = document.getElementById("night-wolf-progress-fill");' in html
+    assert 'const knifeFill = document.getElementById("night-knife-progress-fill");' in html
+    assert 'wolfFill.style.width = ' in html
+    assert 'knifeFill.style.width = ' in html
+
+
+def test_crow_vote_disabled_submitting_lock():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Verify crowVoteSubmitting lock variable is declared
+    assert 'let crowVoteSubmitting = false;' in html
+
+    # 2. Verify lock check in submitCrowVote
+    assert 'if (!name || !gameState || crowVoteSubmitting) return;' in html
+
+    # 3. Verify setting the lock and disabling buttons locally on click
+    assert 'crowVoteSubmitting = true;' in html
+    assert 'const buttons = document.querySelectorAll(".dusk-vote-button");' in html
+    assert 'btn.disabled = true;' in html
+    assert 'btn.style.opacity = "0.5";' in html
+    assert 'btn.style.pointerEvents = "none";' in html
+
+    # 4. Verify rendering logic honors the lock state
+    assert 'if (crowHasVoted || crowVoteSubmitting) {' in html
+
+    # 5. Verify reset of the lock when state is updated
+    assert 'crowVoteSubmitting = false;' in html
+
+
+def test_voting_abstainers_row():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Verify the HTML containers for voting abstainers exist
+    assert 'id="voting-abstainers"' in html
+    assert 'id="voting-abstainers-list"' in html
+    assert '弃票者' in html
+
+    # 2. Verify JS logic parses abstainers from votes
+    assert 'const abstainersEl = document.getElementById("voting-abstainers");' in html
+    assert 'const abstainersListEl = document.getElementById("voting-abstainers-list");' in html
+    assert 'const abstainers = [];' in html
+    assert '["none", "null", "abstain"].includes(String(target).toLowerCase())' in html
+    assert 'abstainers.push(voter);' in html
+    assert 'abstainersEl.style.display = "block";' in html
+    assert 'abstainersEl.style.display = "none";' in html
+
+
+def test_daybreak_socket_handler_or_fallback():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "confirmNightTransition" in html
+    assert 'socket.emit("confirm_night_transition")' in html
+    assert 'fetch("/api/confirm_night_transition"' in html
+    assert 'fetchCurrentState()' in html
+
+
+
+def test_dusk_statement_and_voting_panels_are_centered_modals_outside_side_panel():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # Assert dusk-statement-panel and voting-panel have modal classes
+    assert 'id="dusk-statement-panel" class="modal"' in html
+    assert 'id="voting-panel" class="modal"' in html
+
+    # Assert dusk-statement-panel and voting-panel are NOT inside #side-panel
+    side_panel_open = html.index('<div id="side-panel">')
+    announce_btn_open = html.index('id="announce-btn"')
+    side_panel_close = html.find('</div>', announce_btn_open)
+
+    side_panel_markup = html[side_panel_open:side_panel_close]
+    assert 'id="dusk-statement-panel"' not in side_panel_markup
+    assert 'id="voting-panel"' not in side_panel_markup
+    assert 'id="chat-panel"' not in side_panel_markup
+
+
+def test_night_transition_dual_progress_fills():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # Assert separate progress fills exist
+    assert 'id="night-wolf-progress-fill"' in html
+    assert 'id="night-knife-progress-fill"' in html
+
+
+def test_vote_submission_disables_buttons_immediately():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # Assert local disabling logic is present in submitCrowVote
+    assert 'crowVoteSubmitting = true;' in html
+    assert 'btn.disabled = true' in html
+    assert 'id="voting-abstainers"' in html
+
+
+def test_normal_chat_button_is_independent_from_deep_dive_quota():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "无深挖" not in html
+    assert "const normalChatAvailable =" in html
+    assert "if (normalChatAvailable) {" in html
+    assert "buttonsListHtml += `" in html
+    assert "} else if (deepDiveAvailable)" in html
+    assert "if (globalDdRemaining > 0 || deepDiveAvailable)" not in html
+    normal_chat_block = html[
+        html.index("if (normalChatAvailable) {"):
+        html.index("} else if (deepDiveAvailable)")
+    ]
+    assert "globalDdRemaining" not in normal_chat_block
+
+
+def test_initial_camera_prefers_original_gathering_site():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "const site = state.initial_gathering_site;" in html
+
+
+def test_pending_detective_chat_does_not_suppress_real_reply_bubble():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    start = html.index("function isChatSuppressedFor")
+    end = html.index("function showLocalCrowQuestion", start)
+    block = html[start:end]
+    assert 'return !text || kind === "action_status";' in block
+    assert "return !!pendingChatTarget && name === pendingChatTarget;" not in block
