@@ -44,23 +44,22 @@ class EngineBubbleMixin:
         active_detective_target = getattr(self, "_detective_chat_active_target", None)
         detective_waiting_bubble = self.chat_bubbles.get(active_detective_target) if active_detective_target else None
         for k, v in self.chat_bubbles.items():
-            if (
-                active_detective_target
-                and isinstance(detective_waiting_bubble, dict)
-                and detective_waiting_bubble.get("text") == "..."
-                and k in {getattr(self, "detective_name", None), active_detective_target}
-            ):
+            if not isinstance(v, dict):
+                continue
+            if k == getattr(self, "detective_name", None) and active_detective_target:
+                if isinstance(detective_waiting_bubble, dict) and detective_waiting_bubble.get("kind") == "conversation_pending":
+                    continue
+            if v.get("kind") == "conversation_pending":
+                expires_at = float(v.get("expires_at") or 0)
+                if expires_at > 0:
+                    if now >= expires_at:
+                        expired.append(k)
+                else:
+                    if now - v["time"] >= bubble_lifetime:
+                        expired.append(k)
                 continue
             if (
-                isinstance(v, dict)
-                and v.get("target") == getattr(self, "detective_name", None)
-                and v.get("text") == "..."
-                and getattr(self, "_detective_chat_active_target", None) == k
-            ):
-                continue
-            if (
-                isinstance(v, dict)
-                and v.get("kind") == "action_status"
+                v.get("kind") == "action_status"
                 and k in getattr(self, "agents", {})
             ):
                 agent = self.agents.get(k)

@@ -60,11 +60,7 @@ class EngineDuskMixin:
 
         if getattr(self, "_dusk_stage", "") == "gathering":
             participants = self._eligible_dusk_participants()
-            if all(
-                (self.agents[name].x, self.agents[name].y)
-                == (self.agents[name].target_x, self.agents[name].target_y)
-                for name in participants
-            ):
+            if self._all_dusk_participants_arrived(participants):
                 self._begin_dusk_discussion_after_gathering()
             return
 
@@ -123,6 +119,21 @@ class EngineDuskMixin:
             missing_names = "、".join(display_name_for_person(n) for n in sorted(missing))
             return False, f"还需要采访: {missing_names}"
         return True, "OK"
+
+    def mark_all_daily_interviews_for_test(self) -> dict:
+        """Development-only shortcut: mark today's required interviews complete."""
+        required = {
+            name for name, agent in self.agents.items()
+            if name != self.detective_name and agent.is_alive and name not in self._jailed
+        }
+        self._daily_interviewed.update(required)
+        self._daily_normal_chats.setdefault(self.detective_name, set()).update(required)
+        self._log("🧪 测试按钮：已将今日所有居民标记为已交谈。", "system")
+        return {
+            "success": True,
+            "count": len(required),
+            "total": len(required),
+        }
 
 
     def start_dusk_discussion(self):
@@ -195,6 +206,8 @@ class EngineDuskMixin:
             agent._action_status_visible_at = 0
             agent._action_start_visible_until = 0
             agent._action_move_ready_at = 0
+            # Bump generation to cancel any stale daytime LLM decisions still in-flight
+            self._bump_agent_action_generation(agent)
             self.agent_paths.pop(name, None)
 
     def _send_dusk_participants_to_plaza(self, participants: list[str] | None = None) -> None:
@@ -229,9 +242,44 @@ class EngineDuskMixin:
             agent.runtime_state = "moving" if (agent.x, agent.y) != target else "idle"
             self.agent_paths.pop(name, None)
 
+    def _all_dusk_participants_arrived(self, participants: list[str] | None = None) -> bool:
+        participants = participants or self._eligible_dusk_participants()
+        for name in participants:
+            agent = self.agents.get(name)
+            if not agent or not agent.is_alive:
+                continue
+            if self.agent_paths.get(name):
+                return False
+            if (agent.x, agent.y) != (agent.target_x, agent.target_y):
+                return False
+        return True
+
+    def _freeze_dusk_participants(self, participants: list[str] | None = None) -> None:
+        participants = participants or self._eligible_dusk_participants()
+        for name in participants:
+            agent = self.agents.get(name)
+            if not agent:
+                continue
+            self.agent_paths.pop(name, None)
+            agent.target_x, agent.target_y = agent.x, agent.y
+            agent.current_action = "参加黄昏讨论"
+            agent.current_emoji = "💬"
+            agent.runtime_state = "idle"
+            agent._pending_action = None
+            agent.current_thought = ""
+            agent.current_thought_time = 0
+            agent._is_thinking = False
+            agent._is_reflecting = False
+            # Bump generation so any still-in-flight daytime LLM decision is rejected
+            self._bump_agent_action_generation(agent)
+
     def _begin_dusk_discussion_after_gathering(self) -> None:
         if getattr(self, "_dusk_stage", "") != "gathering":
             return
+        participants = self._eligible_dusk_participants()
+        if not self._all_dusk_participants_arrived(participants):
+            return
+        self._freeze_dusk_participants(participants)
         self._dusk_stage = "knowledge_reveal"
         if self.day == 1:
             self._reveal_day1_werewolf_knowledge()

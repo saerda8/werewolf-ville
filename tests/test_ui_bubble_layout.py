@@ -792,7 +792,7 @@ def test_white_bubble_displays_ongoing_action_during_movement_or_action():
     assert 'const isActionStatusBubble = bubblePayload && typeof bubblePayload === "object" && String(bubblePayload.kind || "") === "action_status";' in html
     assert "const actionStatusVisibleAt = Number(p.action_status_visible_at || 0);" in html
     assert "const actionStatusReady = actionStatusVisibleAt <= 0 || (Date.now() / 1000) >= actionStatusVisibleAt;" in html
-    assert 'const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStatusReady;' in html
+    assert 'const canShowActionDuration = !isDusk && !isNight && runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStatusReady;' in html
     assert "const departureDelayUntil = Number(p.departure_delay_until || 0);" in html
     assert "const departureWaiting = departureDelayUntil > (Date.now() / 1000);" in html
     assert 'const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);' in html
@@ -1044,11 +1044,23 @@ def test_new_dusk_camera_and_waiting_behavior():
     assert 'id="dusk-discussion-list"' in html
     assert 'display: none;' in html
 
-    # (2) Wait reply NPC shows '...' instead of old action
-    assert 'pendingChatTarget === name && pendingChatPhase === "waiting"' in html
-    assert 'displaySpeechText = "...";' in html
+    # (2) Wait reply NPC shows '正在聆听警长问询' instead of old action
+    assert 'pendingChatTarget === name' in html
+    assert 'pendingChatPhase === "waiting"' in html
+    assert 'displaySpeechText = "正在聆听警长问询";' in html
     assert 'thoughtText = "";' in html
 
     # (3) Dusk/voting camera slow centering
     assert 'const newIsDusk = !isNight &&' in html
+    assert 'const site = gameState.initial_gathering_site || gameState.gathering_site;' in html
     assert 'sceneRef.cameras.main.pan(site.x * TILE_W, site.y * TILE_W, 2000);' in html
+
+
+def test_dev_complete_interviews_button_exists():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'id="test-complete-interviews-btn"' in html
+    assert "一键交谈完" in html
+    assert "function completeDailyInterviewsForTest()" in html
+    assert 'socket.emit("test_complete_daily_interviews")' in html
+    assert 'test_complete_daily_interviews_result' in html

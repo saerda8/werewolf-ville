@@ -1,6 +1,6 @@
 # Werewolf Ville Bug Backlog
 
-更新日期：2026-06-05
+更新日期：2026-06-08
 
 ## 使用规则
 
@@ -33,6 +33,28 @@ ID:
 ```
 
 ## 当前待整理 Bug
+
+### BUG-2026-06-08-001：NPC 真实聊天、黄昏集合与测试跳转入口异常
+
+严重度：Major
+关联需求：NPC 行为生命周期、黄昏讨论流程、测试便利入口
+回归测试：`tests/test_gathering_timeout.py`、`tests/test_engine_foundation.py`、`tests/test_vote_flow.py`、`tests/test_ui_bubble_layout.py`
+回归频率：高概率
+状态：Closed
+验收状态：Verified
+
+实际表现：警长问话后 NPC 可能永久显示 `...` 或继续旧行动；黄昏阶段 NPC 自主 AI 仍会运作，集合后又离开；黄昏镜头可能跳到后续尸体位置而不是开局讨论广场；测试时必须逐个交谈才能进黄昏。
+
+根因：真实聊天等待气泡被后端特殊保活；黄昏阶段没有统一冻结日间 AI 管线和到齐门禁；黄昏镜头复用了动态 `gathering_site`；夜晚回家仍用旧的最近可走格而不是可达路径；缺少测试快捷入口。
+
+修复方案：等待气泡改为“正在聆听警长问询”并 3 秒过期，空回复释放对话锁；黄昏前清理旧气泡/状态，所有人到齐后才开讲并冻结参与者，日间 AI 只在 DAY 跑；黄昏镜头改用 `initial_gathering_site`；夜晚回家复用可达目标；新增“一键交谈完”测试按钮。
+
+验证方式：
+- `python -m py_compile game_engine.py engine_dusk.py engine_bubbles.py ui/app.py`
+- `pytest -q tests/test_gathering_timeout.py::test_detective_chat_empty_response_releases_waiting tests/test_engine_foundation.py::test_random_werewolf_models_and_initial_body tests/test_engine_foundation.py::test_detective_chat_interrupts_movement_and_marks_target_busy_immediately tests/test_engine_foundation.py::test_detective_chat_empty_response_releases_waiting_bubble tests/test_engine_foundation.py::test_test_shortcut_marks_all_daily_interviews tests/test_vote_flow.py::test_dusk_discussion_waits_until_everyone_arrives tests/test_vote_flow.py::test_autonomous_ai_lane_is_suspended_during_dusk tests/test_vote_flow.py::test_dusk_discussion_uses_half_second_between_npc_statements tests/test_vote_flow.py::test_dusk_vote_all_living_non_jailed_npcs_vote tests/test_ui_bubble_layout.py::test_new_dusk_camera_and_waiting_behavior tests/test_ui_bubble_layout.py::test_dev_complete_interviews_button_exists`
+- 本地服务 `http://127.0.0.1:5000/` 返回 200，页面显示版本 42。
+
+相关提交：待提交。
 
 ### BUG-001：克罗头顶仍可能出现蓝色思考/行动气泡
 

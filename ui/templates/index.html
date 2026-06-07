@@ -545,6 +545,25 @@ body.phase-locked #game-container { pointer-events: none; }
     min-height: 20px;
     cursor: ns-resize; /* Drag to resize height */
   }
+  #log-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #test-complete-interviews-btn {
+    background: #26364f;
+    color: #c9d1d9;
+    border: 1px solid #3f5b86;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #test-complete-interviews-btn:hover {
+    background: #31527d;
+    color: #fff;
+  }
   #log-header span {
     color: #58a6ff;
   }
@@ -783,7 +802,10 @@ body.phase-locked #game-container { pointer-events: none; }
 <div id="log-panel">
   <div id="log-resize-handle"></div>
   <div id="log-header">
-    <div>智能体日志</div>
+    <div id="log-header-left">
+      <button id="test-complete-interviews-btn" type="button" onclick="completeDailyInterviewsForTest()" title="测试用：直接完成今日所有NPC交谈">一键交谈完</button>
+      <div>智能体日志</div>
+    </div>
     <span id="log-count">0条</span>
   </div>
   <div id="log-content"></div>
@@ -944,6 +966,7 @@ let lastLogId = -1;
 let firstStateReceived = false;
 let pendingChatTarget = null;
 let pendingChatPhase = ""; // "moving" | "waiting"
+let pendingChatWaitShownAt = 0;
 let duskCameraPanKey = "";
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
 const BUBBLE_LIFETIME_SECONDS = 6;
@@ -958,7 +981,7 @@ function isWaitBubble(bubble) {
   if (!bubble) return false;
   const text = typeof bubble === "string" ? bubble : (bubble.text || "");
   const kind = typeof bubble === "object" ? (bubble.kind || "") : "";
-  return text === "..." || kind === "conversation_pending";
+  return text === "..." || text === "正在聆听警长问询" || kind === "conversation_pending";
 }
 
 function blueBubbleActionKey(persona, html) {
@@ -1058,7 +1081,9 @@ function initSocket() {
       addChatMsg("系统", resp.error, true);
     } else {
       addChatMsg("Crow", resp.detective_message, false);
-      addChatMsg(resp.target_name, resp.response, true);
+      if (resp.response) {
+        addChatMsg(resp.target_name, resp.response, true);
+      }
     }
     fetchCurrentState();
   });
@@ -1076,6 +1101,14 @@ function initSocket() {
     if (submit) submit.disabled = false;
     if (resp && resp.error) {
       addChatMsg("系统", resp.error, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("test_complete_daily_interviews_result", (resp) => {
+    if (resp && resp.error) {
+      addChatMsg("系统", resp.error, true);
+    } else {
+      addChatMsg("系统", "测试：今日所有NPC已标记为交谈完成。", true);
     }
     fetchCurrentState();
   });
@@ -1132,7 +1165,7 @@ function scheduleDuskDiscussionCameraPan(state, active, stage) {
     const liveStage = duskStage(gameState);
     const liveActive = gameState.phase === "dusk_discussion" || liveStage === "voting";
     if (!liveActive) return;
-    const site = gameState.gathering_site;
+    const site = gameState.initial_gathering_site || gameState.gathering_site;
     if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
       sceneRef.cameras.main.pan(site.x * TILE_W, site.y * TILE_W, 2000);
     }
@@ -1389,6 +1422,23 @@ function startDuskDiscussion() {
     fetch("/api/start_dusk_discussion", {method: "POST"})
       .then(() => fetchCurrentState());
   }
+}
+
+function completeDailyInterviewsForTest() {
+  const btn = document.getElementById("test-complete-interviews-btn");
+  if (btn) btn.disabled = true;
+  if (!socket || !socket.connected) {
+    initSocket();
+    setTimeout(() => {
+      if (socket && socket.connected) socket.emit("test_complete_daily_interviews");
+      if (btn) btn.disabled = false;
+    }, 300);
+    return;
+  }
+  socket.emit("test_complete_daily_interviews");
+  setTimeout(() => {
+    if (btn) btn.disabled = false;
+  }, 600);
 }
 
 function submitDuskStatement() {
@@ -1673,6 +1723,25 @@ function updateUI(state) {
     ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(stage)
   );
   scheduleDuskDiscussionCameraPan(state, newIsDusk, stage);
+  if (newIsDusk && !isDusk) {
+    blueBubbleCache = {};
+    thoughtBubbleCache = {};
+    for (const name of Object.keys(speechBubbles)) {
+      const sEl = speechBubbles[name];
+      if (sEl) {
+        sEl.style.display = "none";
+        sEl.innerHTML = "";
+      }
+    }
+    for (const name of Object.keys(thoughtBubbles)) {
+      const tEl = thoughtBubbles[name];
+      if (tEl) {
+        tEl.style.display = "none";
+        tEl.innerHTML = "";
+      }
+    }
+    clearPendingChat();
+  }
   isDusk = newIsDusk;
   const phaseEl = document.getElementById("phase-text");
   phaseEl.textContent = isNight ? "夜晚" : (isDusk ? "黄昏" : "白天");
@@ -2039,6 +2108,9 @@ let pendingAutoChatTarget = null;
 function setPendingChat(name, phase) {
   pendingChatTarget = name;
   pendingChatPhase = phase || "waiting";
+  if (pendingChatPhase === "waiting") {
+    pendingChatWaitShownAt = Date.now() / 1000;
+  }
 
   if (name) {
     const bubble = gameState && gameState.chat_bubbles ? gameState.chat_bubbles[name] : null;
@@ -2090,12 +2162,14 @@ function setPendingChat(name, phase) {
 
 function markPendingChatTargetWaiting(name, state) {
   if (!name || !state) return;
+  const now = Date.now() / 1000;
   if (!state.chat_bubbles) state.chat_bubbles = {};
   state.chat_bubbles[name] = {
-    text: "...",
+    text: "正在聆听警长问询",
     target: "Crow",
-    time: Date.now() / 1000,
+    time: now,
     kind: "conversation_pending",
+    expires_at: now + 3,
   };
   const p = state.personas && state.personas[name];
   if (!p) return;
@@ -2114,6 +2188,7 @@ function markPendingChatTargetWaiting(name, state) {
 function clearPendingChat() {
   pendingChatTarget = null;
   pendingChatPhase = "";
+  pendingChatWaitShownAt = 0;
   pendingAutoChatTarget = null;
   pendingCrowBubble = null;
   blueBubbleCache = {};
@@ -2159,6 +2234,13 @@ function mergePendingCrowBubble(state) {
 
 function mergePendingChatTargetWaitBubble(state) {
   if (!pendingChatTarget || pendingChatPhase !== "waiting" || !state) return;
+  const now = Date.now() / 1000;
+  if (pendingChatWaitShownAt && now - pendingChatWaitShownAt > 3) {
+    if (state.chat_bubbles && isWaitBubble(state.chat_bubbles[pendingChatTarget])) {
+      delete state.chat_bubbles[pendingChatTarget];
+    }
+    return;
+  }
   if (!state.chat_bubbles) state.chat_bubbles = {};
   const serverBubble = state.chat_bubbles[pendingChatTarget];
   const serverText = typeof serverBubble === "string" ? serverBubble : (serverBubble && serverBubble.text) || "";
@@ -2987,6 +3069,7 @@ function formatActionDurationLine(p, state) {
 }
 
 function buildNpcThoughtBubble(name, persona, state) {
+  if (isDusk || isNight) return "";
   if (name === "Crow") return "";
   if (String(name).trim().toLowerCase() === "crow") return "";
 
@@ -3305,6 +3388,9 @@ function replaceEnglishNames(text, state) {
     "Klaus Mueller's Home": "克劳斯之家",
     "Isabella Rodriguez's Home": "伊莎贝拉之家",
     "Crow's Sheriff Residence": "警长办公室",
+    "Maria Lopez's apartment": "玛利亚的公寓",
+    "Jane Moreno's Home": "简之家",
+    "Mei Lin's Home": "林梅之家",
     "Crow's Jail Cell A": "牢房1",
     "Crow's Jail Cell B": "牢房2",
     "prison_cell_1": "监狱牢房1",
@@ -3755,17 +3841,15 @@ function create() {
     // Public Buildings / Dorms
     { name: "artist's co-living space", displayName: "艺术家共享公寓", x: 30, y: 25, color: "#a5b1c2" },
     { name: "Dorm for Oak Hill College", displayName: "学院宿舍", x: 122, y: 51, color: "#a5b1c2" },
-    // Standalone Apartments
-    { name: "Ryan Park's apartment", displayName: "莱恩的公寓", x: 66, y: 20, color: "#778ca3" },
-    { name: "Giorgio Rossi's apartment", displayName: "乔治奥的公寓", x: 87, y: 19, color: "#778ca3" },
-    { name: "Carlos Gomez's apartment", displayName: "卡洛斯的公寓", x: 95, y: 19, color: "#778ca3" },
+    // Standalone Apartments / Homes
     { name: "Sam Moore's Home", displayName: "山姆之家", x: 54, y: 16, color: "#2f3542" },
     { name: "Isabella Rodriguez's apartment", displayName: "伊莎贝拉公寓", x: 78, y: 15, color: "#778ca3" },
-    // Villager Homes (Redistributed to distinct standalone houses)
+    { name: "Maria Lopez's apartment", displayName: "玛利亚的公寓", x: 93, y: 18, color: "#778ca3" },
+    // Villager Homes
     { name: "Arthur Burton's Home", displayName: "亚瑟之家", x: 89, y: 73, color: "#70a1ff" },
-    { name: "Klaus Mueller's Home", displayName: "克劳斯之家", x: 58, y: 73, color: "#00ecff" },
-    { name: "Isabella Rodriguez's Home", displayName: "伊莎贝拉之家", x: 78, y: 73, color: "#ff6b81" },
     { name: "Crow's Sheriff Residence", displayName: "警长办公室", x: 23, y: 65, color: "#54a0ff" },
+    { name: "Jane Moreno's Home", displayName: "简之家", x: 72, y: 74, color: "#a5b1c2" },
+    { name: "Mei Lin's Home", displayName: "林梅之家", x: 107, y: 62, color: "#a5b1c2" },
     { name: "Crow's Jail Cell A", displayName: "牢房1", x: 31, y: 66, color: "#54a0ff" },
     { name: "Crow's Jail Cell B", displayName: "牢房2", x: 38, y: 65, color: "#54a0ff" }
   ];
@@ -4078,7 +4162,7 @@ function resolveBubbleLayout() {
     // action_status 不受普通说话 TTL 提前隐藏，只由 runtime/action gate 控制，且不受 layout 互斥提前隐藏
     const actionStatusVisibleAt = Number(p.action_status_visible_at || 0);
     const actionStatusReady = actionStatusVisibleAt <= 0 || (Date.now() / 1000) >= actionStatusVisibleAt;
-    const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStatusReady;
+    const canShowActionDuration = !isDusk && !isNight && runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStatusReady;
     if (isActionStatusBubble && !canShowActionDuration) {
       displaySpeechText = "";
     }
@@ -4110,8 +4194,13 @@ function resolveBubbleLayout() {
       }
     }
 
-    if (pendingChatTarget === name && pendingChatPhase === "waiting") {
-      displaySpeechText = "...";
+    if (
+      pendingChatTarget === name
+      && pendingChatPhase === "waiting"
+      && pendingChatWaitShownAt
+      && (Date.now() / 1000) - pendingChatWaitShownAt <= 3
+    ) {
+      displaySpeechText = "正在聆听警长问询";
       thoughtText = "";
     }
 

@@ -4712,8 +4712,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self._log("🔨 你已经收集了银质项链和制造子弹的工具。今晚，克罗成功制造了一颗银质子弹。", "system")
 
 
-
-
+        self.agent_paths.clear()
 
         for name, agent in self.agents.items():
 
@@ -4731,17 +4730,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 cfg = AGENT_CONFIGS[name]
 
-                target = self._nearest_walkable_tile(
-
-                    (cfg["home"]["x"], cfg["home"]["y"]),
-
+                home_target = (cfg["home"]["x"], cfg["home"]["y"])
+                if not self._assign_reachable_target_near(
+                    agent,
+                    name,
+                    home_target,
+                    radius=12,
                     blocked=self._occupied_tiles({name}),
-
-                )
-
-                if target:
-
-                    agent.target_x, agent.target_y = target
+                ):
+                    target = self._nearest_walkable_tile(
+                        home_target,
+                        blocked=self._occupied_tiles({name}),
+                    )
+                    if target:
+                        agent.target_x, agent.target_y = target
 
                 agent.current_action = "sleeping"
 
@@ -4749,11 +4751,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 agent.current_location = "home"
 
-
-
-
-
-        self.agent_paths.clear()
 
         self.night_hunt = NightHuntState(
 
@@ -5898,6 +5895,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         runtime_state: idle / thinking / moving / acting
 
         """
+
+        if self.phase != GamePhase.DAY:
+            return
 
         if getattr(self, '_gathering_active', False):
 
@@ -9546,10 +9546,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             }
 
+            pending_started = time.time()
             self.chat_bubbles[target_name] = {
-                "text": "...",
+                "text": "正在聆听警长问询",
                 "target": self.detective_name,
-                "time": time.time(),
+                "time": pending_started,
+                "kind": "conversation_pending",
+                "expires_at": pending_started + 3.0,
             }
 
             should_broadcast_start = True
@@ -9608,23 +9611,23 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if not response or not response.strip():
                 self._log(
-                    f"[模型超时/空结果，保持等待] {display_name_for_person(target_name)} 回复警长",
+                    f"[模型超时/空结果，结束等待] {display_name_for_person(target_name)} 回复警长",
                     "system",
                 )
-                self.chat_bubbles[target_name] = {
-                    "text": "...",
-                    "target": self.detective_name,
-                    "time": time.time(),
-                }
-                self.chat_bubbles[self.detective_name] = {
-                    "text": self._limit_gathering_speech(incoming_message, max_chars=84),
-                    "target": target_name,
-                    "time": time.time(),
-                }
+                bubble = self.chat_bubbles.get(target_name)
+                if isinstance(bubble, dict) and bubble.get("kind") == "conversation_pending":
+                    self.chat_bubbles.pop(target_name, None)
+                target.in_conversation_with = None
+                target._conversation_started_at = 0
+                target.runtime_state = "idle"
+                detective.in_conversation_with = None
+                detective._conversation_started_at = 0
+                self._detective_chat_active_target = None
+                self._detective_chat_pending_target = None
                 self._broadcast_state()
                 return {
-                    "pending_response": True,
-                    "response": "...",
+                    "no_response": True,
+                    "response": "",
                     "remaining_chats": CONFIG["conversation"]["detective_normal_chat_limit"]
                     - detective.chat_count.get(target_name, 0),
                     "deep_dive_remaining": detective.deep_dive_quota - detective.deep_dive_used,
@@ -10695,6 +10698,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "location": INITIAL_BODY_SITE["location"],
 
             }
+            initial_gather_site = {
+
+                "x": INITIAL_BODY_SITE["x"],
+
+                "y": INITIAL_BODY_SITE["y"],
+
+                "location": INITIAL_BODY_SITE["location"],
+
+            }
 
             if hasattr(self, "bodies") and self.bodies:
 
@@ -10908,6 +10920,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "llm_provider": getattr(self, "llm_provider", {"provider": "chat2api"}),
 
                 "gathering_site": gather_site,
+                "initial_gathering_site": initial_gather_site,
 
                 "night_hunt": hunt_status,
 

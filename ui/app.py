@@ -567,6 +567,14 @@ def on_start_dusk_discussion():
         game.start_dusk_discussion()
 
 
+@socketio.on("test_complete_daily_interviews")
+def on_test_complete_daily_interviews():
+    if game:
+        result = game.mark_all_daily_interviews_for_test()
+        emit("test_complete_daily_interviews_result", result)
+        socketio.emit("game_state", game.get_status())
+
+
 @socketio.on("submit_dusk_statement")
 def on_submit_dusk_statement(data):
     if game:

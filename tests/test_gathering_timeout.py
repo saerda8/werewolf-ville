@@ -1466,8 +1466,8 @@ def test_round_two_timeout_logs_unified_fallback_message(monkeypatch):
     release.set()
 
 
-def test_detective_chat_empty_response_keeps_waiting(monkeypatch):
-    """When detective chat LLM returns empty, keep the visible waiting bubble."""
+def test_detective_chat_empty_response_releases_waiting(monkeypatch):
+    """When detective chat LLM returns empty, release the target instead of hanging."""
     engine = _make_engine(monkeypatch)
     engine._daily_interviewed = {
         name for name, agent in engine.agents.items()
@@ -1482,13 +1482,14 @@ def test_detective_chat_empty_response_keeps_waiting(monkeypatch):
 
     result = engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)
 
-    waiting_logs = [e["message"] for e in engine.game_log if "模型超时/空结果，保持等待" in e.get("message", "")]
+    waiting_logs = [e["message"] for e in engine.game_log if "模型超时/空结果，结束等待" in e.get("message", "")]
     assert len(waiting_logs) >= 1, (
         f"Expected waiting log for detective chat empty response, got: {[e['message'] for e in engine.game_log]}"
     )
-    assert result.get("pending_response") is True
-    assert result.get("response") == "..."
-    assert engine.chat_bubbles["Arthur Burton"]["text"] == "..."
+    assert result.get("no_response") is True
+    assert result.get("response") == ""
+    assert "Arthur Burton" not in engine.chat_bubbles
+    assert engine.agents["Arthur Burton"].in_conversation_with is None
 
 
 def test_unified_fallback_log_not_present_on_success(monkeypatch):
