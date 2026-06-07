@@ -1001,6 +1001,9 @@ def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
     assert "displayStageLabel = \"银质小刀阶段\"" in html
     assert "displayStageLabel = \"狼人行动中\"" in html
     assert "银质小刀阶段" in html
+    assert "/static/assets/effects/night_moon_icon.png" in html
+    assert "/static/assets/effects/wolf_paw_icon.png" in html
+    assert "/static/assets/effects/silver_knife_icon.png" in html
 
     # 2) Anonymity check: no target name or holder leak in night sequence stage rendering
     night_idx = html.index("function renderNightTransition(state)")
@@ -1021,6 +1024,7 @@ def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
     assert "showSilverShotModal" in html
     assert 'id="silver-shot-modal"' in html
     assert 'id="silver-shot-targets"' in html
+    assert "/static/assets/effects/silver_bullet_icon.png" in html
     assert 'socket.emit("shoot_silver_bullet"' in html
 
     # 5) Rules modal update about the anonymity of silver knife validity

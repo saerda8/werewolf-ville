@@ -80,6 +80,19 @@ body.phase-locked #game-container { pointer-events: none; }
   box-shadow: 0 0 15px rgba(109, 255, 143, 0.6);
   transform: scale(1.15);
 }
+.night-actor img {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.night-title-icon {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  margin-bottom: 8px;
+}
 .night-progress-track { height: 10px; overflow: hidden; border-radius: 999px; background: #17233a; }
 #night-progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, #6f87b8, #d6e5ff); transition: width 0.5s ease; }
 #night-finish-confirm {
@@ -665,6 +678,7 @@ body.phase-locked #game-container { pointer-events: none; }
     </div>
     <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 15px;">
       <div style="color: #ffdd57; font-size: 14px; font-weight: bold;">
+        <img src="/static/assets/effects/silver_bullet_icon.png" alt="" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:6px;image-rendering:pixelated;">
         已制作银子弹！请选择一名活着的村民进行射杀：
       </div>
       <div id="silver-shot-targets" style="display: flex; flex-direction: column; gap: 10px; max-height: 40vh; overflow-y: auto; padding-right: 5px;">
@@ -788,12 +802,13 @@ body.phase-locked #game-container { pointer-events: none; }
 
 <div id="night-transition-overlay" aria-live="polite">
   <div class="night-transition-card">
+    <img class="night-title-icon" src="/static/assets/effects/night_moon_icon.png" alt="">
     <div style="font-size:13px; color:#8ea0c4; letter-spacing:0.18em;">NIGHT SEQUENCE</div>
     <div id="night-stage-text" style="font-size:28px; font-weight:900; margin-top:8px;">夜幕降临</div>
     <div class="night-actors">
-      <div class="night-actor wolf" title="匿名狼人">🐺</div>
-      <div class="night-actor wolf" title="匿名狼人">🐺</div>
-      <div class="night-actor knife" title="匿名银刀执行者">🗡️</div>
+      <div class="night-actor wolf" title="匿名狼人"><img src="/static/assets/effects/wolf_paw_icon.png" alt=""></div>
+      <div class="night-actor wolf" title="匿名狼人"><img src="/static/assets/effects/wolf_paw_icon.png" alt=""></div>
+      <div class="night-actor knife" title="匿名银刀执行者"><img src="/static/assets/effects/silver_knife_icon.png" alt=""></div>
     </div>
     <div class="night-progress-track"><div id="night-progress-fill"></div></div>
     <div id="night-progress-text" style="margin-top:10px; color:#aebbd5;">夜间行动准备中</div>
