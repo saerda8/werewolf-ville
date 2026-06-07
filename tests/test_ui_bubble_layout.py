@@ -529,8 +529,11 @@ def test_new_bugfixes_frontend():
     assert "margin-right: -260px;" not in html
     assert "margin-right: -300px;" not in html
 
-    # 2. TTL timer safety: do not delete blueBubbleCache when html is empty
-    assert "delete blueBubbleCache" not in html
+    # 2. TTL timer safety: do not delete blueBubbleCache when html is empty in applyBlueBubbleTTL
+    idx_ttl = html.find("function applyBlueBubbleTTL")
+    assert idx_ttl != -1
+    ttl_body = html[idx_ttl : html.find("function", idx_ttl + 1)]
+    assert "delete blueBubbleCache" not in ttl_body
 
     # 3. Crow speech bubble anchoring: no early continue in Crow's thought check
     assert 'staleCrowThought.innerHTML = "";\n      }\n      thoughtText = "";\n    }' in html or 'staleCrowThought.innerHTML = "";\n      }\n      thoughtText = "";\n    }' in html.replace("\r\n", "\n")
@@ -1078,3 +1081,18 @@ def test_action_and_detective_chat_clear_blue_bubble_cache():
     assert 'conversationWith === "克罗"' in html
     assert 'if (isActionStatusBubble) {' in html
     assert 'displaySpeechText = "";' in html
+
+
+def test_action_status_and_start_action_mutual_exclusion():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Entering action_status clears caches
+    assert 'if (isActionStatusBubble) {\n      delete blueBubbleCache[name];\n      delete thoughtBubbleCache[name];\n    }' in html or 'if (isActionStatusBubble) {\n      delete blueBubbleCache[name];\n      delete thoughtBubbleCache[name];\n    }' in html.replace("\r\n", "\n")
+
+    # 2. Action status bubble and start-action blue bubble cannot coexist on screen (thoughtText is set to empty)
+    assert 'if (realSpeechVisible) {' in html
+    assert 'else if (isActionStatusBubble) {' in html
+
+    # 3. kind=conversation_pending and target=Crow or 克罗 displays "正在聆听警长问询"
+    assert 'if (kind === "conversation_pending" && target === "Crow") {' in html
+    assert 'if (kind === "conversation_pending" && target === "克罗") {' in html

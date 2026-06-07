@@ -672,7 +672,7 @@ def test_gathering_per_speaker_timeout_configured(monkeypatch):
     """Engine must expose gathering_per_speaker_timeout for tuning."""
     engine = _make_engine(monkeypatch)
     assert hasattr(engine, "gathering_per_speaker_timeout")
-    assert engine.gathering_per_speaker_timeout >= 20
+    assert engine.gathering_per_speaker_timeout >= 30
 
 
 def test_gathering_speech_uses_priority_llm_requests(monkeypatch):
@@ -695,6 +695,7 @@ def test_gathering_speech_uses_priority_llm_requests(monkeypatch):
 
     assert captured
     assert captured[0].get("priority") is True
+    assert captured[0].get("max_retries") is None
 
 
 # ---------------------------------------------------------------------------
@@ -1399,7 +1400,7 @@ def test_round_one_timeout_logs_unified_fallback_message(monkeypatch):
     assert engine._gathering_speaker_idx > engine._gathering_queue.index("Arthur Burton")
 
     # Unified fallback log must be present
-    fallback_logs = [e["message"] for e in engine.game_log if "模型超时/空结果，使用保底发言" in e.get("message", "")]
+    fallback_logs = [e["message"] for e in engine.game_log if "模型等待失败/空结果，使用保底发言" in e.get("message", "")]
     assert len(fallback_logs) >= 1, (
         f"Expected unified fallback log, got: {[e['message'] for e in engine.game_log]}"
     )
@@ -1428,7 +1429,7 @@ def test_round_one_empty_result_logs_unified_fallback_message(monkeypatch):
         time.sleep(0.05)
 
     assert engine._gathering_speech_history
-    fallback_logs = [e["message"] for e in engine.game_log if "模型超时/空结果，使用保底发言" in e.get("message", "")]
+    fallback_logs = [e["message"] for e in engine.game_log if "模型等待失败/空结果，使用保底发言" in e.get("message", "")]
     assert len(fallback_logs) >= 1, (
         f"Expected unified fallback log for empty result, got: {[e['message'] for e in engine.game_log]}"
     )
@@ -1460,7 +1461,7 @@ def test_round_two_timeout_logs_unified_fallback_message(monkeypatch):
         time.sleep(0.05)
 
     assert engine._gathering_left.get("Klaus Mueller") is True
-    fallback_logs = [e["message"] for e in engine.game_log if "模型超时/空结果，使用保底发言" in e.get("message", "")]
+    fallback_logs = [e["message"] for e in engine.game_log if "模型等待失败/空结果，使用保底发言" in e.get("message", "")]
     assert len(fallback_logs) >= 1
 
     release.set()
@@ -1482,7 +1483,7 @@ def test_detective_chat_empty_response_releases_waiting(monkeypatch):
 
     result = engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)
 
-    waiting_logs = [e["message"] for e in engine.game_log if "模型超时/空结果，结束等待" in e.get("message", "")]
+    waiting_logs = [e["message"] for e in engine.game_log if "模型等待失败/空结果，结束等待" in e.get("message", "")]
     assert len(waiting_logs) >= 1, (
         f"Expected waiting log for detective chat empty response, got: {[e['message'] for e in engine.game_log]}"
     )
@@ -1513,7 +1514,7 @@ def test_unified_fallback_log_not_present_on_success(monkeypatch):
         time.sleep(0.05)
 
     assert engine._gathering_speech_history
-    fallback_logs = [e["message"] for e in engine.game_log if "模型超时/空结果，使用保底发言" in e.get("message", "")]
+    fallback_logs = [e["message"] for e in engine.game_log if "模型等待失败/空结果，使用保底发言" in e.get("message", "")]
     assert len(fallback_logs) == 0, (
         f"Unified fallback log should NOT appear on success: {fallback_logs}"
     )

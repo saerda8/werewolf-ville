@@ -2722,7 +2722,7 @@ def test_busy_detective_redirects_third_party_talk_path(monkeypatch):
     assert (maria.target_x, maria.target_y) == (maria.x, maria.y)
 
 
-def test_detective_chat_uses_priority_no_retry_response(monkeypatch):
+def test_detective_chat_uses_priority_retry_response(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
@@ -2739,7 +2739,56 @@ def test_detective_chat_uses_priority_no_retry_response(monkeypatch):
     result = engine.detective_chat("Arthur Burton", "", is_deep_dive=False)
 
     assert result["response"] == "我马上回答警长。"
-    assert captured == {"priority": True, "max_retries": 0}
+    assert captured == {"priority": True, "max_retries": None}
+
+
+def test_detective_chat_status_suppresses_stale_npc_action_fields(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    target = engine.agents["Arthur Burton"]
+
+    target.in_conversation_with = "Crow"
+    engine._detective_chat_active_target = "Arthur Burton"
+    target.runtime_state = "planning"
+    target.current_thought = "我还在想旧计划"
+    target.current_thought_time = time.time()
+    target.current_action = "旧行动"
+    target.current_action_type = "work"
+    target._pending_action = {
+        "action_type": "work",
+        "target_location": "Harvey Oak Supply Store",
+        "target_object": "tool shelf",
+        "target_person": "",
+        "action": "旧行动",
+        "action_status": "整理工具架",
+        "expected_result": "旧计划",
+    }
+    target._last_decision = {"expected_result": "旧计划", "action": "旧行动"}
+    target._action_status_visible_at = time.time()
+    engine.agent_paths["Arthur Burton"] = [(target.x + 1, target.y)]
+    engine.chat_bubbles["Arthur Burton"] = {
+        "text": "整理工具架...",
+        "target": "",
+        "time": time.time(),
+        "kind": "action_status",
+    }
+
+    status = engine.get_status()
+    persona = status["personas"]["Arthur Burton"]
+
+    assert persona["conversation_with"] == "Crow"
+    assert persona["thought"] == ""
+    assert persona["thought_summary"] == ""
+    assert persona["action"] == ""
+    assert persona["action_type"] == ""
+    assert persona["action_plan"] == ""
+    assert persona["action_target_location"] == ""
+    assert persona["action_target_object"] == ""
+    assert persona["path_len"] == 0
+    assert persona["visual_moving"] is False
+    assert persona["action_status_visible_at"] == 0
+    assert persona["last_decision"] == {}
+    assert persona["current_goal"] == ""
 
 
 def test_detective_chat_interrupts_existing_npc_chat(monkeypatch):

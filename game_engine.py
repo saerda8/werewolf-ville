@@ -527,19 +527,19 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         self.tick_interval = CONFIG["game"]["tick_interval_seconds"]
 
-        self.gathering_turn_timeout = max(
+        self.gathering_per_speaker_timeout = max(
 
-            18,
+            30,
 
-            int(CONFIG.get("llm", {}).get("request_timeout_seconds", 60)) // 3 + 5,
+            int(CONFIG.get("llm", {}).get("request_timeout_seconds", 60)) // 2,
 
         )
 
-        self.gathering_per_speaker_timeout = max(
+        self.gathering_turn_timeout = max(
 
-            20,
+            self.gathering_per_speaker_timeout + 5,
 
-            int(CONFIG.get("llm", {}).get("request_timeout_seconds", 60)) // 3,
+            int(CONFIG.get("llm", {}).get("request_timeout_seconds", 60)) // 2 + 5,
 
         )
 
@@ -2850,7 +2850,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                         raw_holder["raw"] = chat_for_agent(
 
-                            name, system_prompt, "请发表你的第一轮发言", max_retries=0, priority=True,
+                            name, system_prompt, "请发表你的第一轮发言", priority=True,
 
                         )
 
@@ -2890,8 +2890,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                             f"[聚集发言超时保底] {display_name_for_person(name)} 模型未在{self.gathering_per_speaker_timeout}秒内返回，使用备用发言。",
                             "system",
                         )
+                    else:
+                        detail = get_last_error_for_agent(name) or "模型返回为空或无法解析"
+                        self._log(
+                            f"[聚集发言模型失败保底] {display_name_for_person(name)} {detail}，使用备用发言。",
+                            "system",
+                        )
                     self._log(
-                        f"[模型超时/空结果，使用保底发言] {display_name_for_person(name)} 第一轮发言",
+                        f"[模型等待失败/空结果，使用保底发言] {display_name_for_person(name)} 第一轮发言",
                         "system",
                     )
                     speech = GATHERING_FALLBACKS.get(name, "命案很严重，我会如实说明昨晚情况。")
@@ -3055,7 +3061,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if reason:
                 self._log(reason, "system")
             self._log(
-                f"[模型超时/空结果，使用保底发言] {display_name} 第二轮去向",
+                f"[模型等待失败/空结果，使用保底发言] {display_name} 第二轮去向",
                 "system",
             )
             return {
@@ -3075,7 +3081,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                             name,
                             system_prompt,
                             "请决定你要去哪里并告别",
-                            max_retries=0,
                             priority=True,
                         )
                     finally:
@@ -3093,7 +3098,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 result = self._parse_gathering_json(raw, name) if raw else {}
                 if not result:
                     if raw_holder["done"]:
-                        result = _fallback_result(f"[聚集去向空结果保底] {display_name} 模型返回为空或无法解析，使用备用去向。")
+                        detail = get_last_error_for_agent(name) or "模型返回为空或无法解析"
+                        result = _fallback_result(f"[聚集去向模型失败保底] {display_name} {detail}，使用备用去向。")
                     else:
                         result = _fallback_result(
                             f"[聚集去向超时保底] {display_name} 模型未在{self.gathering_per_speaker_timeout}秒内返回，使用备用去向。"
@@ -9579,8 +9585,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             priority=True,
 
-            max_retries=0,
-
         )
 
 
@@ -9610,8 +9614,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
             if not response or not response.strip():
+                detail = get_last_error_for_agent(target_name) or "模型返回为空"
                 self._log(
-                    f"[模型超时/空结果，结束等待] {display_name_for_person(target_name)} 回复警长",
+                    f"[模型等待失败/空结果，结束等待] {display_name_for_person(target_name)} 回复警长：{detail}",
                     "system",
                 )
                 bubble = self.chat_bubbles.get(target_name)
@@ -10529,12 +10534,23 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
                 is_detective = (name == self.detective_name)
+                detective_chat_locked = (
+                    not is_detective
+                    and (
+                        getattr(agent, "in_conversation_with", None) == self.detective_name
+                        or getattr(self, "_detective_chat_active_target", None) == name
+                        or getattr(self, "_detective_chat_pending_target", None) == name
+                    )
+                )
+                suppress_action_fields = is_detective or detective_chat_locked
                 visual_moving = bool(self.agent_paths.get(name)) or (
                     agent.x != agent.target_x or agent.y != agent.target_y
                 ) or getattr(agent, 'runtime_state', 'idle') == "moving"
+                if suppress_action_fields:
+                    visual_moving = False
 
 
-                display_action = "" if is_detective else self._action_for_display(agent.current_action)
+                display_action = "" if suppress_action_fields else self._action_for_display(agent.current_action)
 
                 persona_data[name] = {
                 "x": agent.x,
@@ -10546,19 +10562,19 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "target_y": agent.target_y,
 
                 "action": display_action,
-                "action_type": "" if is_detective else getattr(agent, 'current_action_type', ''),
+                "action_type": "" if suppress_action_fields else getattr(agent, 'current_action_type', ''),
 
-                "action_plan": "" if is_detective else localize_visible_character_names(plan_text),
+                "action_plan": "" if suppress_action_fields else localize_visible_character_names(plan_text),
 
-                "action_target_location": "" if is_detective else target_location,
+                "action_target_location": "" if suppress_action_fields else target_location,
 
-                "action_target_location_label": "" if is_detective else self._destination_label_zh(target_location),
+                "action_target_location_label": "" if suppress_action_fields else self._destination_label_zh(target_location),
 
-                "action_target_object": "" if is_detective else target_object,
+                "action_target_object": "" if suppress_action_fields else target_object,
 
-                "action_target_person": "" if is_detective else target_person,
+                "action_target_person": "" if suppress_action_fields else target_person,
 
-                "emoji": "" if is_detective else agent.current_emoji,
+                "emoji": "" if suppress_action_fields else agent.current_emoji,
 
                 "location": agent.current_location,
 
@@ -10580,11 +10596,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "has_visible_clue_hint": self._agent_has_visible_clue_hint(name, agent),
                 "has_detective_hint": self._agent_has_visible_clue_hint(name, agent),
 
-                "thought": "" if is_detective else getattr(agent, 'current_thought', ''),
+                "thought": "" if suppress_action_fields else getattr(agent, 'current_thought', ''),
 
-                "thought_time": 0 if is_detective else getattr(agent, 'current_thought_time', 0),
+                "thought_time": 0 if suppress_action_fields else getattr(agent, 'current_thought_time', 0),
 
-                "thought_summary": "" if is_detective else self._summarize_thought_for_display(
+                "thought_summary": "" if suppress_action_fields else self._summarize_thought_for_display(
 
                     getattr(agent, 'current_thought', '')
 
@@ -10598,22 +10614,22 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 # him. His visible feedback is handled only by white speech bubbles.
 
-                "path_len": 0 if is_detective else len(self.agent_paths.get(name, [])),
+                "path_len": 0 if suppress_action_fields else len(self.agent_paths.get(name, [])),
 
-                "runtime_state": "idle" if is_detective else getattr(agent, 'runtime_state', 'idle'),
+                "runtime_state": "idle" if is_detective else ("acting" if detective_chat_locked else getattr(agent, 'runtime_state', 'idle')),
                 "visual_moving": visual_moving,
-                "action_started_at": 0 if is_detective else getattr(agent, "_action_started_at", 0),
-                "action_status_visible_at": 0 if is_detective else getattr(agent, "_action_status_visible_at", 0),
-                "departure_delay_until": 0 if is_detective else getattr(agent, "_departure_delay_until", 0),
-                "last_decision": {} if is_detective else public_last_decision,
+                "action_started_at": 0 if suppress_action_fields else getattr(agent, "_action_started_at", 0),
+                "action_status_visible_at": 0 if suppress_action_fields else getattr(agent, "_action_status_visible_at", 0),
+                "departure_delay_until": 0 if suppress_action_fields else getattr(agent, "_departure_delay_until", 0),
+                "last_decision": {} if suppress_action_fields else public_last_decision,
 
-                "last_error": "" if is_detective else localize_visible_character_names(last_decision.get("error", "")),
+                "last_error": "" if suppress_action_fields else localize_visible_character_names(last_decision.get("error", "")),
 
                 "llm_error": "" if is_detective else get_last_error_for_agent(name),
 
-                "response_error": "" if is_detective else getattr(agent, '_last_response_error', ''),
+                "response_error": "" if suppress_action_fields else getattr(agent, '_last_response_error', ''),
 
-                "current_goal": "" if is_detective else scratch_current,
+                "current_goal": "" if suppress_action_fields else scratch_current,
 
                 "conversation_with": None if is_detective else getattr(agent, "in_conversation_with", None),
 

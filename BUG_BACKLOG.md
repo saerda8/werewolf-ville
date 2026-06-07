@@ -34,6 +34,28 @@ ID:
 
 ## 当前待整理 Bug
 
+### BUG-2026-06-08-003：真实聊天秒失败与 NPC 旧行动状态漏到前端
+
+严重度：Major
+关联需求：REQ-073、REQ-123、REQ-168、NPC 行为生命周期
+回归测试：`tests/test_engine_foundation.py`、`tests/test_gathering_timeout.py`、`tests/test_daytime_npc_behavior.py`、`tests/test_ui_bubble_layout.py`
+回归频率：高概率
+状态：Closed
+验收状态：Verified
+
+实际表现：警长刚和 NPC 说话就出现“模型超时/空结果”；第二轮聚集离场也可能在模型尚未真正等待时直接保底；NPC 被警长问话后仍可能向前端暴露旧 thought、旧 plan、旧 action_status 或旧路径，表现为还在思考/执行。
+
+根因：聚集发言、第二轮去向和警长真实聊天显式传入 `max_retries=0`，遇到上游 429/空结果会立即失败；聚集单人等待下限仍为 20 秒；`get_status()` 只压制克罗自己的行动字段，没有把“正在和警长交谈/等待回复的 NPC”作为最高优先级展示状态处理。
+
+修复方案：聚集单人等待下限改为 30 秒；聚集发言、聚集离场和警长真实聊天恢复默认重试；模型失败日志区分“等待超时”和“模型失败/空结果”；`get_status()` 对正在和警长交谈或等待警长回复的 NPC 清空 thought、action、action_plan、target、path、last_decision 和 action_status 可见时间。
+
+验证方式：
+- `python -m py_compile game_engine.py llm.py`
+- `pytest -q tests/test_engine_foundation.py::test_detective_chat_uses_priority_retry_response tests/test_engine_foundation.py::test_detective_chat_status_suppresses_stale_npc_action_fields tests/test_gathering_timeout.py::test_gathering_per_speaker_timeout_configured tests/test_gathering_timeout.py::test_gathering_speech_uses_priority_llm_requests tests/test_gathering_timeout.py::test_round_one_timeout_logs_unified_fallback_message tests/test_gathering_timeout.py::test_round_one_empty_result_logs_unified_fallback_message tests/test_gathering_timeout.py::test_round_two_timeout_logs_unified_fallback_message tests/test_gathering_timeout.py::test_detective_chat_empty_response_releases_waiting tests/test_gathering_timeout.py::test_unified_fallback_log_not_present_on_success`
+- `pytest -q tests/test_daytime_npc_behavior.py::test_detective_chat_clears_npc_state tests/test_daytime_npc_behavior.py::test_npc_mid_planning_detective_chat_clears_thinking_flag tests/test_engine_foundation.py::test_detective_chat_records_and_locks_before_slow_npc_reply tests/test_engine_foundation.py::test_detective_chat_waiting_reply_does_not_lock_crow_movement tests/test_engine_foundation.py::test_detective_chat_interrupts_movement_and_marks_target_busy_immediately tests/test_engine_foundation.py::test_stale_planning_thread_does_not_override_detective_conversation_lock tests/test_engine_foundation.py::test_action_start_timing_is_backend_driven_not_frontend_cache tests/test_engine_foundation.py::test_moving_state_does_not_leak_stale_frontend_bubble_cache tests/test_ui_bubble_layout.py::test_pending_detective_chat_locks_button_and_suppresses_bubbles tests/test_ui_bubble_layout.py::test_action_and_detective_chat_clear_blue_bubble_cache tests/test_ui_bubble_layout.py::test_strict_sequential_bubbles_and_action_status_clean`
+
+相关提交：待提交。
+
 ### BUG-2026-06-08-001：NPC 真实聊天、黄昏集合与测试跳转入口异常
 
 严重度：Major

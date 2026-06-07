@@ -2239,9 +2239,17 @@ function mergePendingCrowBubble(state) {
 function mergePendingChatTargetWaitBubble(state) {
   if (!pendingChatTarget || pendingChatPhase !== "waiting" || !state) return;
   const now = Date.now() / 1000;
+  const serverBubble = state.chat_bubbles ? state.chat_bubbles[pendingChatTarget] : null;
+  const isServerPending = serverBubble && typeof serverBubble === "object" && serverBubble.kind === "conversation_pending";
   if (pendingChatWaitShownAt && now - pendingChatWaitShownAt > 3) {
-    if (state.chat_bubbles && isWaitBubble(state.chat_bubbles[pendingChatTarget])) {
-      delete state.chat_bubbles[pendingChatTarget];
+    if (isServerPending) {
+      if (serverBubble.expires_at && now > serverBubble.expires_at) {
+        delete state.chat_bubbles[pendingChatTarget];
+      }
+    } else {
+      if (state.chat_bubbles && isWaitBubble(state.chat_bubbles[pendingChatTarget])) {
+        delete state.chat_bubbles[pendingChatTarget];
+      }
     }
     return;
   }
@@ -3257,6 +3265,9 @@ function bubbleSpeechText(speaker, payload) {
   if (kind === "conversation_pending" && target === "Crow") {
     return "正在聆听警长问询";
   }
+  if (kind === "conversation_pending" && target === "克罗") {
+    return "正在聆听警长问询";
+  }
   if (kind === "action_status") {
     text = stripActionPlanningTail(text);
 
@@ -4148,6 +4159,10 @@ function resolveBubbleLayout() {
     const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);
 
     const isActionStatusBubble = bubblePayload && typeof bubblePayload === "object" && String(bubblePayload.kind || "") === "action_status";
+    if (isActionStatusBubble) {
+      delete blueBubbleCache[name];
+      delete thoughtBubbleCache[name];
+    }
     const realSpeechVisible = !!speechText && p.alive && !isActionStatusBubble;
     let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);
 
@@ -4155,6 +4170,8 @@ function resolveBubbleLayout() {
     // bubble must not start or advance its TTL; otherwise execution can unlock
     // even though the player never saw "开始行动".
     if (realSpeechVisible) {
+      thoughtText = "";
+    } else if (isActionStatusBubble) {
       thoughtText = "";
     } else {
       thoughtText = applyBlueBubbleTTL(name, thoughtText, p);
