@@ -152,7 +152,7 @@ def _test_anthropic_messages(llm_override):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")
@@ -184,7 +184,7 @@ def _test_openai_compatible_chat(llm_override: dict) -> str:
         ],
         max_tokens=8,
         temperature=0,
-        timeout=20,
+        timeout=30,
     )
     return (response.choices[0].message.content or "").strip()
 

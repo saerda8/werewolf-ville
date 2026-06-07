@@ -165,6 +165,10 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert 'let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
     assert "if (resp && resp.pending_response)" in html
     assert "return;" in html
+    assert "你说说，为什么你不可能是凶手？" in html
+    assert "你先说说，为什么你不可能是凶手？" not in html
+    assert "function markPendingChatTargetWaiting(name, state)" in html
+    assert "function mergePendingChatTargetWaitBubble(state)" in html
 
 
 def test_deep_dive_submit_decrements_remaining_optimistically():
@@ -1031,3 +1035,20 @@ def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
 
     # 5) Rules modal update about the anonymity of silver knife validity
     assert "不会泄露银刀是否有效" in html
+
+
+def test_new_dusk_camera_and_waiting_behavior():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # (1) Hide dusk-discussion-list from right side panel
+    assert 'id="dusk-discussion-list"' in html
+    assert 'display: none;' in html
+
+    # (2) Wait reply NPC shows '...' instead of old action
+    assert 'pendingChatTarget === name && pendingChatPhase === "waiting"' in html
+    assert 'displaySpeechText = "...";' in html
+    assert 'thoughtText = "";' in html
+
+    # (3) Dusk/voting camera slow centering
+    assert 'const newIsDusk = !isNight &&' in html
+    assert 'sceneRef.cameras.main.pan(site.x * TILE_W, site.y * TILE_W, 2000);' in html

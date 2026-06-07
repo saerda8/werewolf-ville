@@ -752,7 +752,7 @@ body.phase-locked #game-container { pointer-events: none; }
   <div id="dusk-statement-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #ffdd57; padding: 12px 16px;">
     <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px;">黄昏讨论发言</div>
     <div id="dusk-stage-label"></div>
-    <div id="dusk-discussion-list" style="font-size: 11px; line-height: 1.45; color: #ddd; max-height: 120px; overflow-y: auto; margin-bottom: 8px;"></div>
+    <div id="dusk-discussion-list" style="display: none; font-size: 11px; line-height: 1.45; color: #ddd; max-height: 120px; overflow-y: auto; margin-bottom: 8px;"></div>
     <textarea id="dusk-statement-input" placeholder="输入克罗的黄昏总结..." style="width: 100%; height: 58px; resize: vertical; box-sizing: border-box; background: #0f172a; color: #eee; border: 1px solid #334155; border-radius: 4px; padding: 6px; font-size: 12px;"></textarea>
     <button id="dusk-statement-submit" onclick="submitDuskStatement()" style="width:100%; margin-top:6px; padding:8px; background:#e94560; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">提交发言，进入投票</button>
   </div>
@@ -944,7 +944,8 @@ let lastLogId = -1;
 let firstStateReceived = false;
 let pendingChatTarget = null;
 let pendingChatPhase = ""; // "moving" | "waiting"
-const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你先说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
+let duskCameraPanKey = "";
+const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
 const BUBBLE_LIFETIME_SECONDS = 6;
 let thoughtBubbleCache = {};
 let blueBubbleCache = {};
@@ -1028,6 +1029,7 @@ function initSocket() {
   if (socket) { socket.disconnect(); }
   socket = io();
   socket.on("game_state", (state) => {
+    mergePendingChatTargetWaitBubble(state);
     mergePendingCrowBubble(state);
     gameState = state;
     if (state && state.personas) {
@@ -1116,11 +1118,34 @@ function centerCameraOnState(state) {
   }
 }
 
+function scheduleDuskDiscussionCameraPan(state, active, stage) {
+  if (!active || !sceneRef || !state) {
+    if (!active) duskCameraPanKey = "";
+    return;
+  }
+  const keyStage = stage === "voting" ? "voting" : "gathering";
+  const key = `${state.day || ""}:${keyStage}`;
+  if (duskCameraPanKey === key) return;
+  duskCameraPanKey = key;
+  setTimeout(() => {
+    if (!sceneRef || !gameState) return;
+    const liveStage = duskStage(gameState);
+    const liveActive = gameState.phase === "dusk_discussion" || liveStage === "voting";
+    if (!liveActive) return;
+    const site = gameState.gathering_site;
+    if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
+      sceneRef.cameras.main.pan(site.x * TILE_W, site.y * TILE_W, 2000);
+    }
+  }, 2000);
+}
+
 function fetchCurrentState() {
   return fetch("/api/status")
     .then((resp) => resp.json())
     .then((state) => {
       if (!state || state.error) return state;
+      mergePendingChatTargetWaitBubble(state);
+      mergePendingCrowBubble(state);
       gameState = state;
       if (state && state.personas) {
         PERSONA_NAMES = Object.keys(state.personas);
@@ -1529,7 +1554,6 @@ function renderDuskVotingFlow(state) {
   const statementInput = document.getElementById("dusk-statement-input");
   const statementSubmit = document.getElementById("dusk-statement-submit");
   const crowInputStage = stage === "crow_statement" || stage === "crow_input";
-  const discussionStages = ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input"];
   const votingStages = ["voting", "results", "result", "escorting", "escort"];
   const duskInteractionLocked = isDusk && stage !== "crow_statement" && stage !== "crow_input";
   document.body.classList.toggle("phase-locked", isDusk || isNight);
@@ -1539,7 +1563,7 @@ function renderDuskVotingFlow(state) {
     if (control && gameplayLocked) control.disabled = true;
   });
 
-  if (discussionPanel) discussionPanel.style.display = isDusk && discussionStages.includes(stage) ? "block" : "none";
+  if (discussionPanel) discussionPanel.style.display = isDusk && crowInputStage ? "block" : "none";
   if (statementInput) statementInput.style.display = crowInputStage ? "block" : "none";
   if (statementSubmit) statementSubmit.style.display = crowInputStage ? "block" : "none";
   const stageLabel = document.getElementById("dusk-stage-label");
@@ -1560,10 +1584,7 @@ function renderDuskVotingFlow(state) {
 
   const discussionList = document.getElementById("dusk-discussion-list");
   if (discussionList) {
-    const statements = state.dusk_discussion_statements || voteSummary.discussion_statements || [];
-    discussionList.innerHTML = Array.isArray(statements) && statements.length
-      ? statements.map(item => `<div style="margin-bottom:5px;"><strong style="color:#ffdd57;">${escapeHtml(getDisplayName(item.speaker || "", state))}</strong>：${escapeHtml(item.text || "")}</div>`).join("")
-      : '<div style="color:#888;">等待当前阶段完成。</div>';
+    discussionList.innerHTML = "";
   }
 
   if (!votingPanel) return;
@@ -1646,11 +1667,13 @@ function updateUI(state) {
   const phase = state.phase;
   const stage = duskStage(state);
   isNight = phase === "night";
-  isDusk = !isNight && (
+  const newIsDusk = !isNight && (
     phase === "dusk_discussion" ||
     phase === "dusk" ||
     ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(stage)
   );
+  scheduleDuskDiscussionCameraPan(state, newIsDusk, stage);
+  isDusk = newIsDusk;
   const phaseEl = document.getElementById("phase-text");
   phaseEl.textContent = isNight ? "夜晚" : (isDusk ? "黄昏" : "白天");
   phaseEl.className = isNight ? "phase-night" : "phase-day";
@@ -2038,6 +2061,10 @@ function setPendingChat(name, phase) {
     }
     delete thoughtBubbleCache[name];
 
+    if (pendingChatPhase === "waiting") {
+      markPendingChatTargetWaiting(name, gameState);
+    }
+
     // Show responsive feedback in chat log immediately
     const chatLog = document.getElementById("chat-log");
     if (chatLog) {
@@ -2059,6 +2086,29 @@ function setPendingChat(name, phase) {
   }
 
   if (gameState) updateAgentList(gameState, !!gameState.director_view);
+}
+
+function markPendingChatTargetWaiting(name, state) {
+  if (!name || !state) return;
+  if (!state.chat_bubbles) state.chat_bubbles = {};
+  state.chat_bubbles[name] = {
+    text: "...",
+    target: "Crow",
+    time: Date.now() / 1000,
+    kind: "conversation_pending",
+  };
+  const p = state.personas && state.personas[name];
+  if (!p) return;
+  p.runtime_state = "acting";
+  p.path_len = 0;
+  p.visual_moving = false;
+  p.action = "";
+  p.current_action = "";
+  p.action_type = "";
+  p.conversation_with = "Crow";
+  p.target_x = p.x;
+  p.target_y = p.y;
+  p.action_status_visible_at = 0;
 }
 
 function clearPendingChat() {
@@ -2104,6 +2154,17 @@ function mergePendingCrowBubble(state) {
   const serverCrow = state.chat_bubbles["Crow"];
   if (!serverCrow || serverCrow.target === pendingCrowBubble.target || pendingChatPhase === "waiting") {
     state.chat_bubbles["Crow"] = pendingCrowBubble;
+  }
+}
+
+function mergePendingChatTargetWaitBubble(state) {
+  if (!pendingChatTarget || pendingChatPhase !== "waiting" || !state) return;
+  if (!state.chat_bubbles) state.chat_bubbles = {};
+  const serverBubble = state.chat_bubbles[pendingChatTarget];
+  const serverText = typeof serverBubble === "string" ? serverBubble : (serverBubble && serverBubble.text) || "";
+  const serverKind = typeof serverBubble === "object" ? String(serverBubble.kind || "") : "";
+  if (!serverText || isWaitBubble(serverBubble) || serverKind === "action_status") {
+    markPendingChatTargetWaiting(pendingChatTarget, state);
   }
 }
 
@@ -3766,6 +3827,9 @@ function create() {
     if (pointer.rightButtonDown() || pointer.middleButtonDown()) {
       focusedAgent = null;
       camDrag = true;
+      if (this.cameras.main.panEffect) {
+        this.cameras.main.panEffect.reset();
+      }
       camDragStartX = pointer.x;
       camDragStartY = pointer.y;
       camScrollStartX = this.cameras.main.scrollX;
@@ -3776,6 +3840,9 @@ function create() {
     // 左键点击：移动侦探
     if (!isNight && gameState) {
       focusedAgent = null;
+      if (this.cameras.main.panEffect) {
+        this.cameras.main.panEffect.reset();
+      }
       const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const tileX = Math.floor(worldPoint.x / TILE_W);
       const tileY = Math.floor(worldPoint.y / TILE_W);
@@ -4043,6 +4110,11 @@ function resolveBubbleLayout() {
       }
     }
 
+    if (pendingChatTarget === name && pendingChatPhase === "waiting") {
+      displaySpeechText = "...";
+      thoughtText = "";
+    }
+
     const bubbleSide = bubbleSideFor(name, chatBubbles, gameState);
 
     const bubbleEl = speechBubbles[name];
@@ -4305,7 +4377,12 @@ function update(time, delta) {
     cursors.right.isDown || wasd.D.isDown ||
     cursors.up.isDown || wasd.W.isDown ||
     cursors.down.isDown || wasd.S.isDown;
-  if (manualCameraMove) focusedAgent = null;
+  if (manualCameraMove) {
+    focusedAgent = null;
+    if (cam.panEffect) {
+      cam.panEffect.reset();
+    }
+  }
   if (cursors.left.isDown || wasd.A.isDown) cam.scrollX -= camSpeed;
   if (cursors.right.isDown || wasd.D.isDown) cam.scrollX += camSpeed;
   if (cursors.up.isDown || wasd.W.isDown) cam.scrollY -= camSpeed;
@@ -4416,9 +4493,11 @@ function update(time, delta) {
       const step = (TILE_W / tileMoveMs) * delta;
 
       const isMoving = p.runtime_state === "moving" || p.visual_moving === true;
+      const isWaitingReply = (pendingChatTarget === name && pendingChatPhase === "waiting");
+      const effectiveIsMoving = !isWaitingReply && isMoving;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist > 1) {
+      if (dist > 1 && !isWaitingReply) {
         // 有距离差，播放walk动画并插值移动
         if (Math.abs(dx) > Math.abs(dy)) {
           if (dx > 0) {
@@ -4441,7 +4520,7 @@ function update(time, delta) {
         else sprite.x = targetPx;
         if (Math.abs(dy) > step) sprite.y += Math.sign(dy) * step;
         else sprite.y = targetPy;
-      } else if (isMoving && p.path_len > 0) {
+      } else if (isMoving && p.path_len > 0 && !isWaitingReply) {
         // 后端仍有路径时才保持 walk 动画
         sprite.setPosition(targetPx, targetPy);
       } else {

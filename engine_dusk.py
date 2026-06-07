@@ -1,5 +1,6 @@
 ﻿"""Dusk discussion, voting, and prison helpers for WerewolfGameEngine."""
 
+import threading
 import time
 import sys
 
@@ -153,13 +154,16 @@ class EngineDuskMixin:
         self._dusk_stage = "gathering"
         self._dusk_winner = None
         self._dusk_result_note = ""
+        self._dusk_discussion_thread = None
+        participants = self._eligible_dusk_participants()
+        self._clear_daytime_state_for_dusk(participants)
         self._log("🌅 黄昏降临，居民们聚集讨论今天的发现...", "action")
         self.chat_bubbles[self.detective_name] = {
             "text": _CROW_GATHERING_TEXT,
             "target": "",
             "time": time.time(),
         }
-        self._send_dusk_participants_to_plaza()
+        self._send_dusk_participants_to_plaza(participants)
         self._broadcast_state()
 
     def _eligible_dusk_participants(self) -> list[str]:
@@ -168,31 +172,61 @@ class EngineDuskMixin:
             if agent.is_alive and name not in self._jailed
         ]
 
-    def _send_dusk_participants_to_plaza(self) -> None:
+    def _clear_daytime_state_for_dusk(self, participants: list[str]) -> None:
+        """Clear stale daytime NPC runtime state before assigning dusk gathering."""
+        participant_set = set(participants)
+        self.chat_bubbles.clear()
+        self._detective_chat_active_target = None
+        self._detective_chat_pending_target = None
+        for name, agent in self.agents.items():
+            agent.in_conversation_with = None
+            agent._conversation_started_at = 0
+            if name == self.detective_name or name not in participant_set:
+                continue
+            agent.current_thought = ""
+            agent.current_thought_time = 0
+            agent.current_action = ""
+            agent.current_action_type = ""
+            agent.current_emoji = ""
+            agent.runtime_state = "idle"
+            agent._pending_action = None
+            agent._is_thinking = False
+            agent._is_reflecting = False
+            agent._action_status_visible_at = 0
+            agent._action_start_visible_until = 0
+            agent._action_move_ready_at = 0
+            self.agent_paths.pop(name, None)
+
+    def _send_dusk_participants_to_plaza(self, participants: list[str] | None = None) -> None:
         """Reuse the morning plaza ring and make all eligible participants walk there."""
         import math
 
-        participants = self._eligible_dusk_participants()
+        participants = participants or self._eligible_dusk_participants()
+        if not participants:
+            return
         center_x = INITIAL_BODY_SITE["x"]
         center_y = INITIAL_BODY_SITE["y"]
         radius = 7
-        for idx, name in enumerate(self.agents):
-            if name not in participants:
-                continue
+        participant_set = set(participants)
+        blocked_base = self._occupied_tiles(participant_set)
+        reserved_targets = set()
+        for idx, name in enumerate(participants):
             desired = (
-                round(center_x + radius * math.cos(idx * 2 * math.pi / len(self.agents))),
-                round(center_y + radius * math.sin(idx * 2 * math.pi / len(self.agents))),
+                round(center_x + radius * math.cos(idx * 2 * math.pi / len(participants))),
+                round(center_y + radius * math.sin(idx * 2 * math.pi / len(participants))),
             )
             target = self._nearest_walkable_tile(
                 desired,
                 radius=6,
-                blocked=self._occupied_tiles({name}),
+                blocked=blocked_base | reserved_targets,
             ) or desired
+            reserved_targets.add(target)
             agent = self.agents[name]
             agent.target_x, agent.target_y = target
             agent.current_location = INITIAL_BODY_SITE["location"]
             agent.current_action = "前往广场参加黄昏讨论"
             agent.current_emoji = "🚶"
+            agent.runtime_state = "moving" if (agent.x, agent.y) != target else "idle"
             self.agent_paths.pop(name, None)
 
     def _begin_dusk_discussion_after_gathering(self) -> None:
@@ -209,10 +243,30 @@ class EngineDuskMixin:
         }
         self._broadcast_state()
         self._pause_for_dusk_bubble()
+        self._dusk_stage = "npc_discussion"
+        if getattr(self, "_running", False):
+            worker = getattr(self, "_dusk_discussion_thread", None)
+            if worker and worker.is_alive():
+                return
+            self._dusk_discussion_thread = threading.Thread(
+                target=self._finish_dusk_discussion_sequence,
+                daemon=True,
+            )
+            self._dusk_discussion_thread.start()
+            self._broadcast_state()
+            return
+        self._finish_dusk_discussion_sequence()
+
+    def _finish_dusk_discussion_sequence(self) -> None:
         self._generate_dusk_discussion_statements()
-        self._dusk_stage = "crow_statement"
-        self._log("请克罗总结发言。克罗发言后，居民再进入投票。", "system")
-        self._broadcast_state()
+        with self._lock:
+            if self.phase != type(self.phase).DUSK_DISCUSSION:
+                return
+            if getattr(self, "_dusk_stage", "") not in {"npc_discussion", "discussion"}:
+                return
+            self._dusk_stage = "crow_statement"
+            self._log("请克罗总结发言。克罗发言后，居民再进入投票。", "system")
+            self._broadcast_state()
 
     def _pause_for_dusk_bubble(self) -> None:
         """Keep fixed sequence bubbles readable in the live game without slowing unit tests."""
@@ -277,6 +331,45 @@ class EngineDuskMixin:
 
     # ==================== Dusk discussion ====================
 
+    def _dusk_discussion_speech_timeout_seconds(self) -> float:
+        return 3.0
+
+    def _generate_single_dusk_discussion_statement(
+        self,
+        speaker_name: str,
+        recent_dead: str,
+        clue_text: str,
+    ) -> str:
+        if not getattr(self, "_running", False):
+            return ""
+        agent = self.agents[speaker_name]
+        memory_text = str(agent.read_memory() or "")[-900:]
+        cognition_text = str(agent.read_cognition() or "")[-500:]
+        system_prompt = (
+            f"你是{display_name_for_person(speaker_name)}，现在是第{self.day}天黄昏讨论。"
+            f"最近死者：{recent_dead}。已知线索：{clue_text}。"
+            f"你对白天经历的记忆：{memory_text}。你的当前判断：{cognition_text}。"
+            "结合自己的经历、怀疑和阵营目标发表意见，可以辩护、怀疑、说真话或撒谎；"
+            "不要投票，不要要求马上拘留。80字以内。"
+        )
+        result = {"text": ""}
+
+        def _call_model() -> None:
+            try:
+                result["text"] = _chat_for_agent(
+                    speaker_name,
+                    system_prompt,
+                    "请发表黄昏讨论发言，不要投票。",
+                    max_retries=0,
+                )
+            except Exception:
+                result["text"] = ""
+
+        worker = threading.Thread(target=_call_model, daemon=True)
+        worker.start()
+        worker.join(timeout=self._dusk_discussion_speech_timeout_seconds())
+        return str(result.get("text") or "")
+
     def _generate_dusk_discussion_statements(self):
         """Collect short NPC discussion statements in clockwise plaza order."""
         statements = []
@@ -294,20 +387,10 @@ class EngineDuskMixin:
         for idx, speaker_name in enumerate(eligible_speakers):
             text = ""
             try:
-                agent = self.agents[speaker_name]
-                memory_text = str(agent.read_memory() or "")[-900:]
-                cognition_text = str(agent.read_cognition() or "")[-500:]
-                text = _chat_for_agent(
+                text = self._generate_single_dusk_discussion_statement(
                     speaker_name,
-                    (
-                        f"你是{display_name_for_person(speaker_name)}，现在是第{self.day}天黄昏讨论。"
-                        f"最近死者：{recent_dead}。已知线索：{clue_text}。"
-                        f"你对白天经历的记忆：{memory_text}。你的当前判断：{cognition_text}。"
-                        "结合自己的经历、怀疑和阵营目标发表意见，可以辩护、怀疑、说真话或撒谎；"
-                        "不要投票，不要要求马上拘留。80字以内。"
-                    ),
-                    "请发表黄昏讨论发言，不要投票。",
-                    max_retries=0,
+                    recent_dead,
+                    clue_text,
                 )
             except Exception:
                 text = ""

@@ -9446,9 +9446,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self.agent_paths.pop(target_name, None)
             self._clear_action_status_bubble(target_name)
 
-            detective.in_conversation_with = target_name
+            detective.in_conversation_with = None
 
-            detective._conversation_started_at = target._conversation_started_at
+            detective._conversation_started_at = 0
 
 
 
@@ -9458,7 +9458,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             fixed_detective_question = (
 
-                "我得把昨晚的时间线核清楚。你先说说，为什么你不可能是凶手？"
+                "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？"
 
                 "另外，现在你最不放心谁，为什么？"
 

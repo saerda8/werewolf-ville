@@ -142,6 +142,101 @@ def test_crow_dusk_statement_unlocks_npc_votes(monkeypatch):
     assert engine._vote_history
 
 
+def test_transition_to_dusk_clears_old_daytime_action_state(monkeypatch):
+    """Entering dusk clears stale daytime NPC action, bubble, path, and conversation state."""
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+
+    arthur.current_thought = "旧白天思考"
+    arthur.current_thought_time = 123.0
+    arthur.current_action = "白天旧行动"
+    arthur.current_action_type = "work"
+    arthur.current_emoji = "🔧"
+    arthur.runtime_state = "acting"
+    arthur._pending_action = {"action_type": "work", "action_status": "旧白泡"}
+    arthur._action_status_visible_at = 456.0
+    arthur.in_conversation_with = "Isabella Rodriguez"
+    arthur._conversation_started_at = 789.0
+    isabella.in_conversation_with = "Arthur Burton"
+    isabella._conversation_started_at = 789.0
+    engine.chat_bubbles["Arthur Burton"] = {
+        "text": "旧行动气泡",
+        "kind": "action_status",
+        "time": time.time(),
+    }
+    engine.agent_paths["Arthur Burton"] = [(11, 10), (12, 10)]
+
+    engine._transition_to_dusk()
+
+    assert arthur.current_thought == ""
+    assert arthur.current_thought_time == 0
+    assert arthur._pending_action is None
+    assert arthur._action_status_visible_at == 0
+    assert arthur.in_conversation_with is None
+    assert isabella.in_conversation_with is None
+    assert "Arthur Burton" not in engine.agent_paths
+    assert engine.chat_bubbles.get("Arthur Burton") is None
+    assert arthur.current_action == "前往广场参加黄昏讨论"
+    assert arthur.runtime_state in {"moving", "idle"}
+
+
+def test_dusk_plaza_targets_are_unique_and_spread_for_participants(monkeypatch):
+    """Dusk gathering assigns unique spread-out plaza targets by participant list."""
+    engine = _make_engine(monkeypatch)
+    engine._jailed = {"Arthur Burton", "Isabella Rodriguez", "Maria Lopez"}
+
+    engine._transition_to_dusk()
+
+    participants = engine._eligible_dusk_participants()
+    targets = {
+        name: (engine.agents[name].target_x, engine.agents[name].target_y)
+        for name in participants
+    }
+    assert len(set(targets.values())) == len(targets)
+    import math
+
+    center_x = engine_dusk.INITIAL_BODY_SITE["x"]
+    center_y = engine_dusk.INITIAL_BODY_SITE["y"]
+    angles = sorted(
+        (math.degrees(math.atan2(y - center_y, x - center_x)) + 360) % 360
+        for x, y in targets.values()
+    )
+    gaps = [
+        (angles[(idx + 1) % len(angles)] - angle) % 360
+        for idx, angle in enumerate(angles)
+    ]
+    assert max(gaps) <= 100, f"participants should be spread around the plaza: {targets}"
+
+
+def test_dusk_discussion_generation_reaches_crow_statement_without_llm_delay(monkeypatch):
+    """Discussion generation must advance to Crow's statement even if NPC speech calls are slow."""
+    engine = _make_engine(monkeypatch)
+    calls = []
+    real_sleep = time.sleep
+
+    def slow_chat(*args, **kwargs):
+        calls.append(args[0])
+        real_sleep(0.05)
+        return "我会先说清楚自己的观察，再听克罗怎么判断。"
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", slow_chat)
+    monkeypatch.setattr(engine, "_gathering_departure_gap_seconds", lambda: 0)
+    monkeypatch.setattr(engine, "_pause_for_dusk_bubble", lambda: None)
+    engine._transition_to_dusk()
+
+    worker = threading.Thread(target=engine._begin_dusk_discussion_after_gathering)
+    worker.start()
+    worker.join(timeout=0.2)
+
+    assert not worker.is_alive(), "dusk discussion should not block on every slow NPC call"
+    assert engine._dusk_stage == "crow_statement"
+    assert len(engine._dusk_discussion_statements) == len([
+        n for n, a in engine.agents.items()
+        if n != "Crow" and a.is_alive and n not in engine._jailed
+    ])
+
+
 def test_dusk_vote_all_living_non_jailed_npcs_vote(monkeypatch):
     """All living non-jailed non-Crow NPCs must cast a vote."""
     engine = _make_engine(monkeypatch)

@@ -2502,13 +2502,46 @@ def test_detective_chat_records_and_locks_before_slow_npc_reply(monkeypatch):
     t.join(timeout=2)
     assert result_holder["deep_dive_remaining"] == 2
     assert target.in_conversation_with == "Crow"
-    assert detective.in_conversation_with == "Arthur Burton"
+    assert detective.in_conversation_with is None
 
     monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
     engine._expire_chat_bubbles()
 
     assert target.in_conversation_with is None
     assert detective.in_conversation_with is None
+
+
+def test_detective_chat_waiting_reply_does_not_lock_crow_movement(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    target = engine.agents["Arthur Burton"]
+    target.can_chat_with = lambda name, deep: True
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_response(speaker, msg, day):
+        started.set()
+        release.wait(timeout=2)
+        return "我昨晚一直在店里。"
+
+    target.generate_response = slow_response
+    result_holder = {}
+    t = threading.Thread(
+        target=lambda: result_holder.update(engine.detective_chat("Arthur Burton", "", is_deep_dive=False)),
+        daemon=True,
+    )
+    t.start()
+    assert started.wait(timeout=1)
+
+    assert target.in_conversation_with == "Crow"
+    assert engine.agents["Crow"].in_conversation_with is None
+    assert engine.move_detective_to(10, 10) is True
+
+    release.set()
+    t.join(timeout=2)
+    assert "response" in result_holder
 
 
 def test_detective_chat_interrupts_movement_and_marks_target_busy_immediately(monkeypatch):

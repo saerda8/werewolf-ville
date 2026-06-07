@@ -6,6 +6,7 @@ Chinese display names, and sheriff area metadata.
 """
 
 from pathlib import Path
+import itertools
 
 from world_config import (
     ACTIVE_CHARACTERS,
@@ -167,10 +168,64 @@ def test_home_semantics_match_map_labels():
     """Resident homes should match the labeled map buildings."""
     assert ACTIVE_CHARACTERS["Arthur Burton"]["home"] == {"x": 89, "y": 73}
     assert ACTIVE_CHARACTERS["Crow"]["home"] == {"x": 23, "y": 65}
-    assert ACTIVE_CHARACTERS["Klaus Mueller"]["home"] == {"x": 58, "y": 73}
+    assert ACTIVE_CHARACTERS["Isabella Rodriguez"]["home"] == {"x": 77, "y": 14}
+    assert ACTIVE_CHARACTERS["Klaus Mueller"]["home"] == {"x": 126, "y": 46}
+    assert ACTIVE_CHARACTERS["Maria Lopez"]["home"] == {"x": 93, "y": 18}
     assert ACTIVE_CHARACTERS["Sam Moore"]["home"] == {"x": 54, "y": 16}
-    assert ACTIVE_CHARACTERS["Jane Moreno"]["home"] == {"x": 43, "y": 65}
-    assert ACTIVE_CHARACTERS["Mei Lin"]["home"] == {"x": 112, "y": 38}
+    assert ACTIVE_CHARACTERS["Jane Moreno"]["home"] == {"x": 72, "y": 74}
+    assert ACTIVE_CHARACTERS["Mei Lin"]["home"] == {"x": 107, "y": 62}
+
+
+def test_resident_night_homes_are_separate_from_day_work_locations():
+    """Night homes should not reuse the public landmark coordinates used for daytime work."""
+    for name, character in ACTIVE_CHARACTERS.items():
+        if character["role"] == "detective":
+            continue
+        home = character["home"]
+        work = PUBLIC_LANDMARKS[character["primary_location"]]
+        distance = abs(home["x"] - work["x"]) + abs(home["y"] - work["y"])
+        assert distance >= 6, f"{name} home is too close to daytime work: {distance}"
+
+
+def test_night_homes_are_dispersed_away_from_sheriff_area():
+    """Non-shopkeeper residents should be spread across housing and away from Crow's area."""
+    dispersed_residents = [
+        "Arthur Burton",
+        "Klaus Mueller",
+        "Maria Lopez",
+        "Jane Moreno",
+        "Mei Lin",
+    ]
+    crow_home = ACTIVE_CHARACTERS["Crow"]["home"]
+    for name in dispersed_residents:
+        home = ACTIVE_CHARACTERS[name]["home"]
+        work = PUBLIC_LANDMARKS[ACTIVE_CHARACTERS[name]["primary_location"]]
+        distance_to_work = abs(home["x"] - work["x"]) + abs(home["y"] - work["y"])
+        assert distance_to_work >= 12, f"{name} home is too close to daytime work: {distance_to_work}"
+
+        distance_to_crow = abs(home["x"] - crow_home["x"]) + abs(home["y"] - crow_home["y"])
+        assert distance_to_crow >= 30, f"{name} lives too close to Crow's area: {distance_to_crow}"
+
+    for left, right in itertools.combinations(dispersed_residents, 2):
+        left_home = ACTIVE_CHARACTERS[left]["home"]
+        right_home = ACTIVE_CHARACTERS[right]["home"]
+        distance = abs(left_home["x"] - right_home["x"]) + abs(left_home["y"] - right_home["y"])
+        assert distance >= 12, f"{left} and {right} live too close together: {distance}"
+
+
+def test_sam_and_isabella_live_behind_their_businesses():
+    """Shopkeepers with upstairs/back-room homes stay near, but not on, their business tiles."""
+    sam_home = ACTIVE_CHARACTERS["Sam Moore"]["home"]
+    sam_work = PUBLIC_LANDMARKS["The Rose and Crown Pub"]
+    assert sam_home["y"] < sam_work["y"]
+    assert abs(sam_home["x"] - sam_work["x"]) + abs(sam_home["y"] - sam_work["y"]) <= 10
+    assert sam_home != sam_work
+
+    isabella_home = ACTIVE_CHARACTERS["Isabella Rodriguez"]["home"]
+    isabella_work = PUBLIC_LANDMARKS["Hobbs Cafe"]
+    assert isabella_home["y"] < isabella_work["y"]
+    assert abs(isabella_home["x"] - isabella_work["x"]) + abs(isabella_home["y"] - isabella_work["y"]) <= 10
+    assert isabella_home != isabella_work
 
 
 def test_jane_persona_is_park_groundkeeper_not_pub_worker():

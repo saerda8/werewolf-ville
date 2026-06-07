@@ -496,3 +496,28 @@ ID:
 - 前端内联脚本语法检查通过。
 - 内置浏览器已加载版本 32，新模板包含 `log-chat` 与 `starting_action`。
 - 前端版本：32。
+### BUG-2026-06-08-001：白天交谈、黄昏讨论和夜晚住处回归问题
+
+严重度：Blocker
+频道：Bug 修改
+状态：Verified
+
+实际表现：
+- 警长主动找 NPC 交谈后，警长会被交谈状态锁住，无法自由移动。
+- 目标 NPC 在等待模型回复时仍可能显示旧行动/旧白泡，甚至继续前端移动。
+- 进入黄昏讨论时旧白天行动气泡残留，NPC 站位可能挤错，右侧残留旧讨论发言区域，讨论阶段可能卡住。
+- 夜晚住处仍不够分散，部分居民夜间位置与白天工作地点或警长区域过近。
+
+修复方案：
+- 真实交谈开始后只锁目标 NPC，不锁警长；目标 NPC 前端立即切为 `...` 等待回复并压掉旧行动展示。
+- 进入黄昏时后端清理旧行动、旧气泡、旧路径和旧交谈锁；黄昏站位按实际参与者唯一分散；NPC 讨论后台推进并对单人发言设短超时。
+- 黄昏右侧面板只保留克罗总结输入，不再显示 NPC 发言列表；黄昏/投票阶段延迟 2 秒把镜头平移到讨论区域。
+- 夜晚住处重新分散，保留 Sam 酒吧后方和 Isabella 咖啡馆后方两个特例。
+
+验证方式：
+- `python -m py_compile game_engine.py engine_dusk.py ui/app.py world_config.py`
+- `python -m pytest tests/test_ui_bubble_layout.py tests/test_world_config.py -q`
+- `python -m pytest tests/test_world_config.py tests/test_ui_llm_provider.py -q`
+- `python -m pytest tests/test_engine_foundation.py -k "detective_chat_waiting_reply_does_not_lock_crow_movement or records_and_locks_before_slow_npc_reply or normal_detective_chat_uses_fixed_human_question" -q`
+- `python -m pytest tests/test_vote_flow.py` 分三段运行，31/31 通过；单次全跑超过 30 秒，按线程规则拆分验证。
+- 内置浏览器确认 `http://127.0.0.1:5000/` 显示版本 39，实际 HTML 包含新版等待气泡与黄昏镜头函数。

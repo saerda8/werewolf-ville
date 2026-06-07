@@ -65,13 +65,13 @@ ACTIVE_CHARACTERS = {
         "role": "resident",
         "job": "college student",
         "primary_location": "Oak Hill College",
-        "home": {"x": 58, "y": 73},
+        "home": {"x": 126, "y": 46},
     },
     "Maria Lopez": {
         "role": "resident",
         "job": "market/pharmacy clerk",
         "primary_location": "The Willows Market and Pharmacy",
-        "home": {"x": 124, "y": 54},
+        "home": {"x": 93, "y": 18},
     },
     "Sam Moore": {
         "role": "resident",
@@ -83,13 +83,13 @@ ACTIVE_CHARACTERS = {
         "role": "resident",
         "job": "park gardener/groundskeeper",
         "primary_location": "Johnson Park",
-        "home": {"x": 43, "y": 65},
+        "home": {"x": 72, "y": 74},
     },
     "Mei Lin": {
         "role": "resident",
         "job": "college librarian/researcher",
         "primary_location": "Oak Hill College",
-        "home": {"x": 112, "y": 38},
+        "home": {"x": 107, "y": 62},
     },
 }
 
