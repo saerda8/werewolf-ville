@@ -1096,3 +1096,13 @@ def test_action_status_and_start_action_mutual_exclusion():
     # 3. kind=conversation_pending and target=Crow or 克罗 displays "正在聆听警长问询"
     assert 'if (kind === "conversation_pending" && target === "Crow") {' in html
     assert 'if (kind === "conversation_pending" && target === "克罗") {' in html
+
+
+def test_pending_chat_wait_merge_has_no_duplicate_server_bubble_const():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    marker = "function mergePendingChatTargetWaitBubble"
+    start = html.find(marker)
+    assert start != -1
+    body = html[start : html.find("function", start + len(marker))]
+    assert body.count("const serverBubble") == 1
+    assert "const existingBubble" in body

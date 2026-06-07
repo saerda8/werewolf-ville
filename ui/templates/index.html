@@ -2239,11 +2239,11 @@ function mergePendingCrowBubble(state) {
 function mergePendingChatTargetWaitBubble(state) {
   if (!pendingChatTarget || pendingChatPhase !== "waiting" || !state) return;
   const now = Date.now() / 1000;
-  const serverBubble = state.chat_bubbles ? state.chat_bubbles[pendingChatTarget] : null;
-  const isServerPending = serverBubble && typeof serverBubble === "object" && serverBubble.kind === "conversation_pending";
+  const existingBubble = state.chat_bubbles ? state.chat_bubbles[pendingChatTarget] : null;
+  const isServerPending = existingBubble && typeof existingBubble === "object" && existingBubble.kind === "conversation_pending";
   if (pendingChatWaitShownAt && now - pendingChatWaitShownAt > 3) {
     if (isServerPending) {
-      if (serverBubble.expires_at && now > serverBubble.expires_at) {
+      if (existingBubble.expires_at && now > existingBubble.expires_at) {
         delete state.chat_bubbles[pendingChatTarget];
       }
     } else {
