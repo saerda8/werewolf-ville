@@ -1205,7 +1205,7 @@ def test_npc_chat_bubbles_expose_each_other_as_targets(monkeypatch):
     arthur = engine.agents["Arthur Burton"]
     isabella = engine.agents["Isabella Rodriguez"]
     arthur.x, arthur.y = 10, 10
-    isabella.x, isabella.y = 11, 10
+    isabella.x, isabella.y = 12, 10
     monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你昨晚注意到什么了吗？")
     monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "我只听见街上有脚步声。")
     # Shorten the NPC chat delay for fast test
@@ -1223,7 +1223,7 @@ def test_npc_chat_empty_reply_keeps_visible_fallback_bubble(monkeypatch):
     arthur = engine.agents["Arthur Burton"]
     isabella = engine.agents["Isabella Rodriguez"]
     arthur.x, arthur.y = 10, 10
-    isabella.x, isabella.y = 11, 10
+    isabella.x, isabella.y = 12, 10
     monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "你昨晚注意到什么了吗？")
     monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "")
     # Shorten the NPC chat delay for fast test
@@ -2496,7 +2496,7 @@ def test_detective_chat_records_and_locks_before_slow_npc_reply(monkeypatch):
     assert target.in_conversation_with == "Crow"
     assert engine.chat_bubbles["Crow"]["target"] == "Arthur Burton"
     assert "你再想想细节" in engine.chat_bubbles["Crow"]["text"]
-    assert engine.move_detective_to(10, 10) is False
+    assert engine.move_detective_to(10, 10) is True
 
     release.set()
     t.join(timeout=2)
@@ -3763,7 +3763,7 @@ def test_greeting_text_with_wrong_model_type_uses_real_chat_pipeline(monkeypatch
     isabella = engine.agents["Isabella Rodriguez"]
     arthur.x = arthur.target_x = 10
     arthur.y = arthur.target_y = 10
-    isabella.x, isabella.y = 11, 10
+    isabella.x, isabella.y = 12, 10
     arthur.current_location = isabella.current_location = "Johnson Park"
     arthur._last_llm_decision_time = 0
     calls = []
@@ -4150,13 +4150,9 @@ def test_npc_avoids_approaching_crow_when_crow_in_conversation(monkeypatch):
 
     # Call _complete_agent_action: it should check if Crow is busy and abort
     engine._complete_agent_action("Arthur Burton", arthur)
-    # _pending_action should be cleared and runtime_state set to idle
-    assert getattr(arthur, '_pending_action', None) is None, (
-        "Arthur's pending action should be cleared"
-    )
-    assert arthur.runtime_state == "idle", (
-        "Arthur should be set to idle when Crow is busy"
-    )
+    assert getattr(arthur, '_pending_action', None) is not None
+    assert arthur._pending_action["action_type"] == "continue_current"
+    assert arthur.runtime_state == "starting_action"
 
 
 def test_npc_to_npc_avoids_target_already_in_conversation(monkeypatch):
@@ -4187,8 +4183,9 @@ def test_npc_to_npc_avoids_target_already_in_conversation(monkeypatch):
     engine._complete_agent_action("Arthur Burton", arthur)
     # Should not trigger chat since target is busy (completing action fails)
     assert engine.chat_bubbles.get("Arthur Burton") is None
-    assert arthur._pending_action is None, "Pending action should be cleared"
-    assert arthur.runtime_state == "idle", "Arthur should be set to idle"
+    assert arthur._pending_action is not None
+    assert arthur._pending_action["action_type"] == "continue_current"
+    assert arthur.runtime_state == "starting_action"
 
 
 # ============================================================
@@ -4370,8 +4367,9 @@ def test_third_party_does_not_insert_into_existing_conversation(monkeypatch):
 
     # Complete agent action — should detect Isabella is busy
     engine._complete_agent_action("Klaus Mueller", klaus)
-    assert klaus._pending_action is None, "Klaus's pending action should be cleared"
-    assert klaus.runtime_state == "idle", "Klaus should be set to idle"
+    assert klaus._pending_action is not None, "Klaus should keep a visible fallback action"
+    assert klaus._pending_action["action_type"] == "continue_current"
+    assert klaus.runtime_state == "starting_action"
     assert engine.chat_bubbles.get("Klaus Mueller") is None, (
         "Klaus should not have a chat bubble"
     )
@@ -4491,3 +4489,343 @@ def test_sam_departure_goes_to_pub_not_park(monkeypatch):
     fallback = game_engine.DEPARTURE_FALLBACKS["Sam Moore"]
     assert "公园" not in fallback, f"Sam fallback should not mention park: {fallback}"
     assert "酒吧" in fallback or "酒馆" in fallback, f"Sam fallback should mention pub: {fallback}"
+
+
+# ============================================================================
+# 2026-06-07 Action Start and Conversation Regression Closure
+# ============================================================================
+
+
+def test_pending_talk_with_busy_target_falls_back_to_continue_current_not_idle(monkeypatch):
+    """Regression: when an NPC arrives near a talk target that is already in
+    conversation, the NPC must enter starting_action with continue_current
+    (via _redirect_to_visible_continue_current), NOT go to idle and break
+    the planning→action chain.
+
+    The lifecycle rule says: planning must produce one pending action, and
+    that action must enter moving, acting, or conversation before the NPC is
+    eligible for another planning response.  Idle without pending_action
+    after a valid planning decision is a chain break.
+    """
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    klaus = engine.agents["Klaus Mueller"]
+
+    # Position: Arthur adjacent to Isabella, but Isabella is busy talking to Klaus
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    klaus.x, klaus.y = 12, 10
+
+    # Isabella is already in conversation with Klaus
+    isabella.in_conversation_with = "Klaus Mueller"
+    isabella._conversation_started_at = time.time()
+    klaus.in_conversation_with = "Isabella Rodriguez"
+    klaus._conversation_started_at = time.time()
+
+    # Arthur has a pending talk action targeting Isabella (result of planning)
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "找伊莎贝拉确认昨晚的情况",
+        "action_status": "找伊莎贝拉说话",
+        "thought": "她应该知道些什么",
+        "expected_result": "交换信息",
+    }
+    arthur.runtime_state = "idle"
+    engine.agent_paths.pop("Arthur Burton", None)
+
+    # Simulate the arrival path: update_agent_schedules will call
+    # _arrive_at_pending_action since Arthur has a pending talk action
+    # and is not in acting state.
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "planning_display_seconds", 0)
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 999)
+
+    engine._update_agent_schedules()
+
+    # The bug: currently _arrive_at_pending_action calls _trigger_npc_chat
+    # which silently returns when target is busy, then sets _pending_action=None
+    # and runtime_state="idle".  The correct behavior should be
+    # _redirect_to_visible_continue_current → runtime_state="starting_action".
+    #
+    # This test documents the regression: idle is the wrong outcome.
+    assert arthur.runtime_state != "idle", (
+        "Arthur must NOT go to idle when his talk target is busy — "
+        "this breaks the planning→action chain. "
+        "Expected: starting_action with continue_current fallback."
+    )
+    assert arthur._pending_action is not None, (
+        "Arthur must retain a pending_action after target is busy — "
+        "empty pending_action means the planning result was silently discarded."
+    )
+    if arthur.runtime_state == "starting_action":
+        assert arthur._pending_action["action_type"] == "continue_current", (
+            "Fallback action must be continue_current when talk target is busy."
+        )
+        assert "Arthur Burton" not in engine.chat_bubbles, (
+            "No chat bubble should appear for continue_current fallback before action-start ends."
+        )
+
+
+def test_action_start_timing_is_backend_driven_not_frontend_cache(monkeypatch):
+    """Backend state transitions (starting_action → moving → acting) must be
+    governed by _action_start_visible_until and _action_status_visible_at,
+    not by frontend rendering or cached bubble data.
+
+    Specifically:
+    - While _action_start_visible_until is in the future, the agent stays in
+      starting_action even if the frontend hasn't rendered the blue bubble yet.
+    - _action_status_visible_at gates the white action-duration bubble:
+      it must not appear before the blue bubble's expected visibility window ends.
+    - The runtime_state field reflects backend truth, not frontend visual state.
+    """
+    engine = _make_engine(monkeypatch)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 999)
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+    arthur.current_location = "Harvey Oak Supply Store"
+
+    # Simulate a completed planning: pending_action exists
+    now = time.time()
+    arthur._pending_action = {
+        "action_type": "inspect",
+        "target_location": "Harvey Oak Supply Store",
+        "target_object": "tool shelf",
+        "target_person": "",
+        "action": "检查工具架",
+        "action_status": "检查工具架",
+        "duration_minutes": 30,
+    }
+    arthur.runtime_state = "starting_action"
+    engine._mark_action_started(arthur, now)
+
+    # Verify backend timing fields are set correctly
+    assert arthur._action_started_at == now
+    assert arthur._action_start_visible_until > now, (
+        "_action_start_visible_until must be in the future"
+    )
+    assert arthur._action_status_visible_at == 0, (
+        "_action_status_visible_at must be 0 before action-start bubble ends"
+    )
+
+    # While blue action-start bubble window is active, agent stays in starting_action
+    engine._start_pending_action_execution_if_ready("Arthur Burton", arthur, now + 1)
+    assert arthur.runtime_state == "starting_action", (
+        "Agent must stay in starting_action while _action_start_visible_until > now"
+    )
+    assert "Arthur Burton" not in engine.chat_bubbles, (
+        "No white action_status bubble must appear before blue bubble window ends"
+    )
+
+    # After the blue bubble window expires, transition to acting
+    arthur._action_start_visible_until = 0
+    arthur._action_move_ready_at = 0
+    engine._start_pending_action_execution_if_ready("Arthur Burton", arthur, now + 10)
+    assert arthur.runtime_state == "acting", (
+        "Agent must enter acting after action-start blue bubble window ends"
+    )
+    # Verify white action-duration bubble appears
+    bubble = engine.chat_bubbles.get("Arthur Burton")
+    assert bubble is not None, "White action_status bubble must appear after blue window ends"
+    assert bubble.get("kind") == "action_status"
+    assert "..." in bubble.get("text", "")
+
+    # Verify status exposes backend timing fields (not frontend derived)
+    status = engine.get_status()
+    persona = status["personas"]["Arthur Burton"]
+    assert "action_started_at" in persona
+    assert "action_status_visible_at" in persona
+    assert isinstance(persona["action_started_at"], (int, float))
+
+
+def test_stale_planning_thread_does_not_override_detective_conversation_lock(monkeypatch):
+    """Regression: if a planning LLM thread was launched before detective_chat
+    started, the stale planning response must NOT override the conversation
+    lock (in_conversation_with) set by the detective chat.
+
+    The engine's detective_chat increments _detective_chat_job_id and sets
+    target.in_conversation_with = "Crow".  A planning thread that started
+    earlier has no knowledge of this, and its response handler directly
+    mutates agent._pending_action and agent.runtime_state without checking
+    whether the agent is now in conversation.
+
+    This test verifies that the agent's in_conversation_with lock survives
+    a stale planning response by inspecting the thread's finalization logic.
+    """
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+    arthur.current_location = "Johnson Park"
+    arthur._last_llm_decision_time = 0
+    arthur._next_llm_retry_time = 0
+
+    # Simulate the detective_chat having locked Arthur into conversation
+    # (as if detective_chat was called mid-planning)
+    arthur.in_conversation_with = "Crow"
+    arthur._conversation_started_at = time.time()
+    arthur.runtime_state = "acting"
+    arthur._pending_action = None
+    arthur.current_thought = ""
+    arthur.current_thought_time = 0
+
+    # Now simulate a stale planning thread response arriving
+    # The thread would set _pending_action, runtime_state, etc.
+    # We simulate by calling _update_agent_schedules which processes
+    # the agent through the planning lane.
+
+    # Since Arthur is in conversation, the planning lane must skip him
+    engine._update_agent_schedules()
+
+    # Arthur's conversation lock must survive
+    assert arthur.in_conversation_with == "Crow", (
+        "detective chat conversation lock must survive planning lane pass — "
+        "in_conversation_with must stay 'Crow', not be overwritten by any stale thread"
+    )
+    assert arthur._pending_action is None, (
+        "Stale planning thread must not inject a new pending_action "
+        "while target is in detective conversation"
+    )
+    assert arthur.runtime_state == "acting", (
+        "Agent runtime_state must stay 'acting' while in detective conversation, "
+        "not be changed to 'moving' or 'starting_action' by stale planning response"
+    )
+    assert arthur.current_thought == "", (
+        "Stale planning thought must not appear while agent is in detective conversation"
+    )
+
+
+def test_planned_action_to_busy_target_does_not_clear_pending_action_silently(monkeypatch):
+    """When _arrive_at_pending_action encounters a busy target for a talk
+    action, it must not silently clear _pending_action and set idle.
+    Instead, it must call _redirect_to_visible_continue_current or at
+    minimum preserve the action chain so the NPC doesn't become invisible.
+
+    This is a direct unit test on _arrive_at_pending_action with a busy target.
+    """
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    klaus = engine.agents["Klaus Mueller"]
+
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    klaus.x, klaus.y = 12, 10
+
+    # Isabella busy with Klaus
+    isabella.in_conversation_with = "Klaus Mueller"
+    isabella._conversation_started_at = time.time()
+    klaus.in_conversation_with = "Isabella Rodriguez"
+    klaus._conversation_started_at = time.time()
+
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "找伊莎贝拉交谈",
+        "action_status": "找伊莎贝拉交谈",
+        "thought": "想问她昨晚的情况",
+        "expected_result": "获得信息",
+    }
+    arthur.runtime_state = "idle"
+    engine.agent_paths.pop("Arthur Burton", None)
+
+    # Directly exercise _arrive_at_pending_action
+    engine._arrive_at_pending_action("Arthur Burton", arthur)
+
+    # The correct outcome: Arthur should be in starting_action with
+    # continue_current, NOT idle with no pending_action.
+    assert arthur.runtime_state != "idle", (
+        "BUG: _arrive_at_pending_action silently sets idle when target is busy. "
+        "Must instead enter starting_action with continue_current fallback "
+        "to preserve the planning→action lifecycle chain."
+    )
+    if arthur.runtime_state == "starting_action":
+        assert arthur._pending_action is not None
+        assert arthur._pending_action["action_type"] == "continue_current"
+
+
+def test_moving_state_does_not_leak_stale_frontend_bubble_cache(monkeypatch):
+    """The backend moving/starting/action_status lifecycle must not be
+    influenced by frontend bubble cache.  Specifically:
+
+    - When transitioning from starting_action to moving, the backend sets
+      runtime_state = "moving" purely based on _action_move_ready_at.
+    - If the frontend has leftover cached bubbles of the wrong kind, the
+      backend must not use them to skip or redirect state transitions.
+    - The backend's chat_bubbles dictionary reflects only backend-written
+      entries; frontend-local state is irrelevant.
+    """
+    engine = _make_engine(monkeypatch)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 999)
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 12, 10
+
+    now = time.time()
+    arthur._pending_action = {
+        "action_type": "work",
+        "target_location": "Harvey Oak Supply Store",
+        "target_object": "",
+        "target_person": "",
+        "action": "整理工具架",
+        "action_status": "整理工具架",
+        "duration_minutes": 30,
+    }
+    arthur.runtime_state = "starting_action"
+    engine.agent_paths["Arthur Burton"] = [(11, 10), (12, 10)]
+    engine._mark_action_started(arthur, now)
+
+    # Before the blue bubble ends, movement is blocked
+    # Simulate the frontend having cached a stale white bubble
+    engine.chat_bubbles["Arthur Burton"] = {
+        "text": "整理工具架...",
+        "target": "",
+        "time": now,
+        "kind": "action_status",
+    }
+
+    # _start_pending_action_execution_if_ready must not be fooled by
+    # the frontend bubble cache — it checks _action_start_visible_until
+    engine._start_pending_action_execution_if_ready("Arthur Burton", arthur, now + 1)
+    assert arthur.runtime_state == "starting_action", (
+        "Must stay in starting_action while blue bubble window is active, "
+        "regardless of what the frontend bubble cache contains"
+    )
+
+    # Clean up stale bubble (simulating frontend refresh)
+    engine.chat_bubbles.pop("Arthur Burton", None)
+
+    # After blue window ends, movement begins
+    arthur._action_start_visible_until = 0
+    arthur._action_move_ready_at = 0
+    engine._start_pending_action_execution_if_ready("Arthur Burton", arthur, now + 10)
+    assert arthur.runtime_state == "moving", (
+        "Must enter moving after blue bubble window ends, "
+        "based purely on backend timing, not frontend bubble state"
+    )
+    # White action_status bubble must NOT appear during moving phase
+    assert engine.chat_bubbles.get("Arthur Burton") is None, (
+        "White action_status bubble must not appear during moving phase"
+    )

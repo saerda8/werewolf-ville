@@ -1,6 +1,6 @@
 # NPC Behavior Lifecycle
 
-Updated: 2026-06-06
+Updated: 2026-06-07
 
 ## Macro Goal
 
@@ -44,8 +44,8 @@ Stable implementation rules:
 
 1. A completed planning response must create one pending action and that action must enter moving, acting, or conversation before the NPC is eligible for another planning response.
 2. If a planned target becomes unavailable, blocked, or unreachable after planning, the NPC falls back into a visible `continue_current` action instead of returning to idle and immediately thinking again.
-3. One-way NPC reports to Crow do not create a two-way conversation lock. After the report bubble is created, the source NPC has no `in_conversation_with`, no pending report action, and no thinking/acting residue.
-4. Player-initiated Crow interviews keep the Crow/NPC lock until the visible white bubbles expire. One-way NPC reports to Crow are the exception: they show a white report bubble but do not create a conversation lock.
+3. NPC reports to Crow are real conversation actions. When the report speech starts, the source NPC is locked in conversation with Crow until the visible white bubble expires.
+4. Player-initiated Crow interviews keep the target NPC locked until the visible white bubbles expire. After the player submits the prompt, Crow/player movement is not blocked by that pending model reply.
 5. NPC-to-NPC conversations keep both NPCs locked until the visible speech bubbles expire. The model-waiting phase counts as conversation time and shows `...`.
 
 ## 2026-06-06 Planning Lane and Action Occupancy Closure
@@ -81,7 +81,7 @@ Stable implementation rules:
 
 1. Model-backed speech jobs use one serial queue. A running model call is not interrupted; priority applies to jobs waiting in the queue.
 2. Detective/Crow speech jobs use higher priority than ordinary NPC-to-NPC speech jobs. Ordinary NPC-to-NPC speech jobs are FIFO within their priority level.
-3. NPC-to-NPC chat, detective interviews, and deep-dive replies all go through this queue. One-way NPC reports to Crow do not call the model and therefore do not enter the queue.
+3. NPC-to-NPC chat, detective interviews, deep-dive replies, and NPC-initiated reports to Crow are all conversation actions. Model-backed speech goes through the speech queue; direct report text still uses the same visible conversation lock and release rule.
 4. While waiting for model-backed NPC-to-NPC speech, the initiator white bubble shows `...` and both NPCs stay busy.
 5. Conversation locks release on visible bubble expiry, not merely when model text returns.
 
@@ -106,7 +106,7 @@ Stable implementation rules:
 4. `talk/socialize` never uses the ordinary timed `acting` window. On reaching conversation range, it enters `starting_action` first; after the blue action-start bubble ends, it starts the model-backed speech pipeline. While waiting, the white bubble shows `...`.
 5. If a conversation target moves before arrival, the initiator re-approaches the target. If approach becomes impossible, the action converts to a visible `continue_current` action instead of showing fake conversation activity.
 6. Explicit greeting, asking, chatting, speaking, telling, or reporting text with a target person is normalized to `talk` even if the model returns a non-conversation action type.
-7. Player log colors distinguish output from process: real NPC speech is green; thought, plan, action start, and action result are pink.
+7. Player log colors distinguish cognition/start from action output: thought, plan, and action start are purple; real NPC speech, white ongoing-action text, action duration, and action result are green.
 
 ## 2026-06-07 Observation, Memory, And Cognition Upgrade
 

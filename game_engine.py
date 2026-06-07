@@ -1013,7 +1013,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         invented_people_terms = ("客人", "顾客", "镇民", "对方")
         if empty_people and any(term in status for term in invented_people_terms):
             return self._default_grounded_action_status(name, agent, packet)
-        return status[:16]
+        return status.rstrip("。！？.!")[:10]
 
     def _enqueue_memory_task(self, agent_name: str, payload: dict) -> MemoryTask:
         task = MemoryTask(
@@ -5708,6 +5708,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         agent._action_start_visible_until = visible_until
         agent._action_move_ready_at = visible_until
 
+    def _bump_agent_action_generation(self, agent) -> int:
+        generation = int(getattr(agent, "_action_generation_id", 0) or 0) + 1
+        agent._action_generation_id = generation
+        return generation
+
+    def _agent_action_generation(self, agent) -> int:
+        return int(getattr(agent, "_action_generation_id", 0) or 0)
+
     def _mark_action_arrived(self, agent, now: float | None = None) -> float:
         arrived_at = float(now if now is not None else time.time())
         agent._arrived_at_time = arrived_at
@@ -5733,6 +5741,38 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 return tx, ty, path or [(tx, ty)]
         return None
 
+    def _random_walkable_around_target(
+        self,
+        name: str,
+        agent,
+        center_x: int,
+        center_y: int,
+        blocked_names: set[str] | None = None,
+    ) -> tuple[int, int, list[tuple[int, int]]] | None:
+        offsets = [
+            (-1, -1), (0, -1), (1, -1),
+            (-1, 0), (1, 0),
+            (-1, 1), (0, 1), (1, 1),
+        ]
+        self._rng.shuffle(offsets)
+        blocked = self._occupied_tiles(set(blocked_names or {name}))
+        for dx, dy in offsets:
+            tx, ty = center_x + dx, center_y + dy
+            if (
+                ty < 0
+                or ty >= len(self.collision_maze)
+                or tx < 0
+                or tx >= len(self.collision_maze[ty])
+                or self.collision_maze[ty][tx] != 0
+                or not self._is_tile_free_of_blocking_objects(tx, ty)
+                or (tx, ty) in blocked
+            ):
+                continue
+            path = self._find_navigation_path((agent.x, agent.y), (tx, ty), blocked=blocked)
+            if path is not None:
+                return tx, ty, path or [(tx, ty)]
+        return None
+
     def _default_continuing_action(self, name: str, location: str = "") -> str:
         defaults = {
             "Arthur Burton": "整理工具架",
@@ -5747,18 +5787,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
     def _action_status_text(self, agent, pending_action: dict | None = None) -> str:
         pending_action = pending_action or getattr(agent, "_pending_action", {}) or {}
-        text = str(pending_action.get("action_status") or pending_action.get("action") or getattr(agent, "current_action", "") or "").strip()
+        text = str(pending_action.get("action_status") or "").strip()
+        if not text:
+            text = str(pending_action.get("action") or getattr(agent, "current_action", "") or "").strip()
         text = re.sub(r"^.*?[说講讲][:：]\s*", "", text)
         text = re.sub(r"^(正在|正|在)\s*", "", text)
         text = re.sub(r"^(要回|回到|返回|前往|去|留在)\S+\s+", "", text)
-        for marker in ("，也", "，还", "，并", "，再", "，检查", "，留意", "。", "；", ";"):
+        for marker in ("，也", "，还", "，并", "，再", "，检查", "，等待", "，留意", "。", "；", ";"):
             if marker in text:
                 text = text.split(marker, 1)[0].strip()
         for prefix in ("前往", "去", "留在"):
             if text.startswith(prefix) and "，" in text:
                 text = text.split("，", 1)[1].strip()
         text = text or self._default_continuing_action(getattr(agent, "name", ""))
-        return localize_visible_character_names(text[:16].rstrip("。！？") + "...")
+        return localize_visible_character_names(text[:10].rstrip("。！？.!") + "...")
 
     def _show_action_status_bubble(self, name: str, agent, pending_action: dict | None = None) -> None:
         pending_action = pending_action or getattr(agent, "_pending_action", None)
@@ -5787,6 +5829,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             "expected_result": "完成当前事务",
         }
         agent.runtime_state = "starting_action"
+        self._bump_agent_action_generation(agent)
         self._mark_action_started(agent, time.time())
         self._clear_action_status_bubble(name)
 
@@ -5813,6 +5856,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             target = self.agents.get(target_person)
             threshold = 1 if target_person == self.detective_name else 2
             if target and target.is_alive and self._agent_distance(agent, target) <= threshold:
+                if target_person != self.detective_name and getattr(target, "in_conversation_with", None) is not None:
+                    self._redirect_to_visible_continue_current(name, agent, "对方正在交谈，先避开等待")
+                    return
                 if target_person == self.detective_name:
                     if not self._trigger_npc_to_detective_chat(name, pending_action.get("action", "")):
                         self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
@@ -5820,7 +5866,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 else:
                     self._trigger_npc_chat(name, target_person)
                 agent._pending_action = None
-                agent.runtime_state = "idle"
                 return
             if target and target.is_alive:
                 path_res = self._path_adjacent_to((agent.x, agent.y), (target.x, target.y), blocked=self._occupied_tiles({name, target_person}), preferred_distance=threshold)
@@ -5844,6 +5889,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         now = float(now if now is not None else time.time())
         if now < float(getattr(agent, "_action_start_visible_until", 0) or 0):
             return True
+        pending_type = str(pending_action.get("action_type", "")).lower()
+        target_person = pending_action.get("target_person", "")
+        if pending_type in {"talk", "socialize"} and target_person:
+            target = self.agents.get(target_person)
+            threshold = 1 if target_person == self.detective_name else 2
+            if target and target.is_alive and self._agent_distance(agent, target) <= threshold:
+                self.agent_paths.pop(name, None)
+                agent.target_x, agent.target_y = agent.x, agent.y
+                self._arrive_at_pending_action(name, agent)
+                return True
         if self.agent_paths.get(name) or agent.x != agent.target_x or agent.y != agent.target_y:
             agent.runtime_state = "moving"
             return True
@@ -5890,7 +5945,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if name == self.detective_name:
                 continue
             if self._detective_chat_target_reserved(name):
-                agent.runtime_state = "idle"
+                agent.runtime_state = "acting"
+                self._skip_planning_turn_if_current(name)
                 continue
             pending_action_for_crow = getattr(agent, "_pending_action", None) or {}
             if (
@@ -5959,6 +6015,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     detective = self.agents.get(self.detective_name)
 
+                    if getattr(self, "_detective_chat_active_target", None) == name:
+                        self._skip_planning_turn_if_current(name)
+                        continue
                     if detective and getattr(detective, "in_conversation_with", None) != name:
 
                         agent.in_conversation_with = None
@@ -6248,6 +6307,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             agent._thinking_started_at = now
 
             agent.runtime_state = "thinking"
+            decision_generation = self._bump_agent_action_generation(agent)
 
 
 
@@ -6255,9 +6315,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             # 异步调用 LLM
 
-            def _llm_thread(n, a, nearby, si, packet):
+            def _llm_thread(n, a, nearby, si, packet, generation):
 
                 try:
+                    def _decision_cancelled() -> bool:
+                        return (
+                            self._agent_action_generation(a) != generation
+                            or getattr(a, "in_conversation_with", None) is not None
+                            or getattr(self, "_detective_chat_active_target", None) == n
+                            or not getattr(a, "is_alive", True)
+                            or n in getattr(self, "_jailed", set())
+                        )
 
                     model_name = getattr(a, 'model', '?')
 
@@ -6266,6 +6334,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     self._log(f"[LLM请求] {actor_label} -> {model_name}：发送行动决策请求", "think")
 
                     decision = a.decide_next_action(self.game_hour, str(self.day), list(self.dead_list), nearby, si)
+                    if _decision_cancelled():
+                        return
 
 
 
@@ -6300,6 +6370,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     # 检查 ok 字段
 
                     def _fallback_continue_current(reason: str):
+                        if _decision_cancelled():
+                            return
                         loc_now = a.current_location or self._reverse_lookup_location(a.x, a.y) or "某处"
                         a.current_location = loc_now
                         a.current_action = self._default_continuing_action(n, loc_now)
@@ -6311,6 +6383,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                             "target_object": "",
                             "target_person": "",
                             "action": a.current_action,
+                            "action_status": a.current_action,
 
                             "thought": reason,
 
@@ -6372,6 +6445,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     ):
                         target_person = self.detective_name
                         if action_type not in {"talk", "socialize"}:
+                            action_type = "talk"
+                    if target_person and str(action_type or "").lower() not in {"talk", "socialize"}:
+                        chat_text = " ".join([action, action_status, thought, expected_result])
+                        if any(word in chat_text for word in ("打招呼", "询问", "聊天", "交谈", "说话", "说明", "汇报")):
                             action_type = "talk"
 
 
@@ -6774,6 +6851,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     # 短暂停顿后再看到 NPC 实际开始行动。
 
                     time.sleep(plan_delay)
+                    if _decision_cancelled():
+                        return
 
 
 
@@ -6794,6 +6873,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         tx, ty = a.x, a.y
 
                         path_found = False
+                        skip_repeat_target_offset = False
 
                         target_agent = self.agents.get(target_person) if target_person else None
 
@@ -6807,7 +6887,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                                 self._log(f"[LLM状态] {actor_label}: 暂不接近 {display_name_for_person(target_person)}，{busy_reason}", "think")
 
-                                a.runtime_state = "idle"
+                                _fallback_continue_current(f"目标暂时不适合交谈：{busy_reason}")
 
                                 a._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
 
@@ -6818,14 +6898,23 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                                 tx, ty = target_agent.x, target_agent.y
 
                             prefer_h = target_person != self.detective_name
+                            preferred_distance = 2 if prefer_h else 1
 
-                            path_res = self._path_adjacent_to(
-                                (a.x, a.y),
-                                (tx, ty),
-                                blocked=self._occupied_tiles({n, target_person}),
-                                prefer_horizontal=prefer_h,
-                                preferred_distance=2 if prefer_h else 1,
-                            )
+                            if action_type in {"talk", "socialize"} and self._agent_distance(a, target_agent) <= preferred_distance:
+                                a.target_x, a.target_y = a.x, a.y
+                                self.agent_paths.pop(n, None)
+                                path_found = True
+                                skip_repeat_target_offset = True
+                                path_res = None
+                            elif not path_found:
+                                path_res = self._path_adjacent_to(
+                                    (a.x, a.y),
+                                    (tx, ty),
+                                    blocked=self._occupied_tiles({n, target_person}),
+                                    prefer_horizontal=prefer_h,
+                                    preferred_distance=preferred_distance,
+                                )
+
                             if path_res:
 
                                 best_tx, best_ty, path = path_res
@@ -6836,7 +6925,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                                 path_found = True
 
-                            else:
+                            elif not path_found:
 
                                 self._log(f"[路径失败] {display_name_for_person(n)}: 无法接近 {display_name_for_person(target_person)}，稍后重试", "think")
 
@@ -6914,7 +7003,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                                     self._log(f"[路径失败] {actor_label}: 无法站到 {localize_visible_character_names(target_obj)} 附近，稍后重试", "think")
 
-                                    a.runtime_state = "idle"
+                                    _fallback_continue_current(f"暂时无法接近{localize_visible_character_names(target_obj)}")
 
                                     a._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
 
@@ -6988,7 +7077,24 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-                        a.runtime_state = "moving"
+                        center_coord = (int(tx), int(ty))
+                        if not skip_repeat_target_offset and getattr(a, "_last_plan_target_coord", None) == center_coord:
+                            repeat_target = self._random_walkable_around_target(
+                                n,
+                                a,
+                                center_coord[0],
+                                center_coord[1],
+                                blocked_names={n, target_person} if target_person else {n},
+                            )
+                            if repeat_target:
+                                nx, ny, path = repeat_target
+                                a.target_x, a.target_y = nx, ny
+                                self.agent_paths[n] = path
+                                path_found = True
+                        a._last_plan_target_coord = center_coord
+
+                        a.runtime_state = "starting_action"
+                        self._mark_action_started(a, time.time())
 
                         a.current_thought = ""
 
@@ -7016,16 +7122,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                         a.current_thought_time = 0
 
-                        if target_obj and (a.target_x, a.target_y) == (a.x, a.y):
+                        current_center = (int(a.x), int(a.y))
+                        if getattr(a, "_last_plan_target_coord", None) == current_center or (a.target_x, a.target_y) == (a.x, a.y):
                             neighbor = self._neighbor_action_path(n, a)
                             if neighbor:
                                 nx, ny, path = neighbor
                                 a.target_x, a.target_y = nx, ny
                                 self.agent_paths[n] = path
-                            else:
-                                a.target_x = a.x + 1
-                                a.target_y = a.y
-                                self.agent_paths[n] = [(a.target_x, a.target_y)]
+                        a._last_plan_target_coord = current_center
 
                         self._mark_action_started(a, time.time())
 
@@ -7080,7 +7184,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-            t = threading.Thread(target=_llm_thread, args=(name, agent, nearby_info, scene_info, obs_packet), daemon=True)
+            t = threading.Thread(target=_llm_thread, args=(name, agent, nearby_info, scene_info, obs_packet, decision_generation), daemon=True)
 
             t.start()
 
@@ -8284,9 +8388,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                                 f"但对方正在与{display_name_for_person(detective.in_conversation_with)}聊天，稍候再试",
                                 "action",
                             )
-                            agent.runtime_state = "idle"
+                            self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
                             agent._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
-                            agent._pending_action = None
                             return
 
                         agent.current_thought = ""
@@ -8296,13 +8399,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         if not self._trigger_npc_to_detective_chat(name, action, expected_result):
                             self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
                             return
+                        agent._pending_action = None
                         agent.add_memory(
                             f"第{self.day}天 {self.game_hour:.1f}点，我接近警长并主动说明：{action}",
                             self.day
                         )
-                        agent.runtime_state = "idle"
-                        agent._pending_action = None
-                        agent._action_completed = True
                         return
 
                     # NPC-to-NPC chat: verify target is not already busy
@@ -8312,9 +8413,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                             f"但对方正在与{display_name_for_person(target_agent.in_conversation_with)}聊天，稍候再试",
                             "action",
                         )
-                        agent.runtime_state = "idle"
+                        self._redirect_to_visible_continue_current(name, agent, "对方正在交谈，先避开等待")
                         agent._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
-                        agent._pending_action = None
                         return
                     self._log(
                         f"[行动结果] {display_name_for_person(name)}: 接近{display_name_for_person(target_person)}，开始交谈。",
@@ -8327,9 +8427,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         f"第{self.day}天 {self.game_hour:.1f}点，我接近{display_name_for_person(target_person)}并准备交谈：{action}",
                         self.day
                     )
-                    self._trigger_npc_chat(name, target_person)
                     agent._pending_action = None
-                    agent._action_completed = True
+                    self._trigger_npc_chat(name, target_person)
                     return
                 else:
                     # Out of range: ordinary completion should not claim a chat happened.
@@ -8463,8 +8562,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         with self._lock:
 
-            if getattr(self, "_detective_chat_active_target", None):
-                return False
             if getattr(self, "_body_burial", None):
                 return False
             self._detective_chat_pending_target = None
@@ -8554,8 +8651,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         with self._lock:
 
-            if getattr(self, "_detective_chat_active_target", None):
-                return False
             if getattr(self, "_body_burial", None):
                 self._detective_chat_pending_target = None
                 return False
@@ -9047,9 +9142,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if agent and getattr(agent, "in_conversation_with", None) == target_name:
             agent.in_conversation_with = None
             agent._conversation_started_at = 0
+            agent.runtime_state = "idle"
+            agent._action_completed = True
         if target and getattr(target, "in_conversation_with", None) == name:
             target.in_conversation_with = None
             target._conversation_started_at = 0
+            target.runtime_state = "idle"
+            target._action_completed = True
         if hasattr(self, "_npc_chat_key"):
             self._npc_chat_tokens.pop(self._npc_chat_key(name, target_name), None)
         if name == getattr(self, "detective_name", None):
@@ -9163,11 +9262,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         now = time.time()
 
-        source.in_conversation_with = None
-        detective.in_conversation_with = None
+        source.in_conversation_with = self.detective_name
+        detective.in_conversation_with = source_name
 
-        source._conversation_started_at = 0
-        detective._conversation_started_at = 0
+        source._conversation_started_at = now
+        detective._conversation_started_at = now
         source.current_thought = ""
         source.current_thought_time = 0
         source.current_action = ""
@@ -9178,7 +9277,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         source._last_raw_response = ""
         source._is_thinking = False
         source._is_reflecting = False
-        source.runtime_state = "idle"
+        self._bump_agent_action_generation(source)
+        source.runtime_state = "acting"
         source._report_busy_until = now + float(CONFIG.get("game", {}).get("bubble_lifetime_seconds", 12))
         if not hasattr(source, "action_history") or not isinstance(source.action_history, list):
             source.action_history = []
@@ -9334,11 +9434,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             target.target_x = target.x
             target.target_y = target.y
             target.runtime_state = "acting"
+            self._bump_agent_action_generation(target)
             target.current_thought = ""
             target.current_thought_time = 0
             target.current_action = ""
             target.current_action_type = ""
             target._pending_action = None
+            target._last_decision = {}
+            target._last_raw_response = ""
+            target._is_thinking = False
             self.agent_paths.pop(target_name, None)
             self._clear_action_status_bubble(target_name)
 
@@ -9983,6 +10087,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             agent1.in_conversation_with = name2
 
             agent2.in_conversation_with = name1
+            self._bump_agent_action_generation(agent1)
+            self._bump_agent_action_generation(agent2)
+            agent1.runtime_state = "acting"
+            agent2.runtime_state = "acting"
 
             started_at = time.time()
 
@@ -10548,7 +10656,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             for k in expired:
 
-                del self.chat_bubbles[k]
+                bubble = self.chat_bubbles.pop(k, None)
+                if bubble is not None:
+                    self._release_conversation_for_expired_bubble(k, bubble)
 
 
 

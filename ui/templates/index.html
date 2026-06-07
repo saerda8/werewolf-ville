@@ -953,6 +953,13 @@ function isActionStartBubbleHtml(html) {
   return String(html || "").includes("开始行动：");
 }
 
+function isWaitBubble(bubble) {
+  if (!bubble) return false;
+  const text = typeof bubble === "string" ? bubble : (bubble.text || "");
+  const kind = typeof bubble === "object" ? (bubble.kind || "") : "";
+  return text === "..." || kind === "conversation_pending";
+}
+
 function blueBubbleActionKey(persona, html) {
   const p = persona || {};
   const actionStartedAt = Number(p.action_started_at || 0);
@@ -2011,18 +2018,23 @@ function setPendingChat(name, phase) {
   pendingChatPhase = phase || "waiting";
 
   if (name) {
-    const speechEl = speechBubbles[name];
-    if (speechEl) {
-      speechEl.style.display = "none";
-      speechEl.innerHTML = "";
+    const bubble = gameState && gameState.chat_bubbles ? gameState.chat_bubbles[name] : null;
+    const isWait = isWaitBubble(bubble);
+
+    if (!isWait) {
+      const speechEl = speechBubbles[name];
+      if (speechEl) {
+        speechEl.style.display = "none";
+        speechEl.innerHTML = "";
+      }
+      if (gameState && gameState.chat_bubbles) {
+        delete gameState.chat_bubbles[name];
+      }
     }
     const tBubbleEl = thoughtBubbles[name];
     if (tBubbleEl) {
       tBubbleEl.style.display = "none";
       tBubbleEl.innerHTML = "";
-    }
-    if (gameState && gameState.chat_bubbles) {
-      delete gameState.chat_bubbles[name];
     }
     delete thoughtBubbleCache[name];
 
@@ -2059,8 +2071,14 @@ function clearPendingChat() {
   if (gameState) updateAgentList(gameState, !!gameState.director_view);
 }
 
-function isChatSuppressedFor(name) {
-  return !!pendingChatTarget && name === pendingChatTarget;
+function isChatSuppressedFor(name, bubblePayload) {
+  if (!!pendingChatTarget && name === pendingChatTarget) {
+    if (isWaitBubble(bubblePayload)) {
+      return false;
+    }
+    return !!pendingChatTarget && name === pendingChatTarget;
+  }
+  return false;
 }
 
 function showLocalCrowQuestion(name, msg) {
@@ -3756,7 +3774,7 @@ function create() {
     }
 
     // 左键点击：移动侦探
-    if (!isNight && gameState && !pendingChatTarget) {
+    if (!isNight && gameState) {
       focusedAgent = null;
       const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const tileX = Math.floor(worldPoint.x / TILE_W);
@@ -3947,7 +3965,6 @@ function resolveBubbleLayout() {
   const gameContainer = document.getElementById("game-container");
   const viewportWidth = gameContainer ? gameContainer.clientWidth : (window.innerWidth - 320);
   const viewportHeight = gameContainer ? gameContainer.clientHeight : (window.innerHeight - 160);
-
   for (const name of PERSONA_NAMES) {
     const sprite = sprites[name];
     const p = gameState.personas[name];
@@ -3958,7 +3975,7 @@ function resolveBubbleLayout() {
 
     const chatBubbles = gameState.chat_bubbles || {};
     const bubblePayload = chatBubbles[name] || null;
-    const suppressChatDisplay = isChatSuppressedFor(name);
+    const suppressChatDisplay = isChatSuppressedFor(name, bubblePayload);
     const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);
 
     // 计算是否处于移动或行动中，从而豁免气泡抑制条件
@@ -3994,7 +4011,7 @@ function resolveBubbleLayout() {
     // action_status 不受普通说话 TTL 提前隐藏，只由 runtime/action gate 控制，且不受 layout 互斥提前隐藏
     const actionStatusVisibleAt = Number(p.action_status_visible_at || 0);
     const actionStatusReady = actionStatusVisibleAt <= 0 || (Date.now() / 1000) >= actionStatusVisibleAt;
-    const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStartBubbleEnded(name, p) && actionStatusReady;
+    const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStatusReady;
     if (isActionStatusBubble && !canShowActionDuration) {
       displaySpeechText = "";
     }
@@ -4003,7 +4020,7 @@ function resolveBubbleLayout() {
         displaySpeechText = speechText;
       }
     }
-    if (!displaySpeechText && p.alive && canShowActionDuration) {
+    if (!displaySpeechText && p.alive && canShowActionDuration && !isActionStatusBubble) {
       const act = String(p.action || "").trim();
       if (act) {
         displaySpeechText = formatActionDurationLine(p, gameState);

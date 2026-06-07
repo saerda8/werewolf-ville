@@ -157,10 +157,10 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert "mergePendingCrowBubble(state);" in html
     assert 'pendingPhase === "moving" ? "前往中..." : "等待回复..."' in html
     assert "const chatBtnDisabled = (!chatAvailable || isNight || isDusk || isPendingChat || isGathering) ? \"disabled\" : \"\";" in html
-    assert "if (!isNight && gameState && !pendingChatTarget)" in html
-    assert "const suppressChatDisplay = isChatSuppressedFor(name);" in html
+    assert "if (!isNight && gameState)" in html
+    assert "const suppressChatDisplay = isChatSuppressedFor(name, bubblePayload);" in html
     assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);' in html
-    assert 'return !!pendingChatTarget && name === pendingChatTarget;' in html
+    assert "isWaitBubble(bubblePayload)" in html
     assert 'showLocalCrowQuestion(name, msg);' in html
     assert 'let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
     assert "if (resp && resp.pending_response)" in html
@@ -788,7 +788,7 @@ def test_white_bubble_displays_ongoing_action_during_movement_or_action():
     assert 'const isActionStatusBubble = bubblePayload && typeof bubblePayload === "object" && String(bubblePayload.kind || "") === "action_status";' in html
     assert "const actionStatusVisibleAt = Number(p.action_status_visible_at || 0);" in html
     assert "const actionStatusReady = actionStatusVisibleAt <= 0 || (Date.now() / 1000) >= actionStatusVisibleAt;" in html
-    assert 'const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStartBubbleEnded(name, p) && actionStatusReady;' in html
+    assert 'const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStatusReady;' in html
     assert "const departureDelayUntil = Number(p.departure_delay_until || 0);" in html
     assert "const departureWaiting = departureDelayUntil > (Date.now() / 1000);" in html
     assert 'const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);' in html
@@ -796,7 +796,7 @@ def test_white_bubble_displays_ongoing_action_during_movement_or_action():
     assert "if (!thoughtText) {" in html
     assert "if (isActionStatusBubble && !canShowActionDuration) {" in html
     assert "if (!thoughtText || (isRealSpeechBubble && activeForAction)) {" not in html
-    assert 'if (!displaySpeechText && p.alive && canShowActionDuration) {' in html
+    assert 'if (!displaySpeechText && p.alive && canShowActionDuration && !isActionStatusBubble) {' in html
     assert 'displaySpeechText = formatActionDurationLine(p, gameState);' in html
     assert 'function formatActionDurationLine(p, state)' in html
     assert 'if (!displaySpeechText && p.alive && (runtime === "moving" || runtime === "acting")) {' not in html
@@ -812,7 +812,7 @@ def test_strict_sequential_bubbles_and_action_status_clean():
     assert "cached.actionKey !== actionKey" in html
 
     # 2. 检查 actionStartBubbleEnded
-    assert "actionStartBubbleEnded(name, p)" in html
+    assert "actionStartBubbleEnded(name, p)" not in html
     assert 'runtime === "starting_action"' in html
 
     # 3. 检查 runtime acting, path_len = 0, 非 visually moving 时的白泡显示

@@ -1297,7 +1297,7 @@ class Agent:
 - 不要写"准备去某地"却把 action_type 写成 continue_current；continue_current 只表示继续当前已经在做的事务
 - 不要在多个地点之间无目的地"散步"或"闲逛"
 - action 必须具体，如"向店员打听昨晚是否有人深夜出现"，而非含糊的"活动"
-- action_status 是行动持续白色气泡文本，只写正在做的短任务，8-16字左右；不要写地点、原因、计划、"也/还/今天会..."，例如"准备早餐"、"整理药房货架"、"检查库存"
+- action_status 是行动中白色气泡文本，只写正在做的短任务，最多10个中文字，不设最少字数；不要写地点、原因、计划、"也/还/今天会..."，例如"整理中"、"检查库存"、"清点药品"
 - action_status 必须只描述当前真实存在的人、物或事务；不得虚构客人、顾客、镇民、对方或不存在的目标；如果附近没有可互动的人，只能写物件或职业相关短任务
 - thought 必须 60-100 个中文字符，只基于当前可见信息、相关记忆、短期目标或最近行动结果；不得使用 NPC 不知道的隐藏事实，不写全局推理长文
 - plan 必须 20-40 个中文字符，格式严格为“去/留在/接近 <目标>，<做一件事>”；只描述下一步，不写后续连环计划，解释放在 thought
@@ -1307,7 +1307,7 @@ class Agent:
 - 只有你判断必须马上告诉警长的明确线索或紧急重要事项，才选择 talk/socialize 并把 target_person 填为"克罗"或"Crow"；普通怀疑不要主动找警长。
 
 用JSON格式回复：
-{{"action_type": "move_to|continue_current|observe|inspect|work|rest|investigate|socialize|talk|hide", "target_location": "地点名", "target_object": "目标物件（可选）", "target_person": "目标人物中文名（可选，只能填8人名单里的中文名）", "action": "开始行动蓝泡短句：前往目标并做什么（36字以内）", "plan": "去/留在/接近 <目标>，<做一件事>（20-40字）", "action_status": "行动持续白泡短句：只写正在做什么（8-16字，不含也/还/计划尾巴）", "thought": "行动动机（60-100字，只基于当前可见/记忆）", "expected_result": "期望达到什么效果（30字以内）", "duration_minutes": 5-30之间的游戏内分钟数, "has_visible_clue_hint": true/false, "has_detective_hint": true/false}}
+{{"action_type": "move_to|continue_current|observe|inspect|work|rest|investigate|socialize|talk|hide", "target_location": "地点名", "target_object": "目标物件（可选）", "target_person": "目标人物中文名（可选，只能填8人名单里的中文名）", "action": "开始行动蓝泡短句：前往目标并做什么（36字以内）", "plan": "去/留在/接近 <目标>，<做一件事>（20-40字）", "action_status": "行动中白泡短句：只写正在做什么（最多10字，不含也/还/计划尾巴）", "thought": "行动动机（60-100字，只基于当前可见/记忆）", "expected_result": "期望达到什么效果（30字以内）", "duration_minutes": 5-30之间的游戏内分钟数, "has_visible_clue_hint": true/false, "has_detective_hint": true/false}}
 
 action_type 含义：
 - move_to: 需要移动到另一个地点

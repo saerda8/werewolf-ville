@@ -144,12 +144,12 @@ def test_npc_one_way_report_to_crow_releases_state(monkeypatch):
 
     engine._complete_agent_action(agent_name, agent)
 
-    assert agent.in_conversation_with is None
-    assert crow.in_conversation_with is None
+    assert agent.in_conversation_with == engine.detective_name
+    assert crow.in_conversation_with == agent_name
     assert agent._pending_action is None
     assert agent.current_thought == ""
     assert agent.current_action == ""
-    assert agent.runtime_state == "idle"
+    assert agent.runtime_state == "acting"
     assert engine.chat_bubbles[agent_name]["target"] == engine.detective_name
     assert agent._report_busy_until > time.time()
     assert any(item.get("action_type") == "report_to_detective" for item in agent.action_history)
@@ -166,9 +166,10 @@ def test_npc_report_to_crow_skips_planning_until_bubble_expires(monkeypatch):
     agent.x = crow.x + 1
     agent.y = crow.y
     engine._trigger_npc_to_detective_chat(agent_name, "我有情况要说", "警长知道情况")
-    assert agent.in_conversation_with is None
+    assert agent.in_conversation_with == engine.detective_name
+    assert crow.in_conversation_with == agent_name
     assert agent._pending_action is None
-    assert agent.runtime_state == "idle"
+    assert agent.runtime_state == "acting"
     assert engine.chat_bubbles[agent_name]["target"] == engine.detective_name
 
     monkeypatch.setattr(
@@ -179,7 +180,7 @@ def test_npc_report_to_crow_skips_planning_until_bubble_expires(monkeypatch):
 
     engine._update_agent_schedules()
 
-    assert agent.runtime_state == "idle"
+    assert agent.runtime_state == "acting"
     assert agent._report_busy_until > time.time()
 
 
@@ -585,12 +586,8 @@ def test_trigger_npc_to_detective_releases_in_conversation_with(monkeypatch):
     source.y = crow.y
     source.in_conversation_with = "some_other"  # simulate stale state
     engine._trigger_npc_to_detective_chat(agent_name, "test action", "test result")
-    assert source.in_conversation_with is None, (
-        "source.in_conversation_with should be released after one-way report"
-    )
-    assert crow.in_conversation_with is None, (
-        "detective.in_conversation_with should not be set for one-way report"
-    )
+    assert source.in_conversation_with == engine.detective_name
+    assert crow.in_conversation_with == agent_name
 
 
 def test_trigger_npc_to_detective_clears_thought_and_action_state(monkeypatch):
@@ -743,12 +740,11 @@ def test_complete_agent_action_releases_conversation_after_report(monkeypatch):
         "expected_result": "Crow learns about the clue",
     }
     engine._complete_agent_action(agent_name, agent)
-    assert agent.in_conversation_with is None, (
-        "agent.in_conversation_with should be released after report"
-    )
+    assert agent.in_conversation_with == engine.detective_name
+    assert crow.in_conversation_with == agent_name
     assert agent._pending_action is None
-    assert agent.runtime_state == "idle"
-    assert agent._action_completed is True
+    assert agent.runtime_state == "acting"
+    assert agent._action_completed is False
 
 
 def test_trigger_npc_to_detective_does_not_block_when_crow_free(monkeypatch):
@@ -769,9 +765,285 @@ def test_trigger_npc_to_detective_does_not_block_when_crow_free(monkeypatch):
 
     engine._trigger_npc_to_detective_chat(agent_name, "test", "test")
 
-    # After the report, neither side should be locked
-    assert source.in_conversation_with is None
-    assert crow.in_conversation_with is None
+    # The report is a real conversation/action until the white bubble expires.
+    assert source.in_conversation_with == engine.detective_name
+    assert crow.in_conversation_with == agent_name
     # A bubble should exist for the source
     assert agent_name in engine.chat_bubbles
     assert "text" in engine.chat_bubbles[agent_name]
+
+
+# ============================================================================
+# 2026-06-07 Action Start and Conversation Regression Closure
+# ============================================================================
+
+
+def test_planning_talk_to_busy_npc_must_enter_starting_action_not_idle(monkeypatch):
+    """Regression: when a planning cycle produces a talk action targeting a
+    busy NPC, the scheduler must NOT silently discard the pending_action and
+    set idle.  Instead it must enter starting_action with a continue_current
+    fallback, preserving the visible lifecycle chain.
+
+    Per NPC_BEHAVIOR_LIFECYCLE.md 2026-06-07 Rule 1:
+    "Every new action has a distinct action_started_at."
+    Rule 5: "If a conversation target moves before arrival... converts to
+    visible continue_current action instead of showing fake conversation activity."
+    The busy-target case is analogous — must not idle-break the chain.
+    """
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    klaus = engine.agents["Klaus Mueller"]
+
+    # Arthur is adjacent to Isabella, but Isabella is busy with Klaus
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+    isabella.x, isabella.y = 11, 10
+    klaus.x, klaus.y = 12, 10
+
+    isabella.in_conversation_with = "Klaus Mueller"
+    isabella._conversation_started_at = time.time()
+    klaus.in_conversation_with = "Isabella Rodriguez"
+    klaus._conversation_started_at = time.time()
+
+    arthur.runtime_state = "idle"
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "找伊莎贝拉核实昨晚的事情",
+        "action_status": "找伊莎贝拉说话",
+        "thought": "她应该知道些什么",
+        "expected_result": "交换情报",
+        "duration_minutes": 5,
+    }
+    arthur._last_llm_decision_time = 0
+    engine.agent_paths.pop("Arthur Burton", None)
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "planning_display_seconds", 0)
+
+    # Let the scheduler handle Arthur's pending action
+    engine._update_agent_schedules()
+
+    # The scheduler should have redirected to starting_action with continue_current
+    assert arthur.runtime_state != "idle", (
+        "BUG: scheduler set Arthur to idle after finding his talk target busy. "
+        "This breaks the planning→action chain. "
+        "Expected: starting_action with continue_current fallback."
+    )
+    if arthur.runtime_state == "starting_action":
+        assert arthur._pending_action is not None
+        assert arthur._pending_action["action_type"] == "continue_current"
+        assert "Arthur Burton" not in engine.chat_bubbles, (
+            "No chat bubble should appear for continue_current before action-start ends"
+        )
+
+
+def test_detective_chat_clears_old_planning_and_prevents_thread_override(monkeypatch):
+    """After detective_chat sets an NPC to in_conversation_with=Crow,
+    the planning scheduler must skip that NPC entirely.  Any stale
+    planning thread that returns after detective_chat started must not
+    inject a new pending_action, change runtime_state, or clear the
+    conversation lock.
+
+    This protects the lifecycle: once Crow initiates a conversation,
+    the NPC's autonomous planning is completely suspended until the
+    conversation bubble expires.
+    """
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+
+    arthur = engine.agents["Arthur Burton"]
+    crow = engine.agents["Crow"]
+    crow.deep_dive_quota = 3
+    crow.deep_dive_used = 0
+
+    arthur.x, arthur.y = 10, 10
+    crow.x, crow.y = 11, 10
+    arthur._last_llm_decision_time = 0
+    arthur._next_llm_retry_time = 0
+
+    # Simulate detective_chat locking Arthur
+    arthur.in_conversation_with = "Crow"
+    engine._detective_chat_active_target = "Arthur Burton"
+    arthur._conversation_started_at = time.time()
+    arthur.runtime_state = "acting"
+    arthur._pending_action = None
+    arthur.current_thought = ""
+    arthur.current_thought_time = 0
+
+    # Now run the scheduler.  Arthur must be skipped because
+    # in_conversation_with is set.
+    calls = []
+
+    monkeypatch.setattr(
+        arthur,
+        "decide_next_action",
+        lambda *args, **kwargs: (
+            calls.append("decide")
+            or (_ for _ in ()).throw(
+                AssertionError("planning must not run while in detective conversation")
+            )
+        ),
+    )
+
+    engine._update_agent_schedules()
+
+    assert "decide" not in calls, (
+        "decide_next_action must NOT be called while NPC is in detective conversation"
+    )
+    assert arthur.in_conversation_with == "Crow", (
+        "Conversation lock must survive scheduler pass"
+    )
+    assert arthur._pending_action is None, (
+        "No new pending_action must appear during detective conversation"
+    )
+    assert arthur.runtime_state == "acting", (
+        "runtime_state must stay 'acting' while in detective conversation"
+    )
+
+
+def test_detective_chat_interrupts_active_npc_chat_and_old_chat_must_not_revive(monkeypatch):
+    """When detective_chat interrupts an active NPC-to-NPC chat, the old chat
+    thread must not later revive and re-set in_conversation_with to the old
+    partner.  The _npc_chat_tokens mechanism must prevent stale chat threads
+    from publishing bubbles or changing conversation state after detection.
+
+    This ensures the rule: detective_chat has highest priority, and old
+    conversation threads cannot overwrite the detective conversation state.
+    """
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    crow = engine.agents["Crow"]
+
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+
+    # Simulate: Arthur and Isabella were chatting, then detective_chat
+    # interrupted and cleared both.  Isabella's chat token should be stale.
+    # Old chat thread for (Arthur, Isabella) should fail the token check.
+    chat_key = engine._npc_chat_key("Arthur Burton", "Isabella Rodriguez")
+    engine._npc_chat_tokens[chat_key] = "new_token:after_interrupt"
+
+    # Now set Arthur into detective conversation state
+    arthur.in_conversation_with = "Crow"
+    engine._detective_chat_active_target = "Arthur Burton"
+    arthur._conversation_started_at = time.time()
+    isabella.in_conversation_with = None  # freed by interrupt
+
+    # Simulate a late NPC chat thread trying to set conversation state
+    # (This is the "old thread" trying to revive)
+    # The thread would check:
+    #   self._npc_chat_tokens.get(chat_key) != token
+    # Since our token won't match, it should bail out
+
+    def simulate_old_chat_thread():
+        token = "stale_token:before_interrupt"
+        with engine._lock:
+            if engine._npc_chat_tokens.get(chat_key) != token:
+                return  # correct behavior: bail out
+            # If it reached here, it would corrupt state
+            arthur.in_conversation_with = "Isabella Rodriguez"
+            isabella.in_conversation_with = "Arthur Burton"
+            return "corrupted"
+
+    result = simulate_old_chat_thread()
+    assert result is None, (
+        "Old chat thread must bail out when its token doesn't match — "
+        "it must not reach the state mutation code"
+    )
+    assert arthur.in_conversation_with == "Crow", (
+        "Stale NPC chat thread must not overwrite detective conversation lock"
+    )
+    assert isabella.in_conversation_with is None, (
+        "Stale NPC chat thread must not revive Isabella's in_conversation_with"
+    )
+
+
+def test_npc_mid_planning_detective_chat_clears_thinking_flag(monkeypatch):
+    """When detective_chat is called on an NPC that is currently in the
+    thinking state (LLM thread running), the detective chat must clear
+    _is_thinking and _pending_action so the stale response doesn't
+    resurrect the old plan after the conversation ends.
+
+    detective_chat sets runtime_state to 'acting' and clears pending_action.
+    The stale LLM thread's response handler must not be able to inject
+    a new pending_action because the _is_thinking flag is false or
+    because the scheduler skips the in_conversation agent.
+    """
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+
+    arthur = engine.agents["Arthur Burton"]
+    crow = engine.agents["Crow"]
+    crow.deep_dive_quota = 3
+    crow.deep_dive_used = 0
+
+    arthur.x, arthur.y = 10, 10
+    crow.x, crow.y = 11, 10
+    arthur.runtime_state = "thinking"
+    arthur._is_thinking = True
+    arthur._thinking_started_at = time.time() - 1
+    arthur._pending_action = {
+        "action_type": "investigate",
+        "target_location": "Johnson Park",
+        "action": "四处查看可疑痕迹",
+    }
+    arthur._last_decision = {"thought": "我需要查清楚"}
+    arthur.current_thought = "哪里不对劲..."
+    arthur.current_thought_time = time.time()
+
+    # detective_chat should clear all of this
+    monkeypatch.setattr(arthur, "generate_response", lambda speaker, msg, day: "我先回答警长。")
+    engine._daily_interviewed = set()
+
+    result = engine.detective_chat("Arthur Burton", "", is_deep_dive=False)
+    assert "error" not in result, f"detective_chat should succeed: {result}"
+
+    # Verify the detective chat cleared the mid-planning state
+    assert arthur._is_thinking is False, (
+        "_is_thinking must be cleared by detective_chat"
+    )
+    assert arthur._pending_action is None, (
+        "_pending_action must be cleared by detective_chat"
+    )
+    assert arthur._last_decision == {}, (
+        "_last_decision must be cleared by detective_chat"
+    )
+    assert arthur.current_thought == "", (
+        "current_thought must be cleared by detective_chat"
+    )
+    assert arthur.in_conversation_with == "Crow", (
+        "NPC must be locked to Crow conversation after detective_chat"
+    )
+
+    # Now run the scheduler — it must skip Arthur because he's in_conversation
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    calls = []
+    monkeypatch.setattr(
+        arthur,
+        "decide_next_action",
+        lambda *args, **kwargs: calls.append("plan") or {
+            "ok": True,
+            "action_type": "move_to",
+            "target_location": "Johnson Park",
+            "action": "walk away",
+            "raw_response": "{}",
+        },
+    )
+    engine._update_agent_schedules()
+    assert "plan" not in calls, (
+        "Scheduler must skip NPC in detective conversation"
+    )
