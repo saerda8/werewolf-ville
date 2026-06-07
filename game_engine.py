@@ -3300,25 +3300,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if not obj_coord:
 
-                target = self._nearest_walkable_tile(
-
+                if not self._assign_reachable_target_near(
+                    agent,
+                    name,
                     (
-
                         home_cfg["x"] + self._rng.randint(-2, 2),
-
                         home_cfg["y"] + self._rng.randint(-2, 2),
-
                     ),
-
-                    blocked=self._occupied_tiles({name}),
-
-                )
-
-                if not target:
+                    radius=12,
+                ):
 
                     return False
-
-                agent.target_x, agent.target_y = target
 
             if (agent.target_x, agent.target_y) == (agent.x, agent.y):
                 neighbor = self._neighbor_action_path(name, agent)
@@ -3360,25 +3352,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if not obj_coord:
 
-                target = self._nearest_walkable_tile(
-
+                if not self._assign_reachable_target_near(
+                    agent,
+                    name,
                     (
-
                         lm["x"] + self._rng.randint(-2, 2),
-
                         lm["y"] + self._rng.randint(-2, 2),
-
                     ),
-
-                    blocked=self._occupied_tiles({name}),
-
-                )
-
-                if not target:
+                    radius=12,
+                ):
 
                     return False
-
-                agent.target_x, agent.target_y = target
 
             if (agent.target_x, agent.target_y) == (agent.x, agent.y):
                 neighbor = self._neighbor_action_path(name, agent)
@@ -7493,6 +7477,18 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         obj_name = self.go_dict[val].lower()
 
+        # "behind" zones are walkable spaces behind counters where agents stand to work
+        if "behind" in obj_name:
+            return True
+
+        # In Hobbs Cafe kitchen counter corridor, cooking area & sink are on the only path to the apartment
+        if hasattr(self, "sector_maze") and self.sector_maze is not None:
+            if y == 19 and 75 <= x <= 77:
+                sid = self.sector_maze[y][x]
+                if hasattr(self, "sector_dict") and self.sector_dict is not None:
+                    if sid in self.sector_dict and "Hobbs Cafe" in self.sector_dict[sid]:
+                        return True
+
         for kw in self._BLOCKING_OBJECT_KEYWORDS:
 
             if kw in obj_name:
@@ -7721,6 +7717,32 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         return None
 
+
+
+
+
+    def _assign_reachable_target_near(self, agent, name: str, target, radius=12, blocked=None) -> bool:
+
+        blocked_tiles = set(blocked or self._occupied_tiles({name}))
+
+        path_result = self._nearest_reachable_path(
+            (agent.x, agent.y),
+            target,
+            radius=radius,
+            blocked=blocked_tiles,
+        )
+
+        if not path_result:
+
+            return False
+
+        nx, ny, path = path_result
+
+        agent.target_x, agent.target_y = nx, ny
+
+        self.agent_paths[name] = path
+
+        return True
 
 
 

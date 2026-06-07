@@ -521,3 +521,28 @@ ID:
 - `python -m pytest tests/test_engine_foundation.py -k "detective_chat_waiting_reply_does_not_lock_crow_movement or records_and_locks_before_slow_npc_reply or normal_detective_chat_uses_fixed_human_question" -q`
 - `python -m pytest tests/test_vote_flow.py` 分三段运行，31/31 通过；单次全跑超过 30 秒，按线程规则拆分验证。
 - 内置浏览器确认 `http://127.0.0.1:5000/` 显示版本 39，实际 HTML 包含新版等待气泡与黄昏镜头函数。
+### BUG-2026-06-08-002：室内目标点可走但不可达，导致 NPC 在咖啡馆/住处附近卡住
+
+严重度：Major
+状态：Closed
+验收状态：Verified
+
+表现：
+- 伊莎贝拉回咖啡馆后方住处时，目标点附近看似可走，但路径会被物件层和室内窄通道阻断。
+- 同类风险不只咖啡馆，部分角色夜晚住处或公共地点附近也可能被分配到不可达邻点。
+
+根因：
+- 目标分配只查“附近可走格”，没有在设定目标时验证“从 NPC 当前坐标真的可达”。
+- 咖啡馆柜台后方/厨房通道在物件层被标成工作区或厨房物件，实际是角色需要通行的窄通道。
+
+修复：
+- NPC 回家和前往公共地点时，目标分配改为直接选择可达目标并保存路径。
+- 柜台后方工作区允许站立；霍布斯咖啡馆厨房通道的必要格不再作为不可见阻挡。
+- 新增真实地图回归测试，覆盖所有角色的住处和默认白天地点可达性。
+
+验证：
+- `pytest -q tests/test_engine_foundation.py::test_real_map_agent_destinations_are_reachable_when_assigned tests/test_engine_foundation.py::TestTileFreeOfBlockingObjects`
+- `pytest -q tests/test_engine_foundation.py::test_real_map_agent_destinations_are_reachable_when_assigned tests/test_engine_foundation.py::TestPathAdjacentToAvoidsObjectTiles tests/test_engine_foundation.py::TestTileFreeOfBlockingObjects tests/test_world_config.py`
+- `python -m py_compile game_engine.py engine_navigation.py world_config.py ui/app.py`
+- 全角色真实地图审计：8 个角色住处和默认白天地点均能生成真实可达路径。
+- 本地服务已重启，`http://127.0.0.1:5000/?cachebust=40` 返回 200，页面显示版本 40。

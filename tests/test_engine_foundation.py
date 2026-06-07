@@ -32,6 +32,20 @@ def _make_engine(monkeypatch, seed=7, llm_override=None):
     return game_engine.WerewolfGameEngine(random_seed=seed, llm_override=llm_override)
 
 
+def _make_engine_with_real_map(monkeypatch, seed=7):
+    monkeypatch.setattr(
+        game_engine.WerewolfGameEngine,
+        "_build_shared_spatial_memory",
+        lambda self: {},
+    )
+    monkeypatch.setattr(game_engine.Agent, "init_files", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "init_scratch_from_soul", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "load_shared_spatial_memory", lambda self, data: None)
+    monkeypatch.setattr(game_engine.Agent, "add_memory", lambda self, event, day: None)
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "")
+    return game_engine.WerewolfGameEngine(random_seed=seed)
+
+
 def _complete_daily_interviews(engine):
     engine._daily_interviewed = {
         name for name, agent in engine.agents.items()
@@ -1114,6 +1128,34 @@ def test_collision_loader_clears_invisible_public_plaza_seam(monkeypatch):
     maze = game_engine.load_collision_maze()
 
     assert maze[46][51] == 0
+
+
+def test_real_map_agent_destinations_are_reachable_when_assigned(monkeypatch):
+    """Real map targets must not leave NPCs pointed at invisible blocked interiors."""
+    engine = _make_engine_with_real_map(monkeypatch)
+
+    for name, agent in engine.agents.items():
+        assert engine._set_agent_target(agent, name, "home") is True
+        path = engine.agent_paths.get(name)
+        if path is None:
+            path = engine._find_navigation_path(
+                (agent.x, agent.y),
+                (agent.target_x, agent.target_y),
+                blocked=engine._occupied_tiles({name}),
+            )
+        assert path is not None, f"{name} home target {(agent.target_x, agent.target_y)} is unreachable"
+
+    for name, agent in engine.agents.items():
+        destination = game_engine.DEFAULT_DESTINATIONS.get(name, "home")
+        assert engine._set_agent_target(agent, name, destination) is True
+        path = engine.agent_paths.get(name)
+        if path is None:
+            path = engine._find_navigation_path(
+                (agent.x, agent.y),
+                (agent.target_x, agent.target_y),
+                blocked=engine._occupied_tiles({name}),
+            )
+        assert path is not None, f"{name} {destination} target {(agent.target_x, agent.target_y)} is unreachable"
 
 
 def test_manual_detective_move_avoids_occupied_tile(monkeypatch):
@@ -2923,7 +2965,7 @@ def _make_engine_with_go_maze(monkeypatch, seed=7):
     engine.go_maze = [[0] * w for _ in range(h)]
     engine.go_dict = {
         1: "pharmacy store shelf",
-        2: "behind the cafe counter",
+        2: "cafe counter",
         3: "bookshelf",
         4: "common room table",
         5: "empty floor space",  # non-blocking
@@ -2981,6 +3023,35 @@ class TestTileFreeOfBlockingObjects:
         engine = _make_engine(monkeypatch)
         # No go_maze set → all tiles considered free
         assert engine._is_tile_free_of_blocking_objects(50, 50) is True
+
+    def test_returns_true_for_behind_counter(self, monkeypatch):
+        engine = _make_engine_with_go_maze(monkeypatch)
+        # Mock a "behind the cafe counter" object
+        engine.go_dict[6] = "behind the cafe counter"
+        engine.go_maze[55][90] = 6
+        assert engine._is_tile_free_of_blocking_objects(90, 55) is True
+
+    def test_returns_true_for_hobbs_cafe_kitchen_path(self, monkeypatch):
+        engine = _make_engine(monkeypatch)
+        engine.go_maze = [[0] * 140 for _ in range(100)]
+        engine.go_dict = {
+            1: "cooking area",
+            2: "kitchen sink",
+        }
+        engine.sector_maze = [[0] * 140 for _ in range(100)]
+        engine.sector_dict = {
+            1: "Hobbs Cafe",
+        }
+
+        # Place cooking area and sink on y=19 in Hobbs Cafe sector
+        engine.sector_maze[19][75] = 1
+        engine.go_maze[19][75] = 1 # cooking area
+
+        engine.sector_maze[19][77] = 1
+        engine.go_maze[19][77] = 2 # kitchen sink
+
+        assert engine._is_tile_free_of_blocking_objects(75, 19) is True
+        assert engine._is_tile_free_of_blocking_objects(77, 19) is True
 
 
 class TestPathAdjacentToAvoidsObjectTiles:
