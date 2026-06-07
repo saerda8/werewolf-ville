@@ -678,7 +678,10 @@ class EngineDuskMixin:
         }
 
     def confirm_vote_result(self) -> dict:
-        """Confirm the immutable vote result, then escort the winner and enter night."""
+        """Confirm the immutable vote result, then escort the winner and enter night.
+
+        On Day4, instead of entering night, resolves the game using Day4 win rules.
+        """
         with self._lock:
             if self.phase != type(self.phase).DUSK_DISCUSSION:
                 return {"error": "Not in dusk discussion phase"}
@@ -711,6 +714,13 @@ class EngineDuskMixin:
             crow.current_emoji = "🔒"
             self.agent_paths.pop(self.detective_name, None)
             self._dusk_stage = "escorting"
+            # Day4: resolve game outcome after vote
+            if self.day == 4:
+                outcome = self._resolve_day4_after_vote()
+                if outcome == "pending_silver_shot":
+                    self._log("⚠️ 请克罗做出最终决定：使用银子弹射击存疑目标。", "system")
+                self._broadcast_state()
+                return {"success": True, "jailed": winner, "day4_outcome": outcome}
             if winner == self.detective_name:
                 self._transition_to_night()
             self._broadcast_state()

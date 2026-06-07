@@ -14,6 +14,7 @@ class BodyRecord:
     burying: bool = False
     burial_target_x: int = 0
     burial_target_y: int = 0
+    is_werewolf_corpse: bool = False
 
     def to_status(self) -> dict:
         """

@@ -72,6 +72,13 @@ body.phase-locked #game-container { pointer-events: none; }
   width: 72px; height: 72px; display: flex; align-items: center; justify-content: center;
   border-radius: 50%; font-size: 36px; background: rgba(29, 48, 82, 0.9);
   border: 1px solid rgba(164, 190, 232, 0.45);
+  transition: all 0.3s ease;
+}
+.night-actor.active {
+  background: rgba(142, 160, 196, 0.4);
+  border-color: #6dff8f;
+  box-shadow: 0 0 15px rgba(109, 255, 143, 0.6);
+  transform: scale(1.15);
 }
 .night-progress-track { height: 10px; overflow: hidden; border-radius: 999px; background: #17233a; }
 #night-progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, #6f87b8, #d6e5ff); transition: width 0.5s ease; }
@@ -640,12 +647,33 @@ body.phase-locked #game-container { pointer-events: none; }
       <p><strong>黄昏：</strong>完成当天必要任务后，可以召集讨论和投票。居民可以投人，也可以弃票。最高票者自动被拘留，平票时由警长的一票裁决。</p>
       <p><strong>夜晚：</strong>狼人每天晚上必须尝试杀死一名非克罗目标。克罗只能最后被杀。</p>
       <p><strong>银器：</strong>第二天起，警长需要收集五金店工具和银饰，之后才能制作一颗银质子弹。子弹只能用一次。</p>
-      <p><strong>隐藏刀具：</strong>一名好人居民藏有银质小刀，可在夜里尝试击杀一名目标；如果误杀好人，也会造成死亡。</p>
+      <p><strong>隐藏刀具：</strong>一名好人居民藏有银质小刀，可在夜里尝试击杀一名目标；如果误杀好人，也会造成死亡。夜晚的银刀阶段每晚固定展示，不会泄露银刀是否有效或已被使用。</p>
       <p><strong>灯泡与问号含义：</strong></p>
       <ul>
         <li>💡 <strong>灯泡：</strong>NPC 自己判断有值得警长深挖的信息，包括线索/怀疑/可疑事实/推理，不一定主动汇报。</li>
         <li>❓ <strong>问号：</strong>NPC 最近一次可见发言或行动回复未生效的调试标记；后台思考模型错误只进日志，不默认挂在列表上。</li>
       </ul>
+    </div>
+  </div>
+</div>
+
+<div id="silver-shot-modal" class="modal">
+  <div class="modal-content" style="width: 450px; height: auto; max-height: 80vh;">
+    <div class="modal-header">
+      <span>🎯 银子弹射杀选择</span>
+      <span class="modal-close" onclick="closeSilverShotModal()">&times;</span>
+    </div>
+    <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+      <div style="color: #ffdd57; font-size: 14px; font-weight: bold;">
+        已制作银子弹！请选择一名活着的村民进行射杀：
+      </div>
+      <div id="silver-shot-targets" style="display: flex; flex-direction: column; gap: 10px; max-height: 40vh; overflow-y: auto; padding-right: 5px;">
+        <!-- Targets dynamically added here -->
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+        <button onclick="closeSilverShotModal()" style="padding: 8px 16px; background: #555; color: #fff; border: none; border-radius: 4px; cursor: pointer;">取消</button>
+        <button id="submit-silver-shot-btn" onclick="submitSilverShot()" style="padding: 8px 16px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;" disabled>确认射杀</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1429,24 +1457,37 @@ function renderNightTransition(state) {
   if (!overlay) return;
   const sequence = state.night_transition || state.night_sequence || state.night_progress || {};
   const stage = String(sequence.stage || sequence.current_stage || sequence.status || "").toLowerCase();
-  const finished = sequence.complete === true || sequence.completed === true || ["complete", "completed", "finished", "night_end"].includes(stage);
-  const active = state.phase === "night" || !!sequence.active || !!stage;
+  const finished = sequence.complete === true || sequence.completed === true || ["complete", "completed", "finished", "night_end"].includes(stage) || state.phase !== "night";
+  const active = state.phase === "night" || !!sequence.active || (!!stage && !finished);
   overlay.classList.toggle("show", active);
   if (!active) return;
 
-  const rawProgress = Number(sequence.progress);
-  const elapsed = Number(sequence.elapsed || state.night_elapsed || 0);
-  const duration = Math.max(1, Number(sequence.duration || state.night_duration || 1));
-  const progress = Number.isFinite(rawProgress) ? (rawProgress <= 1 ? rawProgress * 100 : rawProgress) : (elapsed / duration) * 100;
+  const silverKnifeDuration = 60;
+  const elapsed = Number(sequence.stage_elapsed ?? sequence.elapsed ?? state.night_elapsed ?? 0);
+  const duration = Math.max(1, Number(sequence.stage_duration ?? sequence.duration ?? state.night_duration ?? 120));
+
+  let displayStageLabel = "夜间行动进行中";
+  let progress = Math.min(100, (elapsed / duration) * 100);
+  const wolfActors = document.querySelectorAll("#night-transition-overlay .night-actor.wolf");
+  const knifeActor = document.querySelector("#night-transition-overlay .night-actor.knife");
+
+  if (finished) {
+    progress = 100;
+    displayStageLabel = "夜晚结束";
+    wolfActors.forEach(el => el.classList.remove("active"));
+    if (knifeActor) knifeActor.classList.remove("active");
+  } else if (stage === "silver_knife" || stage === "knife") {
+    displayStageLabel = "银质小刀阶段";
+    wolfActors.forEach(el => el.classList.remove("active"));
+    if (knifeActor) knifeActor.classList.add("active");
+  } else {
+    displayStageLabel = "狼人行动中";
+    wolfActors.forEach(el => el.classList.add("active"));
+    if (knifeActor) knifeActor.classList.remove("active");
+  }
+
   document.getElementById("night-progress-fill").style.width = `${Math.max(0, Math.min(100, progress))}%`;
-  const stageLabels = {
-    wolves: "狼人行动中",
-    werewolf: "狼人行动中",
-    werewolves: "狼人行动中",
-    silver_knife: "银刀行动中",
-    knife: "银刀行动中"
-  };
-  document.getElementById("night-stage-text").textContent = finished ? "夜晚结束" : (stageLabels[stage] || "夜间行动进行中");
+  document.getElementById("night-stage-text").textContent = finished ? "夜晚结束" : displayStageLabel;
   document.getElementById("night-progress-text").textContent = finished ? "所有匿名行动已结束" : "只显示匿名进度，不展示目标与行动者";
   document.getElementById("night-finish-confirm").style.display = finished ? "block" : "none";
 }
@@ -1768,6 +1809,15 @@ function updateUI(state) {
   updateTasks(state);
   maybeTriggerPendingAutoChat(state);
   renderDuskVotingFlow(state);
+
+  if (state.phase === "pending_silver_shot" || state.pending_silver_shot || state.silver_shot_available) {
+    const modal = document.getElementById("silver-shot-modal");
+    if (modal && modal.style.display !== "flex") {
+      showSilverShotModal(state);
+    }
+  } else {
+    closeSilverShotModal();
+  }
 
   if (state.game_over) showGameOver(state);
   updateLog(state);
@@ -3289,6 +3339,84 @@ function closeRulesModal() {
 }
 
 window.showRulesModal = showRulesModal;
+
+let selectedSilverShotTarget = null;
+
+function showSilverShotModal(state) {
+  const modal = document.getElementById("silver-shot-modal");
+  if (!modal) return;
+  const targetsDiv = document.getElementById("silver-shot-targets");
+  if (!targetsDiv) return;
+  targetsDiv.innerHTML = "";
+  selectedSilverShotTarget = null;
+  const submitBtn = document.getElementById("submit-silver-shot-btn");
+  if (submitBtn) submitBtn.disabled = true;
+
+  const activeNames = state.personas ? Object.keys(state.personas) : PERSONA_NAMES;
+  activeNames.forEach(name => {
+    if (name === "Crow" || name === "克罗") return;
+    const p = state.personas[name];
+    if (p && p.alive === false) return; // skip dead
+    if (p && p.jailed === true) return; // skip jailed
+
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.justifyContent = "space-between";
+    row.style.padding = "10px 14px";
+    row.style.background = "#1a1a3e";
+    row.style.border = "1px solid #0f3460";
+    row.style.borderRadius = "6px";
+    row.style.cursor = "pointer";
+    row.style.transition = "all 0.2s ease";
+
+    const displayName = getDisplayName(name, state);
+    row.innerHTML = `
+      <span style="font-weight: bold; color: #fff;">${displayName}</span>
+      <span style="color: #888; font-size: 12px;">生命状态：存活</span>
+    `;
+
+    row.onclick = () => {
+      const children = targetsDiv.children;
+      for (let i = 0; i < children.length; i++) {
+        children[i].style.borderColor = "#0f3460";
+        children[i].style.background = "#1a1a3e";
+      }
+      row.style.borderColor = "#ffdd57";
+      row.style.background = "rgba(255, 221, 87, 0.1)";
+      selectedSilverShotTarget = name;
+      if (submitBtn) submitBtn.disabled = false;
+    };
+
+    targetsDiv.appendChild(row);
+  });
+
+  modal.style.display = "flex";
+}
+
+function closeSilverShotModal() {
+  const modal = document.getElementById("silver-shot-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function submitSilverShot() {
+  if (!selectedSilverShotTarget) return;
+  const target = selectedSilverShotTarget;
+  closeSilverShotModal();
+  if (socket && socket.connected) {
+    socket.emit("shoot_silver_bullet", { target_name: target });
+  } else {
+    fetch("/api/shoot_silver_bullet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_name: target })
+    }).then(() => fetchCurrentState());
+  }
+}
+
+window.showSilverShotModal = showSilverShotModal;
+window.closeSilverShotModal = closeSilverShotModal;
+window.submitSilverShot = submitSilverShot;
 window.closeRulesModal = closeRulesModal;
 
 function addChatMsg(who, msg, isReply) {
@@ -3368,6 +3496,7 @@ function preload() {
   this.load.image("CuteRPG_Mountains_B", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Mountains_B.png");
   this.load.image("CuteRPG_Desert_B", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Desert_B.png");
   this.load.image("CuteRPG_Forest_C", "/static/assets/the_ville/visuals/map_assets/cute_rpg_word_VXAce/tilesets/CuteRPG_Forest_C.png");
+  this.load.image("werewolf_corpse", "/static/assets/effects/werewolf_corpse.png");
 
   this.load.tilemapTiledJSON("map", "/static/assets/the_ville/visuals/the_ville_jan7.json");
 
@@ -4148,6 +4277,7 @@ function update(time, delta) {
   // Update corpses from gameState.bodies
   const bodies = gameState.bodies || [];
   const currentBodyIds = new Set();
+  const bodyTileCounts = {};
 
   for (const body of bodies) {
     if (body.buried) continue;
@@ -4156,28 +4286,51 @@ function update(time, delta) {
 
     let corpseSprite = corpseSprites[bodyId];
     const textureKey = getCharacterTextureKey(body.sprite_key, body.victim_name);
+    const tileKey = `${body.x},${body.y}`;
+    const bodyTileIndex = bodyTileCounts[tileKey] || 0;
+    bodyTileCounts[tileKey] = bodyTileIndex + 1;
+    const offsetX = (bodyTileIndex % 2) * 12 - Math.floor(bodyTileIndex / 2) * 6;
+    const offsetY = Math.floor(bodyTileIndex / 2) * 10;
+    const bx = body.x * TILE_W + offsetX;
+    const by = body.y * TILE_W + offsetY;
 
-    const bx = body.x * TILE_W;
-    const by = body.y * TILE_W;
+    const isWerewolf = body.kind === "werewolf" ||
+                       body.corpse_kind === "werewolf" ||
+                       body.is_werewolf_corpse === true ||
+                       body.is_werewolf_corpse === "true" ||
+                       (typeof body.kind === "string" && body.kind.toLowerCase() === "werewolf") ||
+                       (typeof body.corpse_kind === "string" && body.corpse_kind.toLowerCase() === "werewolf");
 
     if (!corpseSprite) {
       // Create new corpse sprite
-      corpseSprite = sceneRef.physics.add.sprite(bx, by, textureKey, "down");
+      if (isWerewolf) {
+        corpseSprite = sceneRef.add.image(bx, by, "werewolf_corpse");
+        corpseSprite.setScale(0.7);
+      } else {
+        corpseSprite = sceneRef.physics.add.sprite(bx, by, textureKey, "down");
+        corpseSprite.setSize(30, 40).setOffset(0, 24);
+        corpseSprite.setTint(0x777777);
+        corpseSprite.setAngle(90);
+      }
       corpseSprite.setDepth(0.9); // depth below active characters (1) and labels (3)
-      corpseSprite.setSize(30, 40).setOffset(0, 24);
-
-      // Gray tint
-      corpseSprite.setTint(0x777777);
-
-      // Prone rotation
-      corpseSprite.setAngle(90);
 
       corpseSprites[bodyId] = corpseSprite;
     } else {
       // Update position and texture if needed
       corpseSprite.setPosition(bx, by);
-      if (corpseSprite.texture.key !== textureKey) {
+      if (isWerewolf && corpseSprite.texture.key !== "werewolf_corpse") {
+        corpseSprite.setTexture("werewolf_corpse");
+        corpseSprite.setScale(0.7);
+        corpseSprite.clearTint();
+        corpseSprite.setAngle(0);
+      } else if (!isWerewolf && corpseSprite.texture.key !== textureKey) {
         corpseSprite.setTexture(textureKey, "down");
+      }
+      if (isWerewolf) {
+        corpseSprite.clearTint();
+      } else {
+        corpseSprite.setTint(0x777777);
+        corpseSprite.setAngle(90);
       }
     }
   }
@@ -4481,6 +4634,11 @@ document.getElementById("history-modal").addEventListener("click", (e) => {
 document.getElementById("rules-modal").addEventListener("click", (e) => {
   if (e.target.id === "rules-modal") {
     closeRulesModal();
+  }
+});
+document.getElementById("silver-shot-modal").addEventListener("click", (e) => {
+  if (e.target.id === "silver-shot-modal") {
+    closeSilverShotModal();
   }
 });
 </script>

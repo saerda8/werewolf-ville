@@ -989,3 +989,39 @@ def test_night_transition_is_anonymous_fullscreen_and_confirm_only():
     assert 'socket.emit("confirm_night_transition");' in html
     assert "夜晚结束" in html
     assert "target_name" not in html[html.index("function renderNightTransition(state)"):html.index("function renderNightTransition(state)") + 2500]
+
+
+def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1) Night transitions check for werewolf and anonymous silver knife stage (fixed 60s)
+    assert "const silverKnifeDuration = 60;" in html
+    assert "sequence.stage_elapsed" in html
+    assert "sequence.stage_duration" in html
+    assert "displayStageLabel = \"银质小刀阶段\"" in html
+    assert "displayStageLabel = \"狼人行动中\"" in html
+    assert "银质小刀阶段" in html
+
+    # 2) Anonymity check: no target name or holder leak in night sequence stage rendering
+    night_idx = html.index("function renderNightTransition(state)")
+    night_fn_content = html[night_idx:night_idx + 3500]
+    assert "target_name" not in night_fn_content
+    assert "holder_name" not in night_fn_content
+
+    # 3) Check bodies array rendering with multiple bodies and werewolf corpse identification
+    assert "const bodies = gameState.bodies || [];" in html
+    assert "for (const body of bodies) {" in html
+    assert 'body.kind === "werewolf" ||' in html
+    assert 'body.corpse_kind === "werewolf" ||' in html
+    assert 'body.is_werewolf_corpse === true' in html
+    assert '"werewolf_corpse"' in html
+
+    # 4) Check Day 4 silver shot triggers pending_silver_shot or silver_shot_available
+    assert 'state.phase === "pending_silver_shot"' in html
+    assert "showSilverShotModal" in html
+    assert 'id="silver-shot-modal"' in html
+    assert 'id="silver-shot-targets"' in html
+    assert 'socket.emit("shoot_silver_bullet"' in html
+
+    # 5) Rules modal update about the anonymity of silver knife validity
+    assert "不会泄露银刀是否有效" in html

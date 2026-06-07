@@ -103,6 +103,12 @@ def test_night_waits_for_player_confirmation_before_dawn(monkeypatch):
     engine._night_tick()
 
     assert engine.phase == game_engine.GamePhase.NIGHT
+    assert engine._night_progress["stage"] == "silver_knife"
+    assert engine._night_progress["complete"] is False
+
+    engine._silver_knife_phase_started_at -= engine._silver_knife_phase_duration + 1
+    engine._night_tick()
+
     assert engine._night_progress["complete"] is True
     assert engine.confirm_night_transition()["success"] is True
     assert engine.phase == game_engine.GamePhase.DAY
@@ -116,6 +122,6 @@ def test_silver_knife_phase_does_not_run_before_wolf_phase(monkeypatch):
     engine._night_tick()
     assert calls == []
 
-    engine.night_start_time -= engine.night_duration / 2 + 1
+    engine.night_start_time -= engine.night_duration + 1
     engine._night_tick()
     assert calls == ["knife"]
