@@ -298,7 +298,7 @@ def test_thought_bubble_uses_same_ttl_as_speech_bubble():
     assert '["thinking", "planning", "starting_action", "acting"].includes(persona.runtime_state)' in html
     assert '(!departureWaiting && persona.runtime_state === "moving")' in html
     assert "now - cached.time > BUBBLE_LIFETIME_SECONDS" in html
-    assert 'let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
+    assert 'let thoughtText = (isNPCInActiveChat || (suppressChatDisplay && !activeForAction)) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
 
 
 def test_chinese_titles_and_log_labels():
@@ -556,9 +556,10 @@ def test_new_bugfixes_frontend():
     assert "blueBubbleCache = {};" in html
     assert "thoughtBubbleCache = {};" in html
 
-    # 7. Detective/NPC chat log must not hide model length by hard-truncating text.
+    # 7. Detective/NPC chat text must not render into the right-side transcript UI.
     assert "msg.substring(0, 120)" not in html
-    assert 'getDisplayName(who, gameState) + ": " + msg' in html
+    assert 'getDisplayName(who, gameState) + ": " + msg' not in html
+    assert "chat-ui-disabled" in html
 
 
 def test_delegated_ui_fixes_and_clamping():
@@ -1056,13 +1057,15 @@ def test_new_dusk_camera_and_waiting_behavior():
     assert 'thoughtText = "";' in html
     assert 'const isNPCInActiveChat = (' in html
     assert 'let thoughtText = (isNPCInActiveChat || (suppressChatDisplay && !activeForAction)) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
+    assert 'if (isNPCInActiveChat && p.alive) {\n      thoughtText = "";\n      if (!speechText) {\n        displaySpeechText = "";\n      }\n      delete blueBubbleCache[name];\n      delete thoughtBubbleCache[name];\n    }' in html.replace("\r\n", "\n")
     assert 'if (kind === "conversation_pending" && target === "Crow") {' in html
     assert 'return "正在聆听警长问询";' in html
 
     # (3) Dusk/voting camera slow centering
     assert 'const newIsDusk = !isNight &&' in html
     assert 'const site = gameState.initial_gathering_site || gameState.gathering_site;' in html
-    assert 'sceneRef.cameras.main.pan(site.x * TILE_W, site.y * TILE_W, 2000);' in html
+    assert 'sceneRef.cameras.main.pan((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2), 2000);' in html
+    assert 'sceneRef.cameras.main.centerOn((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2));' in html
 
 
 def test_dev_complete_interviews_button_exists():
@@ -1074,6 +1077,23 @@ def test_dev_complete_interviews_button_exists():
     assert "function completeDailyInterviewsForTest()" in html
     assert 'socket.emit("test_complete_daily_interviews")' in html
     assert 'test_complete_daily_interviews_result' in html
+
+
+def test_right_sidebar_has_no_chat_transcript_ui():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    add_chat_start = html.find("function addChatMsg")
+    assert add_chat_start != -1
+    add_chat_body = html[add_chat_start : html.find("function", add_chat_start + len("function addChatMsg"))]
+
+    assert 'id="chat-log"' not in html
+    assert "#chat-log" not in html
+    assert "chat-msg-detective" not in html
+    assert "chat-msg-other" not in html
+    assert 'document.getElementById("chat-log")' not in html
+    assert "#chat-panel {\n  display: none !important;" in html
+    assert 'document.getElementById("chat-log")' not in add_chat_body
+    assert ".appendChild" not in add_chat_body
+    assert "chat-ui-disabled" in add_chat_body
 
 
 def test_action_and_detective_chat_clear_blue_bubble_cache():

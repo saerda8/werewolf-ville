@@ -169,6 +169,7 @@ body.phase-locked #game-container { pointer-events: none; }
 
 /* 对话面板 */
 #chat-panel {
+  display: none !important;
   background: #0f3460; border-top: 2px solid #1a1a4e; padding: 10px;
   max-height: 180px;
 }
@@ -183,12 +184,6 @@ body.phase-locked #game-container { pointer-events: none; }
   border-radius: 4px; cursor: pointer; font-size: 13px;
 }
 #deep-dive-check { margin-top: 6px; font-size: 12px; color: #aaa; }
-#chat-log {
-  max-height: 60px; overflow-y: auto; margin-top: 8px;
-  font-size: 12px; color: #ccc; line-height: 1.5;
-}
-.chat-msg-detective { color: #4a9eff; }
-.chat-msg-other { color: #f5c518; }
 
 /* 宣布按钮 */
 #announce-btn {
@@ -798,7 +793,6 @@ body.phase-locked #game-container { pointer-events: none; }
       <label><input type="checkbox" id="deep-dive"> 深度挖掘</label>
       <span id="deep-dive-remaining">(剩余0)</span>
     </div>
-    <div id="chat-log"></div>
   </div>
 </div>
 
@@ -1072,22 +1066,11 @@ function initSocket() {
   socket.on("chat_response", (resp) => {
     const responseTarget = resp && resp.target_name;
     if (resp && resp.pending_response) {
-      if (resp.detective_message) {
-        addChatMsg("Crow", resp.detective_message, false);
-      }
       fetchCurrentState();
       return;
     }
     if (!responseTarget || responseTarget === pendingChatTarget) {
       clearPendingChat();
-    }
-    if (resp.error) {
-      addChatMsg("系统", resp.error, true);
-    } else {
-      addChatMsg("Crow", resp.detective_message, false);
-      if (resp.response) {
-        addChatMsg(resp.target_name, resp.response, true);
-      }
     }
     fetchCurrentState();
   });
@@ -1144,13 +1127,13 @@ function centerCameraOnState(state) {
   if (!sceneRef || !state) return;
   const site = state.gathering_site;
   if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
-    sceneRef.cameras.main.centerOn(site.x * TILE_W, site.y * TILE_W);
+    sceneRef.cameras.main.centerOn((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2));
     resolveBubbleLayout();
     return;
   }
   const crow = state.personas && state.personas["Crow"];
   if (crow && Number.isFinite(crow.x) && Number.isFinite(crow.y)) {
-    sceneRef.cameras.main.centerOn(crow.x * TILE_W, crow.y * TILE_W);
+    sceneRef.cameras.main.centerOn((crow.x * TILE_W) + (TILE_W / 2), (crow.y * TILE_W) + (TILE_W / 2));
     resolveBubbleLayout();
   }
 }
@@ -1171,7 +1154,7 @@ function scheduleDuskDiscussionCameraPan(state, active, stage) {
     if (!liveActive) return;
     const site = gameState.initial_gathering_site || gameState.gathering_site;
     if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
-      sceneRef.cameras.main.pan(site.x * TILE_W, site.y * TILE_W, 2000);
+      sceneRef.cameras.main.pan((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2), 2000);
     }
   }, 2000);
 }
@@ -2139,25 +2122,6 @@ function setPendingChat(name, phase) {
 
     if (pendingChatPhase === "waiting") {
       markPendingChatTargetWaiting(name, gameState);
-    }
-
-    // Show responsive feedback in chat log immediately
-    const chatLog = document.getElementById("chat-log");
-    if (chatLog) {
-      const msgDiv = document.createElement("div");
-      msgDiv.className = "chat-msg-system";
-      msgDiv.style.color = "#a0aec0";
-      msgDiv.style.fontStyle = "italic";
-      msgDiv.style.margin = "4px 0";
-
-      const targetCN = getDisplayName(name, gameState);
-      if (phase === "moving") {
-        msgDiv.textContent = `[系统] 警长正在前往与 ${targetCN} 交谈...`;
-      } else {
-        msgDiv.textContent = `[系统] 正在等待 ${targetCN} 的回复...`;
-      }
-      chatLog.appendChild(msgDiv);
-      chatLog.scrollTop = chatLog.scrollHeight;
     }
   }
 
@@ -3635,12 +3599,11 @@ window.submitSilverShot = submitSilverShot;
 window.closeRulesModal = closeRulesModal;
 
 function addChatMsg(who, msg, isReply) {
-  const log = document.getElementById("chat-log");
-  const div = document.createElement("div");
-  div.className = isReply ? "chat-msg-other" : "chat-msg-detective";
-  div.textContent = getDisplayName(who, gameState) + ": " + msg;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
+  // Right-side chat transcript UI is intentionally disabled. Real dialogue is
+  // shown through world speech bubbles and the bottom intelligent-agent log.
+  if (window.console && msg) {
+    console.debug("[chat-ui-disabled]", who, msg);
+  }
 }
 
 function showAnnounce() {
@@ -4232,7 +4195,9 @@ function resolveBubbleLayout() {
     // Hide stale thought bubbles for NPC in active detective chat
     if (isNPCInActiveChat && p.alive) {
       thoughtText = "";
-      displaySpeechText = "";
+      if (!speechText) {
+        displaySpeechText = "";
+      }
       delete blueBubbleCache[name];
       delete thoughtBubbleCache[name];
     }
