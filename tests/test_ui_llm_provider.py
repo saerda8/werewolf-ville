@@ -20,16 +20,30 @@ def test_local_chat2api_override_uses_config():
     assert "api_key" in override
 
 
-def test_local_chat2api_agent_test_uses_npc_path(monkeypatch):
+def test_local_chat2api_agent_test_uses_local_override_not_runtime_cache(monkeypatch):
     import ui.app as app_module
 
-    monkeypatch.setattr(app_module, "chat_for_agent", lambda *args, **kwargs: "OK")
-    monkeypatch.setattr(app_module, "get_model_for_agent", lambda name: "Qwen3.6-35B-A3B")
+    override = {
+        "provider": "chat2api",
+        "api_key": "local-key",
+        "model": "Qwen3.5-Flash",
+        "api_base": "http://127.0.0.1:8000/v1",
+    }
+    captured = {}
+
+    monkeypatch.setattr(app_module, "_local_chat2api_override", lambda: override)
+
+    def fake_test_openai_compatible_chat(data):
+        captured.update(data)
+        return "OK"
+
+    monkeypatch.setattr(app_module, "_test_openai_compatible_chat", fake_test_openai_compatible_chat)
 
     model, sample = _test_local_chat2api_agent()
 
-    assert model == "Qwen3.6-35B-A3B"
+    assert model == "Qwen3.5-Flash"
     assert sample == "OK"
+    assert captured == override
 
 
 def test_preset_provider_uses_known_base_url():

@@ -20,7 +20,6 @@ from flask_socketio import SocketIO, emit
 from openai import OpenAI
 from game_engine import WerewolfGameEngine
 from config_loader import load_config
-from llm import chat_for_agent, get_last_error_for_agent, get_model_for_agent
 
 app = Flask(__name__,
             static_folder=os.path.join(PROJECT_ROOT, "static"),
@@ -190,18 +189,11 @@ def _test_openai_compatible_chat(llm_override: dict) -> str:
 
 
 def _test_local_chat2api_agent() -> tuple[str, str]:
-    agent_name = "Arthur Burton"
-    sample = chat_for_agent(
-        agent_name,
-        "You are a connectivity test.",
-        "Reply with OK.",
-        temperature=0,
-        max_retries=0,
-    )
+    llm_override = _local_chat2api_override()
+    sample = _test_openai_compatible_chat(llm_override)
     if not sample:
-        last_error = get_last_error_for_agent(agent_name)
-        raise RuntimeError(last_error or "empty local Chat2API response")
-    return get_model_for_agent(agent_name), sample
+        raise RuntimeError("empty local Chat2API response")
+    return llm_override["model"], sample
 
 
 def _frontend_version() -> str:
