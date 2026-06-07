@@ -551,6 +551,10 @@ body.phase-locked #game-container { pointer-events: none; }
     gap: 8px;
   }
   #test-complete-interviews-btn {
+    position: fixed;
+    left: 10px;
+    bottom: calc(var(--log-panel-height) + 8px);
+    z-index: 140;
     background: #26364f;
     color: #c9d1d9;
     border: 1px solid #3f5b86;
@@ -3249,6 +3253,10 @@ function bubbleSpeechText(speaker, payload) {
   let text = typeof payload === "string" ? payload : (payload.text || "");
   text = replaceEnglishNames(text, gameState);
   const kind = typeof payload === "object" ? String(payload.kind || "") : "";
+  const target = typeof payload === "object" ? payload.target : "";
+  if (kind === "conversation_pending" && target === "Crow") {
+    return "正在聆听警长问询";
+  }
   if (kind === "action_status") {
     text = stripActionPlanningTail(text);
 
@@ -3291,8 +3299,6 @@ function bubbleSpeechText(speaker, payload) {
       .trim();
     return `${text.replace(/[。.!！]+$/, "") || "继续当前事务"}...`;
   }
-  const target = typeof payload === "object" ? payload.target : "";
-
   const speakerDisplayName = getDisplayName(speaker, gameState);
   const targetDisplayName = getDisplayName(target, gameState);
 
@@ -4184,13 +4190,24 @@ function resolveBubbleLayout() {
       if (!displaySpeechText.endsWith("...")) {
         displaySpeechText = displaySpeechText + "...";
       }
+      thoughtText = "";
+      delete blueBubbleCache[name];
+      delete thoughtBubbleCache[name];
     }
 
     // Hide stale thought bubbles for NPC in active detective chat
-    const isNPCInActiveChat = (pendingChatTarget && pendingChatTarget === name);
+    const conversationWith = String(p.conversation_with || "");
+    const isNPCInActiveChat = (
+      (pendingChatTarget && pendingChatTarget === name)
+      || conversationWith === "Crow"
+      || conversationWith === "克罗"
+    );
     if (isNPCInActiveChat && p.alive) {
-      if (!activeForAction) {
-        thoughtText = "";
+      thoughtText = "";
+      delete blueBubbleCache[name];
+      delete thoughtBubbleCache[name];
+      if (isActionStatusBubble) {
+        displaySpeechText = "";
       }
     }
 

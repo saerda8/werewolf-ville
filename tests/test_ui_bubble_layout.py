@@ -1049,6 +1049,8 @@ def test_new_dusk_camera_and_waiting_behavior():
     assert 'pendingChatPhase === "waiting"' in html
     assert 'displaySpeechText = "正在聆听警长问询";' in html
     assert 'thoughtText = "";' in html
+    assert 'if (kind === "conversation_pending" && target === "Crow") {' in html
+    assert 'return "正在聆听警长问询";' in html
 
     # (3) Dusk/voting camera slow centering
     assert 'const newIsDusk = !isNight &&' in html
@@ -1061,6 +1063,18 @@ def test_dev_complete_interviews_button_exists():
 
     assert 'id="test-complete-interviews-btn"' in html
     assert "一键交谈完" in html
+    assert "bottom: calc(var(--log-panel-height) + 8px);" in html
     assert "function completeDailyInterviewsForTest()" in html
     assert 'socket.emit("test_complete_daily_interviews")' in html
     assert 'test_complete_daily_interviews_result' in html
+
+
+def test_action_and_detective_chat_clear_blue_bubble_cache():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'delete blueBubbleCache[name];' in html
+    assert 'delete thoughtBubbleCache[name];' in html
+    assert 'conversationWith === "Crow"' in html
+    assert 'conversationWith === "克罗"' in html
+    assert 'if (isActionStatusBubble) {' in html
+    assert 'displaySpeechText = "";' in html
