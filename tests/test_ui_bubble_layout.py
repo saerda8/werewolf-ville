@@ -163,6 +163,8 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert 'return !!pendingChatTarget && name === pendingChatTarget;' in html
     assert 'showLocalCrowQuestion(name, msg);' in html
     assert 'let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
+    assert "if (resp && resp.pending_response)" in html
+    assert "return;" in html
 
 
 def test_deep_dive_submit_decrements_remaining_optimistically():

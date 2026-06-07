@@ -1035,6 +1035,13 @@ function initSocket() {
   });
   socket.on("chat_response", (resp) => {
     const responseTarget = resp && resp.target_name;
+    if (resp && resp.pending_response) {
+      if (resp.detective_message) {
+        addChatMsg("Crow", resp.detective_message, false);
+      }
+      fetchCurrentState();
+      return;
+    }
     if (!responseTarget || responseTarget === pendingChatTarget) {
       clearPendingChat();
     }

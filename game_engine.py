@@ -1001,11 +1001,19 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         nearby = str(packet.get("nearby_people_text", "") or "")
         if not status:
             return self._default_grounded_action_status(name, agent, packet)
+        status = re.sub(r"^.*?[说講讲][:：]\s*", "", status)
+        status = re.sub(r"^(正在|正|在|和|并|同时)\s*", "", status)
+        for marker in ("，也", "，还", "，并", "，再", "，准备", "，等待", "，观察", "，检查", "，留意", "。", "；", ";"):
+            if marker in status:
+                status = status.split(marker, 1)[0].strip()
+        status = re.sub(r"^(和|并|同时)\s*", "", status).strip()
+        if not status:
+            return self._default_grounded_action_status(name, agent, packet)
         empty_people = "附近没有人" in nearby
         invented_people_terms = ("客人", "顾客", "镇民", "对方")
         if empty_people and any(term in status for term in invented_people_terms):
             return self._default_grounded_action_status(name, agent, packet)
-        return status[:24]
+        return status[:16]
 
     def _enqueue_memory_task(self, agent_name: str, payload: dict) -> MemoryTask:
         task = MemoryTask(
@@ -5758,6 +5766,30 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             return
         self.chat_bubbles[name] = {"text": self._action_status_text(agent, pending_action), "target": "", "time": time.time(), "kind": "action_status"}
 
+    def _redirect_to_visible_continue_current(self, name: str, agent, reason: str = "") -> None:
+        loc_now = agent.current_location or self._reverse_lookup_location(agent.x, agent.y) or "某处"
+        action = self._default_continuing_action(name, loc_now)
+        self.agent_paths.pop(name, None)
+        agent.target_x = agent.x
+        agent.target_y = agent.y
+        agent.current_location = loc_now
+        agent.current_action = action
+        agent.current_action_type = "continue_current"
+        agent.current_emoji = self._get_emoji(action)
+        agent._pending_action = {
+            "action_type": "continue_current",
+            "target_location": loc_now,
+            "target_object": "",
+            "target_person": "",
+            "action": action,
+            "action_status": action,
+            "thought": reason or "目标暂时不适合交谈",
+            "expected_result": "完成当前事务",
+        }
+        agent.runtime_state = "starting_action"
+        self._mark_action_started(agent, time.time())
+        self._clear_action_status_bubble(name)
+
     def _clear_action_status_bubble(self, name: str) -> None:
         bubble = self.chat_bubbles.get(name)
         if isinstance(bubble, dict) and bubble.get("kind") == "action_status":
@@ -5782,7 +5814,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             threshold = 1 if target_person == self.detective_name else 2
             if target and target.is_alive and self._agent_distance(agent, target) <= threshold:
                 if target_person == self.detective_name:
-                    self._trigger_npc_to_detective_chat(name, pending_action.get("action", ""))
+                    if not self._trigger_npc_to_detective_chat(name, pending_action.get("action", "")):
+                        self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
+                        return
                 else:
                     self._trigger_npc_chat(name, target_person)
                 agent._pending_action = None
@@ -5857,6 +5891,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 continue
             if self._detective_chat_target_reserved(name):
                 agent.runtime_state = "idle"
+                continue
+            pending_action_for_crow = getattr(agent, "_pending_action", None) or {}
+            if (
+                getattr(self, "_detective_chat_active_target", None)
+                and pending_action_for_crow.get("target_person") == self.detective_name
+            ):
+                self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
+                self._skip_planning_turn_if_current(name)
                 continue
             # Jailed residents cannot move or act on their own
             if name in self._jailed:
@@ -8251,7 +8293,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         agent.current_thought_time = 0
                         agent.current_action = ""
                         agent.current_action_type = ""
-                        self._trigger_npc_to_detective_chat(name, action, expected_result)
+                        if not self._trigger_npc_to_detective_chat(name, action, expected_result):
+                            self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
+                            return
                         agent.add_memory(
                             f"第{self.day}天 {self.game_hour:.1f}点，我接近警长并主动说明：{action}",
                             self.day
@@ -9049,7 +9093,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
     def _trigger_npc_to_detective_chat(self, source_name: str, action: str = "",
 
-                                       expected_result: str = "") -> None:
+                                       expected_result: str = "") -> bool:
 
         """NPC reached Crow by its own action; immediately speak instead of idling."""
 
@@ -9059,7 +9103,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         if not source or not detective or not source.is_alive:
 
-            return
+            return False
 
 
 
@@ -9077,7 +9121,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             )
 
-            return
+            return False
 
 
 
@@ -9181,6 +9225,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "game_hour": self.game_hour,
             },
         )
+        return True
 
 
 
@@ -9437,10 +9482,28 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if not response or not response.strip():
                 self._log(
-                    f"[模型超时/空结果，使用保底发言] {display_name_for_person(target_name)} 回复警长",
+                    f"[模型超时/空结果，保持等待] {display_name_for_person(target_name)} 回复警长",
                     "system",
                 )
-                response = "我现在还没有想清楚，稍后再回答您的问题。"
+                self.chat_bubbles[target_name] = {
+                    "text": "...",
+                    "target": self.detective_name,
+                    "time": time.time(),
+                }
+                self.chat_bubbles[self.detective_name] = {
+                    "text": self._limit_gathering_speech(incoming_message, max_chars=84),
+                    "target": target_name,
+                    "time": time.time(),
+                }
+                self._broadcast_state()
+                return {
+                    "pending_response": True,
+                    "response": "...",
+                    "remaining_chats": CONFIG["conversation"]["detective_normal_chat_limit"]
+                    - detective.chat_count.get(target_name, 0),
+                    "deep_dive_remaining": detective.deep_dive_quota - detective.deep_dive_used,
+                    "delivered_clues": [],
+                }
             delivered_clues = self._deliver_pending_clues_to_crow(target_name)
 
             if delivered_clues:
@@ -10406,6 +10469,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 "runtime_state": "idle" if is_detective else getattr(agent, 'runtime_state', 'idle'),
                 "visual_moving": visual_moving,
+                "action_started_at": 0 if is_detective else getattr(agent, "_action_started_at", 0),
                 "action_status_visible_at": 0 if is_detective else getattr(agent, "_action_status_visible_at", 0),
                 "departure_delay_until": 0 if is_detective else getattr(agent, "_departure_delay_until", 0),
                 "last_decision": {} if is_detective else public_last_decision,

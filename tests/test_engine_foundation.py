@@ -803,11 +803,25 @@ def test_status_exposes_action_status_visible_time(monkeypatch):
     engine = _make_engine(monkeypatch)
     arthur = engine.agents["Arthur Burton"]
     arthur.runtime_state = "acting"
+    arthur._action_started_at = 1111.25
     arthur._action_status_visible_at = 1234.5
 
     status = engine.get_status()
 
+    assert status["personas"]["Arthur Burton"]["action_started_at"] == 1111.25
     assert status["personas"]["Arthur Burton"]["action_status_visible_at"] == 1234.5
+
+
+def test_action_status_sanitizer_keeps_one_grounded_action(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    packet = {
+        "nearby_people_text": "附近没有人",
+        "nearby_objects_text": "工具架、柜台",
+    }
+
+    assert engine._ground_action_status("Arthur Burton", arthur, "和准备药品，等待警长询问", packet) == "准备药品"
+    assert engine._ground_action_status("Arthur Burton", arthur, "招呼客人", packet) == "整理工具架"
 
 
 def test_status_exposes_departure_delay_until(monkeypatch):
@@ -2554,7 +2568,6 @@ def test_detective_chat_interrupts_movement_and_marks_target_busy_immediately(mo
     engine._expire_chat_bubbles()
     assert target.in_conversation_with == "Crow"
     assert detective.in_conversation_with == "Arthur Burton"
-    assert engine.chat_bubbles["Arthur Burton"]["text"] == "..."
 
     old_x, old_y = target.x, target.y
     engine._move_agents()
@@ -2563,6 +2576,57 @@ def test_detective_chat_interrupts_movement_and_marks_target_busy_immediately(mo
     release.set()
     t.join(timeout=2)
     assert result_holder["response"] == "我先回答警长。"
+
+
+def test_detective_chat_empty_response_keeps_waiting_bubble(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    detective = engine.agents["Crow"]
+    target = engine.agents["Arthur Burton"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+    engine._daily_interviewed.add("Arthur Burton")
+    target.generate_response = lambda speaker, msg, day: ""
+
+    result = engine.detective_chat("Arthur Burton", "你再想想细节。", is_deep_dive=True)
+
+    assert result["pending_response"] is True
+    assert result["response"] == "..."
+    assert target.in_conversation_with == "Crow"
+    assert detective.in_conversation_with == "Arthur Burton"
+    assert engine.chat_bubbles["Arthur Burton"]["text"] == "..."
+    assert "还没有想清楚" not in engine.chat_bubbles["Arthur Burton"]["text"]
+
+
+def test_busy_detective_redirects_third_party_talk_path(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Maria Lopez"])
+    engine._detective_chat_active_target = "Arthur Burton"
+    crow = engine.agents["Crow"]
+    crow.in_conversation_with = "Arthur Burton"
+    maria = engine.agents["Maria Lopez"]
+    maria.runtime_state = "moving"
+    maria.target_x, maria.target_y = crow.x, crow.y
+    maria._pending_action = {
+        "action_type": "talk",
+        "target_location": crow.current_location,
+        "target_object": "",
+        "target_person": "Crow",
+        "action": "找警长说明情况",
+        "action_status": "走向警长",
+        "expected_result": "向警长说明情况",
+    }
+    engine.agent_paths["Maria Lopez"] = [(maria.x + 1, maria.y)]
+
+    engine._update_agent_schedules()
+
+    assert maria.runtime_state == "starting_action"
+    assert maria._pending_action["action_type"] == "continue_current"
+    assert maria._pending_action["target_person"] == ""
+    assert "Maria Lopez" not in engine.agent_paths
+    assert (maria.target_x, maria.target_y) == (maria.x, maria.y)
 
 
 def test_detective_chat_uses_priority_no_retry_response(monkeypatch):
