@@ -5935,9 +5935,23 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if name == self.detective_name:
                 continue
             if self._detective_chat_target_reserved(name):
-                agent.runtime_state = "acting"
-                self._skip_planning_turn_if_current(name)
-                continue
+                release_at = float(getattr(agent, "_detective_chat_release_at", 0) or 0)
+                if release_at and now >= release_at:
+                    if getattr(agent, "in_conversation_with", None) == self.detective_name:
+                        agent.in_conversation_with = None
+                    agent._conversation_started_at = 0
+                    agent.runtime_state = "idle"
+                    agent._detective_chat_release_at = 0
+                    self._detective_chat_active_target = None
+                    self._detective_chat_pending_target = None
+                    self.chat_bubbles.pop(name, None)
+                    self._log(f"[真实交谈超时释放] {display_name_for_person(name)} 回复警长超过30秒，释放交谈状态。", "system")
+                    self._skip_planning_turn_if_current(name)
+                    continue
+                else:
+                    agent.runtime_state = "acting"
+                    self._skip_planning_turn_if_current(name)
+                    continue
             pending_action_for_crow = getattr(agent, "_pending_action", None) or {}
             if (
                 getattr(self, "_detective_chat_active_target", None)
@@ -9162,6 +9176,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
     def _release_conversation_for_expired_bubble(self, name: str, bubble: dict | None = None) -> None:
         bubble = bubble or self.chat_bubbles.get(name)
+        if isinstance(bubble, dict) and bubble.get("kind") == "conversation_pending":
+            return
         target_name = bubble.get("target") if isinstance(bubble, dict) else None
         if not target_name:
             return
@@ -9462,6 +9478,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             target.target_x = target.x
             target.target_y = target.y
             target.runtime_state = "acting"
+            target._detective_chat_release_at = time.time() + 30.0
             self._bump_agent_action_generation(target)
             target.current_thought = ""
             target.current_thought_time = 0
@@ -9607,6 +9624,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if target_name not in self.agents or not self.agents[target_name].is_alive:
                 if target_name in self.agents:
                     self.agents[target_name].in_conversation_with = None
+                    self.agents[target_name]._detective_chat_release_at = 0
                 self._detective_chat_active_target = None
                 self._detective_chat_pending_target = None
                 detective.in_conversation_with = None
@@ -9625,6 +9643,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 target.in_conversation_with = None
                 target._conversation_started_at = 0
                 target.runtime_state = "idle"
+                target._detective_chat_release_at = 0
                 detective.in_conversation_with = None
                 detective._conversation_started_at = 0
                 self._detective_chat_active_target = None
@@ -9721,6 +9740,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             target._is_thinking = False
 
             target._is_reflecting = False
+            target._detective_chat_release_at = 0
 
             # 同时也清除侦探的思考/行动状态
 

@@ -2673,6 +2673,67 @@ def test_detective_chat_interrupts_movement_and_marks_target_busy_immediately(mo
     release.set()
     t.join(timeout=2)
     assert result_holder["response"] == "我先回答警长。"
+    assert target.in_conversation_with == "Crow"
+    assert getattr(target, "_detective_chat_release_at", 0) == 0
+    assert engine.chat_bubbles["Arthur Burton"]["text"] == "我先回答警长。"
+
+    engine._release_conversation_for_expired_bubble("Arthur Burton", engine.chat_bubbles["Arthur Burton"])
+    assert target.in_conversation_with is None
+
+
+def test_detective_chat_pending_bubble_expiry_does_not_release_real_chat(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    target = engine.agents["Arthur Burton"]
+    detective = engine.agents["Crow"]
+
+    target.in_conversation_with = "Crow"
+    target._conversation_started_at = time.time()
+    target.runtime_state = "acting"
+    target._detective_chat_release_at = time.time() + 30
+    engine._detective_chat_active_target = "Arthur Burton"
+    engine.chat_bubbles["Arthur Burton"] = {
+        "text": "正在聆听警长问询",
+        "target": "Crow",
+        "time": time.time() - 999,
+        "kind": "conversation_pending",
+        "expires_at": time.time() - 998,
+    }
+
+    engine._release_conversation_for_expired_bubble("Arthur Burton", engine.chat_bubbles["Arthur Burton"])
+
+    assert target.in_conversation_with == "Crow"
+    assert detective.in_conversation_with is None
+    assert engine._detective_chat_active_target == "Arthur Burton"
+    assert target.runtime_state == "acting"
+
+
+def test_detective_chat_real_chat_releases_after_thirty_seconds_only_when_model_never_returns(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    target = engine.agents["Arthur Burton"]
+
+    target.in_conversation_with = "Crow"
+    target._conversation_started_at = time.time() - 31
+    target.runtime_state = "acting"
+    target._detective_chat_release_at = time.time() - 1
+    engine._detective_chat_active_target = "Arthur Burton"
+    engine.chat_bubbles["Arthur Burton"] = {
+        "text": "正在聆听警长问询",
+        "target": "Crow",
+        "time": time.time(),
+        "kind": "conversation_pending",
+    }
+
+    engine._update_agent_schedules()
+
+    assert target.in_conversation_with is None
+    assert target.runtime_state == "idle"
+    assert getattr(target, "_detective_chat_release_at", 0) == 0
+    assert engine._detective_chat_active_target is None
+    assert "Arthur Burton" not in engine.chat_bubbles
 
 
 def test_detective_chat_empty_response_releases_waiting_bubble(monkeypatch):

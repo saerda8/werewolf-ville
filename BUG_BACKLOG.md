@@ -34,6 +34,29 @@ ID:
 
 ## 当前待整理 Bug
 
+### BUG-2026-06-08-004：真实谈话期间旧思考/旧行动气泡仍会显示
+
+严重度：Major
+关联需求：REQ-168、REQ-171、NPC 行为生命周期
+回归测试：`tests/test_ui_bubble_layout.py`、`tests/test_engine_foundation.py`
+回归频率：高概率
+状态：Closed
+验收状态：Verified
+
+实际表现：NPC 思考气泡仍可能显示旧兜底文案“正在整理当前情况”；警长已向 NPC 发起真实谈话后，如果第二条模型管线延迟较高，目标 NPC 仍可能继续显示旧思考、旧计划、旧行动白泡。
+
+根因：前端 `buildNpcThoughtBubble()` 仍保留“正在整理当前情况。”作为无模型 thought 的兜底文案；`resolveBubbleLayout()` 在生成蓝泡和白行动泡之后才用 `pendingChatTarget` 做清理，旧 action_status 路径仍可漏出；后端通用气泡过期释放逻辑把 `conversation_pending` 等待气泡和真实谈话锁混在一起，存在等待气泡消失等于释放交谈状态的风险。
+
+修复方案：删除“正在整理当前情况”兜底文本，模型没有真实 thought/plan 时不显示思考计划蓝泡；前端本地进入 `pendingChatTarget` 后立即清空目标 NPC 的旧 thought/plan/action/status 字段，并在气泡布局最前面把 active chat 作为最高优先级压制蓝泡和旧白行动泡；后端 `conversation_pending` 过期不再释放真实谈话锁，真实谈话改由独立 30 秒超时释放。
+
+验证方式：
+- `python -m py_compile game_engine.py ui/app.py`
+- `node -e "<inline script syntax check>"`
+- `pytest -q tests/test_ui_bubble_layout.py::test_pending_detective_chat_locks_button_and_suppresses_bubbles tests/test_ui_bubble_layout.py::test_blue_bubble_sequential_thought_plan_action tests/test_ui_bubble_layout.py::test_thought_waiting_text_is_not_treated_as_real_model_thought tests/test_ui_bubble_layout.py::test_action_status_and_start_action_mutual_exclusion tests/test_ui_bubble_layout.py::test_new_dusk_camera_and_waiting_behavior tests/test_ui_bubble_layout.py::test_action_and_detective_chat_clear_blue_bubble_cache tests/test_ui_bubble_layout.py::test_pending_chat_wait_merge_has_no_duplicate_server_bubble_const`
+- `pytest -q tests/test_engine_foundation.py::test_detective_chat_interrupts_movement_and_marks_target_busy_immediately tests/test_engine_foundation.py::test_detective_chat_pending_bubble_expiry_does_not_release_real_chat tests/test_engine_foundation.py::test_detective_chat_real_chat_releases_after_thirty_seconds tests/test_engine_foundation.py::test_detective_chat_status_suppresses_stale_npc_action_fields tests/test_engine_foundation.py::test_stale_planning_thread_does_not_override_detective_conversation_lock tests/test_daytime_npc_behavior.py::test_npc_mid_planning_detective_chat_clears_thinking_flag`
+
+相关提交：待提交。
+
 ### BUG-2026-06-08-003：真实聊天秒失败与 NPC 旧行动状态漏到前端
 
 严重度：Major

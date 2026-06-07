@@ -2183,6 +2183,16 @@ function markPendingChatTargetWaiting(name, state) {
   p.action = "";
   p.current_action = "";
   p.action_type = "";
+  p.action_plan = "";
+  p.action_target_location = "";
+  p.action_target_location_label = "";
+  p.action_target_object = "";
+  p.action_target_person = "";
+  p.thought = "";
+  p.thought_summary = "";
+  p.thought_time = 0;
+  p.last_decision = {};
+  p.current_goal = "";
   p.conversation_with = "Crow";
   p.target_x = p.x;
   p.target_y = p.y;
@@ -3132,11 +3142,12 @@ function buildNpcThoughtBubble(name, persona, state) {
     }
   }
 
-  const waitingThoughtDisplay = "正在整理当前情况。";
   const thought = compactBubbleText(rawThoughtText, 70);
-  const thoughtDisplay = thought || waitingThoughtDisplay;
+  if (!thought) return "";
+  const thoughtDisplay = thought;
   const planSource = p.action_plan || p.action || "";
-  const plan = compactBubbleText(planSource || "先判断下一步怎么做。", 70);
+  const plan = compactBubbleText(planSource, 70);
+  if (!plan) return "";
 
   return `${owner}<div class="bubble-row"><span class="bubble-key">思考：</span>${escapeHtml(thoughtDisplay)}</div><div class="bubble-row"><span class="bubble-key">计划：</span>${escapeHtml(plan)}</div>`;
 }
@@ -4145,6 +4156,12 @@ function resolveBubbleLayout() {
     const bubblePayload = chatBubbles[name] || null;
     const suppressChatDisplay = isChatSuppressedFor(name, bubblePayload);
     const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);
+    const conversationWith = String(p.conversation_with || "");
+    const isNPCInActiveChat = (
+      (pendingChatTarget && pendingChatTarget === name)
+      || conversationWith === "Crow"
+      || conversationWith === "克罗"
+    );
 
     // 计算是否处于移动或行动中，从而豁免气泡抑制条件
     const targetPx = p.x * TILE_W;
@@ -4156,7 +4173,7 @@ function resolveBubbleLayout() {
     const runtime = String(p.runtime_state || "");
     const departureDelayUntil = Number(p.departure_delay_until || 0);
     const departureWaiting = departureDelayUntil > (Date.now() / 1000);
-    const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);
+    const activeForAction = !isNPCInActiveChat && !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);
 
     const isActionStatusBubble = bubblePayload && typeof bubblePayload === "object" && String(bubblePayload.kind || "") === "action_status";
     if (isActionStatusBubble) {
@@ -4164,7 +4181,7 @@ function resolveBubbleLayout() {
       delete thoughtBubbleCache[name];
     }
     const realSpeechVisible = !!speechText && p.alive && !isActionStatusBubble;
-    let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);
+    let thoughtText = (isNPCInActiveChat || (suppressChatDisplay && !activeForAction)) ? "" : buildNpcThoughtBubble(name, p, gameState);
 
     // Hide thought/action bubble when real speech is visible. A hidden blue
     // bubble must not start or advance its TTL; otherwise execution can unlock
@@ -4213,19 +4230,11 @@ function resolveBubbleLayout() {
     }
 
     // Hide stale thought bubbles for NPC in active detective chat
-    const conversationWith = String(p.conversation_with || "");
-    const isNPCInActiveChat = (
-      (pendingChatTarget && pendingChatTarget === name)
-      || conversationWith === "Crow"
-      || conversationWith === "克罗"
-    );
     if (isNPCInActiveChat && p.alive) {
       thoughtText = "";
+      displaySpeechText = "";
       delete blueBubbleCache[name];
       delete thoughtBubbleCache[name];
-      if (isActionStatusBubble) {
-        displaySpeechText = "";
-      }
     }
 
     if (

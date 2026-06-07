@@ -162,7 +162,7 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);' in html
     assert "isWaitBubble(bubblePayload)" in html
     assert 'showLocalCrowQuestion(name, msg);' in html
-    assert 'let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
+    assert 'let thoughtText = (isNPCInActiveChat || (suppressChatDisplay && !activeForAction)) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
     assert "if (resp && resp.pending_response)" in html
     assert "return;" in html
     assert "你说说，为什么你不可能是凶手？" in html
@@ -775,10 +775,12 @@ def test_thought_waiting_text_is_not_treated_as_real_model_thought():
 
     assert 'const hasRawThoughtText = !!(p.thought_summary || p.thought);' in html
     assert 'const rawThoughtText = freshThoughtForDisplay(name, p.thought_summary || p.thought || "", p);' in html
-    assert 'const waitingThoughtDisplay = "正在整理当前情况。";' in html
+    assert "正在整理当前情况" not in html
+    assert "整理当前情况" not in html
     assert 'const thought = compactBubbleText(rawThoughtText, 70);' in html
     assert 'rawThoughtText || "正在整理当前情况。"' not in html
     assert 'p.thought_summary || p.thought || waitingThoughtDisplay' not in html
+    assert 'if (!thought) return "";' in html
 
     build_start = html.find("function buildNpcThoughtBubble")
     build_end = html.find("function freshThoughtForDisplay", build_start)
@@ -1052,6 +1054,8 @@ def test_new_dusk_camera_and_waiting_behavior():
     assert 'pendingChatPhase === "waiting"' in html
     assert 'displaySpeechText = "正在聆听警长问询";' in html
     assert 'thoughtText = "";' in html
+    assert 'const isNPCInActiveChat = (' in html
+    assert 'let thoughtText = (isNPCInActiveChat || (suppressChatDisplay && !activeForAction)) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
     assert 'if (kind === "conversation_pending" && target === "Crow") {' in html
     assert 'return "正在聆听警长问询";' in html
 
@@ -1081,6 +1085,9 @@ def test_action_and_detective_chat_clear_blue_bubble_cache():
     assert 'conversationWith === "克罗"' in html
     assert 'if (isActionStatusBubble) {' in html
     assert 'displaySpeechText = "";' in html
+    assert 'p.action_plan = "";' in html
+    assert 'p.thought_summary = "";' in html
+    assert 'p.last_decision = {};' in html
 
 
 def test_action_status_and_start_action_mutual_exclusion():
