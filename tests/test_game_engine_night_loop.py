@@ -92,3 +92,30 @@ def test_dawn_discovers_body_and_starts_body_site_gathering(monkeypatch):
             assert engine.collision_maze[agent.y][agent.x] == 0
             positions.append((agent.x, agent.y))
     assert len(positions) == len(set(positions))
+
+
+def test_night_waits_for_player_confirmation_before_dawn(monkeypatch):
+    engine = _start_hunt(monkeypatch)
+    monkeypatch.setattr(engine, "_generate_daily_plans", lambda: None)
+    monkeypatch.setattr(game_engine.Agent, "compress_memory", lambda self, day: None)
+    engine.night_start_time -= engine.night_duration + 1
+
+    engine._night_tick()
+
+    assert engine.phase == game_engine.GamePhase.NIGHT
+    assert engine._night_progress["complete"] is True
+    assert engine.confirm_night_transition()["success"] is True
+    assert engine.phase == game_engine.GamePhase.DAY
+
+
+def test_silver_knife_phase_does_not_run_before_wolf_phase(monkeypatch):
+    engine = _start_hunt(monkeypatch)
+    calls = []
+    monkeypatch.setattr(engine, "_maybe_use_silver_knife_at_night", lambda: calls.append("knife"))
+
+    engine._night_tick()
+    assert calls == []
+
+    engine.night_start_time -= engine.night_duration / 2 + 1
+    engine._night_tick()
+    assert calls == ["knife"]

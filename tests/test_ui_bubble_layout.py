@@ -162,7 +162,7 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);' in html
     assert 'return !!pendingChatTarget && name === pendingChatTarget;' in html
     assert 'showLocalCrowQuestion(name, msg);' in html
-    assert 'let thoughtText = suppressChatDisplay ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
+    assert 'let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
 
 
 def test_deep_dive_submit_decrements_remaining_optimistically():
@@ -213,7 +213,7 @@ def test_thought_bubble_stays_above_own_speech_without_arrow():
     assert 'runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0' in html
     assert '<span class="bubble-key">思考：</span>' in html
     assert '<span class="bubble-key">计划：</span>' in html
-    assert '<span class="bubble-key">行动：</span>' in html
+    assert '<span class="bubble-key">开始行动：</span>' in html
     assert "tBubbleEl.dataset.owner = name;" in html
     assert 'type: "thought"' in html
     assert "owner: tB.dataset.owner || name" in html
@@ -285,13 +285,14 @@ def test_werewolf_role_tag_uses_status_werewolf_names():
 def test_thought_bubble_uses_same_ttl_as_speech_bubble():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    assert "const BUBBLE_LIFETIME_SECONDS = 12;" in html
+    assert "const BUBBLE_LIFETIME_SECONDS = 6;" in html
     assert "let thoughtBubbleCache = {};" in html
     assert "function freshThoughtForDisplay(name, rawText, persona)" in html
     assert "persona.thought_time" in html
-    assert '["thinking", "planning", "moving", "acting"].includes(persona.runtime_state)' in html
+    assert '["thinking", "planning", "starting_action", "acting"].includes(persona.runtime_state)' in html
+    assert '(!departureWaiting && persona.runtime_state === "moving")' in html
     assert "now - cached.time > BUBBLE_LIFETIME_SECONDS" in html
-    assert 'let thoughtText = suppressChatDisplay ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
+    assert 'let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);' in html
 
 
 def test_chinese_titles_and_log_labels():
@@ -309,7 +310,7 @@ def test_frontend_renders_agent_log_panel():
     assert "function updateLog(state)" in html
     assert 'id="log-panel"' in html
     assert 'id="log-content"' in html
-    assert 'const showTypes = ["think", "chat", "kill", "action", "error"];' in html
+    assert 'const showTypes = ["think", "chat", "kill", "action", "error", "system"];' in html
     assert "function shouldDisplayLogEntry(entry)" in html
     assert 'escapeHtml(entry.message || "")' in html
     assert "escapeHtml(parts[0])" in html
@@ -472,11 +473,13 @@ def test_delegated_bubble_patch_requirements():
     assert 'const maxLift = 300;' in html
     assert 'for (let iter = 0; iter < 15; iter++)' in html
 
-    # 4. Hide thought bubble when speech bubble visible unless activeForAction
-    assert 'if (speechText && p.alive) {' in html
-    assert 'const activeForAction = runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0;' in html
-    assert 'if (!activeForAction) {' in html
+    # 4. Hide thought/action bubble when speech bubble visible.
+    assert 'const realSpeechVisible = !!speechText && p.alive && !isActionStatusBubble;' in html
+    assert 'if (realSpeechVisible) {' in html
     assert 'thoughtText = "";' in html
+    speech_block_start = html.find('if (speechText && p.alive) {')
+    speech_block = html[speech_block_start:html.find('let displaySpeechText = "";', speech_block_start)]
+    assert 'if (!activeForAction) {' not in speech_block
 
     # 5. History modal localization of memory/cognition/speech
     assert 'const localizedCognition = localizePersonNames(replaceEnglishNames(cognitionContent, gameState), gameState);' in html
@@ -579,6 +582,9 @@ def test_bubble_speech_prefix_shows_speaker_and_target_tdd():
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert 'function bubbleSpeechText(speaker, payload)' in html
     assert 'bubbleSpeechText(name, bubblePayload)' in html
+    assert 'if (kind === "action_status") {' in html
+    assert 'text = stripActionPlanningTail(text);' in html
+    assert 'return `${text.replace(/[。.!！]+$/, "") || "继续当前事务"}...`;' in html
     assert 'const speakerDisplayName = getDisplayName(speaker, gameState);' in html
     assert 'target && target.toLowerCase() !== speaker.toLowerCase()' in html
     assert '`${speakerDisplayName}对${targetDisplayName}说：${text}`' in html
@@ -601,10 +607,14 @@ def test_rules_logs_and_bubbles_requirements():
     idx = html.find("#log-content .log-think")
     style_block = html[idx:idx+150]
     assert "font-style: italic" not in style_block
+    assert "#ff79c6" in style_block
+    assert "#log-content .log-tag-think" in html
+    assert "#log-content .log-tag-action" in html
+    assert "function logTagColorClass(entry)" in html
     assert ".log-entry {" in html
 
     # 3. Explicit labels in logs: 思考, 计划, 行动, 对话, 错误
-    assert 'class="log-tag"' in html
+    assert 'class="log-tag${tagClass}"' in html
     assert '"\u601d\u8003"' in html # "思考"
     assert '"\u8ba1\u5212"' in html # "计划"
     assert '"\u884c\u52a8"' in html # "行动"
@@ -635,7 +645,7 @@ def test_npc_npc_speech_bubble_display_contract():
 
     # 3. Check that thought bubble suppression logic does NOT swallow or clear speechText
     # Verify the suppression logic only sets thoughtText = "" and speechText is not altered
-    assert 'if (speechText && p.alive) {' in html
+    assert 'if (realSpeechVisible) {' in html
     assert 'thoughtText = "";' in html
     # Ensure speechText is not cleared/swallowed in the suppression logic
     assert 'speechText = "";' not in html
@@ -649,8 +659,9 @@ def test_static_regression_icons_and_bubble_clamping():
     assert 'const hasDecisionError = p.last_decision && p.last_decision.ok === false;' in html
     assert 'const modelFailed = !!(hasResponseError || hasDecisionError);' in html
 
-    # Verify lightbulb (showBulb) is not displayed by default and has strict check conditions
-    assert 'const showBulb = p.alive && p.has_new_clue === true && !isNight && !isDusk && !isGathering && (chatAvailable || deepDiveAvailable);' in html
+    # Verify lightbulb can read both the legacy alias and explicit hint fields.
+    assert 'const hasClueHint = p.has_new_clue === true || p.has_visible_clue_hint === true || p.has_detective_hint === true;' in html
+    assert 'const showBulb = p.alive && hasClueHint && !isNight && !isDusk && !isGathering && (chatAvailable || deepDiveAvailable);' in html
     assert 'const bulbHtml = showBulb ?' in html
 
     # Verify clampBubbleIntoLayer has the final boundary clamping logic for all currentSide cases
@@ -661,3 +672,320 @@ def test_static_regression_icons_and_bubble_clamping():
     assert '} else if (currentSide === "right") {' in html
     assert 'targetX = margin;' in html
     assert 'targetX = viewportWidth - margin - width;' in html
+
+
+def test_prevent_down_orientation_twitching_during_movement():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    # Verify sprite.lastDir is tracked and set correctly
+    assert 'sprite.lastDir = "right";' in html
+    assert 'sprite.lastDir = "left";' in html
+    assert 'sprite.lastDir = "down";' in html
+    assert 'sprite.lastDir = "up";' in html
+    # Verify we check lastDir on stop to keep standing pose instead of force-switching to "down"
+    assert 'if (sprite.lastDir === "left") {' in html
+    assert 'sprite.setTexture(key, "left-walk.000");' in html
+    assert 'sprite.setTexture(key, "right-walk.000");' in html
+    assert 'sprite.setTexture(key, "up-walk.000");' in html
+    assert 'sprite.setTexture(key, "down-walk.000");' in html
+
+
+def test_unified_bubble_ttl_without_exemptions():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Verify that applyBlueBubbleTTL body does not contain activeForAction exemption to bypass TTL
+    idx = html.find("function applyBlueBubbleTTL")
+    assert idx != -1
+    body = html[idx : html.find("function", idx + 1)]
+    assert "activeForAction" not in body
+
+    # 2. Verify that freshThoughtForDisplay expires thoughts regardless of activeNow state
+    assert "if (now - cached.time > BUBBLE_LIFETIME_SECONDS)" in html
+    assert "if (!activeNow && now - cached.time > BUBBLE_LIFETIME_SECONDS)" not in html
+
+    # 3. Verify that buildNpcThoughtBubble has check to return empty string if has thought but it expired
+    assert "hasRawThoughtText && !rawThoughtText" in html
+
+
+def test_chat2api_startup_runs_backend_llm_check():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'fetch("/api/test_llm_provider"' in html
+    assert 'runtimeOptions.provider === "chat2api"' not in html
+    assert "无需远程 API 检测" not in html
+
+
+def test_new_bubble_behavior():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Verify that only 思考 / 计划 / 行动 are returned as labels in thought/action bubbles
+    # and no '理由' label is present.
+    assert "思考：" in html
+    assert "计划：" in html
+    assert "行动：" in html
+    assert "理由：" not in html
+
+    # 2. Verify thinking/planning gets a fallback bubble, but does not bypass unified TTL.
+    idx = html.find("function applyBlueBubbleTTL")
+    assert idx != -1
+    body = html[idx : html.find("function", idx + 1)]
+    assert "activeForPlan" not in body
+    assert 'if (!activeForPlan) {' in html
+
+    # 3. Verify action bubble target priorities:
+    # action_target_person > action_target_object > action_target_location_label > location_label
+    assert "p.action_target_person && String(p.action_target_person).trim() !== \"\"" in html
+    assert "p.action_target_object && String(p.action_target_object).trim() !== \"\"" in html
+    assert "p.action_target_location_label && String(p.action_target_location_label).trim() !== \"\"" in html
+    assert "p.location_label && String(p.location_label).trim() !== \"\"" in html
+
+    # 4. Verify translateObject helper function translates object names to Chinese
+    assert "function translateObject(obj)" in html
+    assert '"behind the supply store counter": "五金店柜台后"' in html
+    assert '"behind the cafe counter": "咖啡馆柜台后"' in html
+
+
+def test_agent_log_whitelist_covers_action_lifecycle():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'msg.includes("[行动计划]") || msg.includes("[开始行动]") || msg.includes("[行动结果]")' in html
+
+
+def test_blue_bubble_sequential_thought_plan_action():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'if (activeForAction) {' in html
+    assert 'return `${owner}<div class="bubble-row"><span class="bubble-key">开始行动：</span>${escapeHtml(sentence)}</div>`;' in html
+    assert "cached.actionKey !== actionKey" in html
+    assert "function blueBubbleActionKey(persona, html)" in html
+    assert "if (activeForPlan && cached && !cached.expired" in html
+    assert 'const target = actionTargetText(p, state);' in html
+    assert 'if (target) return `前往${target}，${task}`;' in html
+    assert '，目标：' not in html
+
+
+def test_thought_waiting_text_is_not_treated_as_real_model_thought():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'const hasRawThoughtText = !!(p.thought_summary || p.thought);' in html
+    assert 'const rawThoughtText = freshThoughtForDisplay(name, p.thought_summary || p.thought || "", p);' in html
+    assert 'const waitingThoughtDisplay = "正在整理当前情况。";' in html
+    assert 'const thought = compactBubbleText(rawThoughtText, 70);' in html
+    assert 'rawThoughtText || "正在整理当前情况。"' not in html
+    assert 'p.thought_summary || p.thought || waitingThoughtDisplay' not in html
+
+    build_start = html.find("function buildNpcThoughtBubble")
+    build_end = html.find("function freshThoughtForDisplay", build_start)
+    assert build_start != -1 and build_end != -1
+    build_body = html[build_start:build_end]
+    assert "querySelector" not in build_body
+
+
+def test_white_bubble_displays_ongoing_action_during_movement_or_action():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "function actionStartBubbleEnded(name, persona)" in html
+    assert "cached.expired !== true" in html
+    assert "cached.actionKey === blueBubbleActionKey(persona, cached.html)" in html
+    assert 'const isActionStatusBubble = bubblePayload && typeof bubblePayload === "object" && String(bubblePayload.kind || "") === "action_status";' in html
+    assert "const actionStatusVisibleAt = Number(p.action_status_visible_at || 0);" in html
+    assert "const actionStatusReady = actionStatusVisibleAt <= 0 || (Date.now() / 1000) >= actionStatusVisibleAt;" in html
+    assert 'const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStartBubbleEnded(name, p) && actionStatusReady;' in html
+    assert "const departureDelayUntil = Number(p.departure_delay_until || 0);" in html
+    assert "const departureWaiting = departureDelayUntil > (Date.now() / 1000);" in html
+    assert 'const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);' in html
+    assert "const isRealSpeechBubble = !!speechText && !isActionStatusBubble;" not in html
+    assert "if (!thoughtText) {" in html
+    assert "if (isActionStatusBubble && !canShowActionDuration) {" in html
+    assert "if (!thoughtText || (isRealSpeechBubble && activeForAction)) {" not in html
+    assert 'if (!displaySpeechText && p.alive && canShowActionDuration) {' in html
+    assert 'displaySpeechText = formatActionDurationLine(p, gameState);' in html
+    assert 'function formatActionDurationLine(p, state)' in html
+    assert 'if (!displaySpeechText && p.alive && (runtime === "moving" || runtime === "acting")) {' not in html
+
+
+def test_strict_sequential_bubbles_and_action_status_clean():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Planning cache is preserved only while planning; action replaces it immediately.
+    assert "blueBubbleCache" in html
+    assert "cached.html.includes" in html
+    assert "if (activeForPlan && cached && !cached.expired" in html
+    assert "cached.actionKey !== actionKey" in html
+
+    # 2. 检查 actionStartBubbleEnded
+    assert "actionStartBubbleEnded(name, p)" in html
+    assert 'runtime === "starting_action"' in html
+
+    # 3. 检查 runtime acting, path_len = 0, 非 visually moving 时的白泡显示
+    assert 'runtime === "acting"' in html
+    assert 'Number(p.path_len || 0) <= 0' in html
+    assert '!isVisuallyMoving' in html
+
+    # 4. 检查 action_status 不加说话前缀与以 ... 结尾
+    assert "nameCandidates" in html
+    assert "toSayRegex" in html
+    assert "sayRegex" in html
+    assert "colonRegex" in html
+    assert 'return `${text.replace(/[。.!！]+$/, "") || "继续当前事务"}...`;' in html
+
+
+def test_action_status_ttl_exclusion_and_purple_pink_logs():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # (1) Action status ends with ... regardless of path
+    assert 'displaySpeechText = displaySpeechText.replace(/[。.!！]+$/, "").trim();' in html
+    assert 'if (!displaySpeechText.endsWith("...")) {' in html
+    assert 'displaySpeechText = displaySpeechText + "...";' in html
+
+    # (2) Bypassing layout mutual exclusion and TTL while acting
+    assert 'action_status 不受普通说话 TTL 提前隐藏，只由 runtime/action gate 控制，且不受 layout 互斥提前隐藏' in html
+    assert 'if (canShowActionDuration) {' in html
+    assert 'if (isActionStatusBubble) {' in html
+    assert 'displaySpeechText = speechText;' in html
+
+    # (3) Blue-bubble logs are purple; action result and chat logs are bright green.
+    assert '#log-content .log-action {' in html
+    assert '#log-content .log-think {' in html
+    idx_action = html.find("#log-content .log-action")
+    assert idx_action != -1
+    assert "color: #6dff8f;" in html[idx_action:idx_action+100]
+
+    idx_think = html.find("#log-content .log-think")
+    assert idx_think != -1
+    assert "color: #ff79c6;" in html[idx_think:idx_think+100]
+
+    # (4) Real NPC speech is bright green, not dark green or purple.
+    assert "#log-content .log-chat {" in html
+    idx_chat = html.find("#log-content .log-chat")
+    assert idx_chat != -1
+    assert "color: #6dff8f;" in html[idx_chat:idx_chat+100]
+    assert 'if (type === "chat") return "log-chat";' in html
+    assert 'const showTypes = ["think", "chat", "kill", "action", "error", "system"];' in html
+    assert 'const visibleLogTypes = ["think", "chat", "kill", "action", "error", "system"];' in html
+
+    # (5) System logs are golden yellow; error/death logs are red.
+    idx_system = html.find("#log-content .log-system")
+    assert idx_system != -1
+    assert "color: #f6c343;" in html[idx_system:idx_system+100]
+    idx_error = html.find("#log-content .log-error")
+    assert idx_error != -1
+    assert "color: #f85149;" in html[idx_error:idx_error+100]
+    idx_kill = html.find("#log-content .log-kill")
+    assert idx_kill != -1
+    assert "color: #f85149;" in html[idx_kill:idx_kill+100]
+
+    # (6) Names inherit the line color; no extra blue category in log text.
+    idx_agent = html.find("#log-content .log-agent")
+    assert idx_agent != -1
+    assert "color: inherit;" in html[idx_agent:idx_agent+100]
+    assert "function isBlueBubbleLogEntry(entry)" in html
+    blue_start = html.find("function isBlueBubbleLogEntry(entry)")
+    blue_block = html[blue_start:html.find("function logColorClass", blue_start)]
+    assert "msg.includes(\"[行动计划]\")" in blue_block
+    assert "msg.includes(\"[开始行动]\")" in blue_block
+    assert "msg.includes(\"[行动结果]\")" not in blue_block
+
+
+def test_hidden_blue_action_bubble_does_not_count_as_displayed():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "const realSpeechVisible = !!speechText && p.alive && !isActionStatusBubble;" in html
+    assert 'if (realSpeechVisible) {' in html
+    assert 'thoughtText = applyBlueBubbleTTL(name, thoughtText, p);' in html
+    assert 'A hidden blue' in html
+
+
+def test_white_speech_bubble_must_not_coexist_with_blue_action_bubble():
+    """White speech/conversation bubbles MUST NOT coexist with blue start-action bubbles.
+    The activeForAction guard was removed so speech always suppresses thought bubbles."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # The suppression block must set thoughtText unconditionally when speech exists
+    speech_block_start = html.find("if (realSpeechVisible) {")
+    assert speech_block_start != -1
+    speech_block = html[speech_block_start:html.find('let displaySpeechText = "";', speech_block_start)]
+    assert 'thoughtText = "";' in speech_block
+
+    # This block must NOT have an activeForAction condition guarding the suppression.
+    assert "if (!activeForAction) {" not in speech_block
+
+
+def test_departure_delay_until_controls_round_two_speech_exclusively():
+    """departure_delay_until is the mechanism for round-two departure speech:
+    when departureWaiting is true, activeForAction is false, so speech
+    suppresses the action bubble — but the mechanism is defined at the
+    activeForAction level, not at the suppression guard level."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # activeForAction must include departureWaiting
+    assert "const departureWaiting = departureDelayUntil > (Date.now() / 1000);" in html
+    assert 'const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);' in html
+
+    # The thought/action bubble building also respects departureWaiting
+    assert 'if (!activeForPlan && !activeForAction && !recentThought) return "";' in html
+    assert "!departureWaiting &&" in html
+
+
+def test_dusk_and_night_have_explicit_scene_dimming_layers():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'id="phase-atmosphere"' in html
+    assert "#phase-atmosphere.dusk" in html
+    assert "#phase-atmosphere.night" in html
+    assert 'atmosphere.className = isNight ? "night" : (isDusk ? "dusk" : "");' in html
+
+
+def test_dusk_stage_renderer_gates_crow_input_and_locks_other_controls():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert "function duskStage(state)" in html
+    assert "voteSummary.stage || voteSummary.current_stage" in html
+    assert 'stage === "crow_statement" || stage === "crow_input"' in html
+    assert "function renderDuskVotingFlow(state)" in html
+    assert "renderDuskVotingFlow(state);" in html
+    assert "const duskInteractionLocked = isDusk && stage !== \"crow_statement\" && stage !== \"crow_input\";" in html
+
+
+def test_vote_rows_support_self_vote_then_hide_all_vote_buttons():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert "function eligibleDuskParticipants(state)" in html
+    assert "voteSummary.eligible_participants" in html
+    assert 'row.className = `dusk-vote-row' in html
+    assert 'class="dusk-portrait"' in html
+    assert 'button.className = "dusk-vote-button";' in html
+    assert "submitCrowVote(name)" in html
+    assert 'socket.emit("submit_crow_vote", {target_name: name});' in html
+    assert 'fetch("/api/submit_crow_vote"' in html
+    assert "const crowHasVoted = hasCrowVoted(voteSummary);" in html
+    assert "voteSummary.crow_voted === true" in html
+    assert "const showVoteButtons = stage === \"voting\" && !crowHasVoted;" in html
+
+
+def test_vote_results_use_backend_winner_integer_counts_and_voter_icons():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert "function normalizeVoteCounts(voteSummary)" in html
+    assert "Math.trunc(Number(" in html
+    assert "count.voters" in html
+    assert 'class="dusk-voter-icon"' in html
+    assert "const winner = voteSummary.winner || voteSummary.jail_target || \"\";" in html
+    assert 'name === winner ? " winner" : ""' in html
+    assert "voteSummary.tie_broken_by_crow" in html
+    assert "最高票平票，按警长裁决权，由警长所投对象胜出。" in html
+    assert 'onclick="confirmVoteResult()"' in html
+    assert 'socket.emit("confirm_vote_result");' in html
+    assert "jailAgent(name)" not in html
+
+
+def test_night_transition_is_anonymous_fullscreen_and_confirm_only():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'id="night-transition-overlay"' in html
+    assert "#night-transition-overlay.show" in html
+    assert 'class="night-actor wolf"' in html
+    assert html.count('class="night-actor wolf"') == 2
+    assert 'class="night-actor knife"' in html
+    assert "function renderNightTransition(state)" in html
+    assert "state.night_transition || state.night_sequence" in html
+    assert 'id="night-progress-fill"' in html
+    assert 'id="night-finish-confirm" onclick="confirmNightTransition()"' in html
+    assert 'socket.emit("confirm_night_transition");' in html
+    assert "夜晚结束" in html
+    assert "target_name" not in html[html.index("function renderNightTransition(state)"):html.index("function renderNightTransition(state)") + 2500]

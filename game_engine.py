@@ -21,6 +21,7 @@
 """
 
 import json
+import math
 import os
 import time
 import random
@@ -41,6 +42,7 @@ from agent import Agent
 
 from engine_bubbles import EngineBubbleMixin
 from engine_dusk import EngineDuskMixin
+from engine_memory_queue import MemoryQueue, MemoryTask
 from engine_navigation import (
     _apply_collision_overrides,
     _connect_maze_regions,
@@ -50,6 +52,7 @@ from engine_navigation import (
     load_collision_maze,
     load_scene_data,
 )
+from engine_observation import ObservationEvent, filter_observable_events
 from engine_tasks import EngineTasksMixin
 from llm import chat, chat_for_agent, get_last_error_for_agent
 
@@ -685,6 +688,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._detective_chat_pending_target = None
         self._detective_chat_job_id = 0
         self._npc_chat_tokens = {}
+        self._speech_queue = []
+        self._speech_queue_seq = 0
+        self._speech_worker_active = False
+        self._observation_events = []
+        self._observation_event_id = 1
+        self._memory_queue = MemoryQueue()
+        self._memory_task_id = 1
+        self._memory_worker_active = False
 
 
 
@@ -770,6 +781,287 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
+
+    def _observation_radius(self) -> int:
+        return int(CONFIG.get("perception", {}).get("observation_radius", 10))
+
+    def _observation_ttl_seconds(self) -> float:
+        return float(CONFIG.get("perception", {}).get("observation_ttl_seconds", 300))
+
+    def _record_observation_event(
+        self,
+        event_type: str,
+        subject: str,
+        text: str,
+        x: int,
+        y: int,
+        public: bool = False,
+        hidden: bool = False,
+        witnesses=None,
+        object: str = "",
+        source: str = "world",
+    ) -> ObservationEvent:
+        event = ObservationEvent(
+            event_id=f"obs_{self._observation_event_id:06d}",
+            event_type=str(event_type or "event"),
+            subject=str(subject or ""),
+            text=str(text or ""),
+            x=int(x),
+            y=int(y),
+            day=int(self.day),
+            game_hour=float(self.game_hour),
+            timestamp=time.time(),
+            object=str(object or ""),
+            public=bool(public),
+            hidden=bool(hidden),
+            witnesses=set(witnesses or []),
+            source=str(source or "world"),
+        )
+        self._observation_event_id += 1
+        self._observation_events.append(event)
+        cutoff = time.time() - self._observation_ttl_seconds()
+        self._observation_events = [item for item in self._observation_events if item.timestamp >= cutoff]
+        if event.event_type in {"body_discovered", "vote_result", "night_kill"}:
+            if event.public:
+                recipients = [
+                    name for name, agent in self.agents.items()
+                    if name != self.detective_name and agent.is_alive and name not in self._jailed
+                ]
+            else:
+                recipients = [
+                    name for name in event.witnesses
+                    if name in self.agents
+                    and name != self.detective_name
+                    and self.agents[name].is_alive
+                    and name not in self._jailed
+                ]
+            for recipient in recipients:
+                self._enqueue_memory_task(
+                    recipient,
+                    {
+                        "kind": "observation_event",
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "subject": event.subject,
+                        "text": event.text,
+                        "day": event.day,
+                        "game_hour": event.game_hour,
+                        "public": event.public,
+                        "hidden": event.hidden,
+                        "witnesses": sorted(event.witnesses),
+                    },
+                )
+        return event
+
+    def _observable_events_for(self, name: str, agent) -> list[ObservationEvent]:
+        return filter_observable_events(
+            self._observation_events,
+            observer_name=name,
+            observer_x=agent.x,
+            observer_y=agent.y,
+            now=time.time(),
+            radius=self._observation_radius(),
+            ttl_seconds=self._observation_ttl_seconds(),
+        )
+
+    def _build_observation_packet(self, name: str, agent) -> dict:
+        nearby_people = []
+        radius = self._observation_radius()
+        for other_name, other in self.agents.items():
+            if other_name == name or not other.is_alive:
+                continue
+
+            dist = abs(agent.x - other.x) + abs(agent.y - other.y)
+            if dist <= radius:
+                nearby_people.append(
+                    f"- {display_name_for_person(other_name)}在{other.current_location or '某处'}"
+                    f"（正在{localize_visible_character_names(other.current_action or '活动')}）"
+                )
+
+        nearby_objects = get_nearby_objects(
+            agent.x,
+            agent.y,
+            3,
+            self.sector_maze,
+            self.arena_maze,
+            self.go_maze,
+            self.sector_dict,
+            self.arena_dict,
+            self.go_dict,
+        )
+        scene = get_tile_scene(
+            agent.x,
+            agent.y,
+            self.sector_maze,
+            self.arena_maze,
+            self.go_maze,
+            self.sector_dict,
+            self.arena_dict,
+            self.go_dict,
+        )
+        visible_events = self._observable_events_for(name, agent)
+        query = " ".join(
+            [
+                str(agent.current_location or ""),
+                str(agent.current_action or ""),
+                " ".join(event.text for event in visible_events[-5:]),
+            ]
+        )
+        memory_text = ""
+        if hasattr(agent, "get_retrieved_memory_text"):
+            try:
+                memory_text = agent.get_retrieved_memory_text(query, 800)
+            except Exception:
+                memory_text = ""
+        action_history = getattr(agent, "action_history", [])[-5:]
+        history_lines = [
+            f"- {item.get('location', '?')}: {item.get('action', '?')}"
+            for item in reversed(action_history)
+        ]
+        public_lines = [
+            f"第{self.day}天 {self.game_hour:.1f}点，阶段{self.phase.value}。",
+            f"已死亡：{', '.join(display_name_for_person(item) for item in self.dead_list) if self.dead_list else '暂无'}。",
+        ]
+        return {
+            "self_state_text": (
+                f"我在{agent.current_location or self._reverse_lookup_location(agent.x, agent.y) or '某处'}；"
+                f"当前行动：{localize_visible_character_names(agent.current_action or '空闲')}。"
+            ),
+            "nearby_people_text": "\n".join(nearby_people) if nearby_people else "附近没有人",
+            "nearby_objects_text": "、".join(nearby_objects) if nearby_objects else "附近没有可互动物件",
+            "scene_text": f"{scene.get('sector', '')} {scene.get('arena', '')}".strip(),
+            "observable_events_text": "\n".join(f"- {event.text}" for event in visible_events) if visible_events else "暂时没有新的可见事件",
+            "relevant_memory_text": memory_text or "暂时没有检索到相关记忆",
+            "current_goal_text": str(getattr(agent, "scratch", {}).get("currently", "") or ""),
+            "current_action_text": str(agent.current_action or ""),
+            "action_history_text": "\n".join(history_lines) if history_lines else "暂无近期行动记录",
+            "public_world_text": "\n".join(public_lines),
+            "visible_events": [
+                {
+                    "event_id": event.event_id,
+                    "event_type": event.event_type,
+                    "subject": event.subject,
+                    "text": event.text,
+                    "day": event.day,
+                    "game_hour": event.game_hour,
+                }
+                for event in visible_events
+            ],
+        }
+
+    def _format_observation_for_decision(self, packet: dict) -> tuple[str, str]:
+        nearby = "\n".join(
+            [
+                "【自身】",
+                packet.get("self_state_text", ""),
+                "【附近的人】",
+                packet.get("nearby_people_text", ""),
+                "【当前可见事件】",
+                packet.get("observable_events_text", ""),
+                "【相关记忆】",
+                packet.get("relevant_memory_text", ""),
+                "【近期行动】",
+                packet.get("action_history_text", ""),
+            ]
+        )
+        scene = "\n".join(
+            [
+                packet.get("scene_text", ""),
+                f"可见物件：{packet.get('nearby_objects_text', '')}",
+                packet.get("public_world_text", ""),
+            ]
+        )
+        return nearby, scene
+
+    def _default_grounded_action_status(self, name: str, agent, packet: dict) -> str:
+        objects = str(packet.get("nearby_objects_text", "") or "")
+        current = str(agent.current_action or "").strip()
+        if objects and objects != "附近没有可互动物件":
+            first_object = objects.split("、")[0].strip()
+            if first_object:
+                return f"整理{first_object}"[:16]
+        if current:
+            return current[:16]
+        return "整理手头事务"
+
+    def _ground_action_status(self, name: str, agent, action_status: str, packet: dict) -> str:
+        status = str(action_status or "").strip()
+        nearby = str(packet.get("nearby_people_text", "") or "")
+        if not status:
+            return self._default_grounded_action_status(name, agent, packet)
+        empty_people = "附近没有人" in nearby
+        invented_people_terms = ("客人", "顾客", "镇民", "对方")
+        if empty_people and any(term in status for term in invented_people_terms):
+            return self._default_grounded_action_status(name, agent, packet)
+        return status[:24]
+
+    def _enqueue_memory_task(self, agent_name: str, payload: dict) -> MemoryTask:
+        task = MemoryTask(
+            task_id=f"memq_{self._memory_task_id:06d}",
+            agent_name=agent_name,
+            payload=dict(payload or {}),
+        )
+        self._memory_task_id += 1
+        self._memory_queue.enqueue(task)
+        return task
+
+    def _enqueue_conversation_memory(self, speaker: str, listener: str, transcript) -> None:
+        for agent_name in (speaker, listener):
+            self._enqueue_memory_task(
+                agent_name,
+                {
+                    "kind": "conversation_completed",
+                    "speaker": speaker,
+                    "listener": listener,
+                    "transcript": list(transcript or []),
+                    "day": self.day,
+                    "game_hour": self.game_hour,
+                },
+            )
+
+    def _process_next_memory_task(self) -> bool:
+        if self._memory_worker_active:
+            return False
+        task = self._memory_queue.pop_next()
+        if not task:
+            return False
+        self._memory_worker_active = True
+        t = threading.Thread(target=self._run_memory_task, args=(task,), daemon=True)
+        self.llm_threads.append(t)
+        t.start()
+        return True
+
+    def _run_memory_task(self, task: MemoryTask) -> None:
+        try:
+            agent = self.agents.get(task.agent_name)
+            if not agent or not hasattr(agent, "consolidate_memory"):
+                return
+            try:
+                parsed = agent.consolidate_memory(task.payload)
+            except Exception as exc:
+                with self._lock:
+                    self._log(f"[记忆整理] {display_name_for_person(task.agent_name)} 整理失败：{exc}", "system")
+                return
+            with self._lock:
+                current_agent = self.agents.get(task.agent_name)
+                if not current_agent:
+                    return
+                for memory in parsed.get("memories", []):
+                    text = str(memory.get("text", "")).strip()
+                    if not text:
+                        continue
+                    if hasattr(current_agent, "add_typed_memory"):
+                        current_agent.add_typed_memory(memory_type=memory.get("type", "event"), text=text, payload=memory)
+                        if hasattr(current_agent, "add_memory"):
+                            current_agent.add_memory(f"memory_consolidation[{memory.get('type', 'event')}]: {text}", self.day)
+                    else:
+                        current_agent.add_memory(f"记忆整理[{memory.get('type', 'event')}]：{text}", self.day)
+                current_goal = str(parsed.get("current_goal", "") or "").strip()
+                if current_goal:
+                    current_agent.update_scratch(currently=current_goal)
+        finally:
+            with self._lock:
+                self._memory_worker_active = False
 
     def _init_agents(self):
 
@@ -1520,21 +1812,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
     def _start_crow_scene_investigation(self) -> None:
 
-        crow = self.agents.get(self.detective_name)
-
-        if not crow or not crow.is_alive:
-
-            return
-
-        crow.current_action = "调查案发现场与尸体周边线索"
-
-        crow.current_action_type = "investigate"
-
-        crow.current_emoji = "🔎"
-
-        crow.runtime_state = "acting"
-
-        self._log("🔎 Crow 开始调查案发现场与尸体周边线索", "action")
+        return
 
 
 
@@ -1816,7 +2094,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if reached_return_target:
 
-                crow.runtime_state = "acting"
+                crow.runtime_state = "idle"
 
                 self._body_burial = None
 
@@ -2485,7 +2763,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 ## 任务（第一轮发言 — 只能说话，不能离开）
 
-请发表你的第一轮发言。不要自我介绍，不要说”我是……”。直接说 1-2 句完整、自然、有个人细节的话（60-72个中文字左右，不要像模板），谈谈：
+请发表你的第一轮发言。不要自我介绍，不要说”我是……”。直接说 1-2 句完整、自然、有个人细节的话（60个中文字左右，单句约30字以内，不要长复句，不要为了凑字数重复，不要像模板），谈谈：
 - 昨晚你在哪里，做了什么
 
 - 你现在心里最不踏实的是什么
@@ -3013,6 +3291,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 agent.target_x, agent.target_y = target
 
+            if (agent.target_x, agent.target_y) == (agent.x, agent.y):
+                neighbor = self._neighbor_action_path(name, agent)
+                if neighbor:
+                    nx, ny, path = neighbor
+                    agent.target_x, agent.target_y = nx, ny
+                    self.agent_paths[name] = path
             agent.current_location = "home"
 
             return True
@@ -3067,6 +3351,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 agent.target_x, agent.target_y = target
 
+            if (agent.target_x, agent.target_y) == (agent.x, agent.y):
+                neighbor = self._neighbor_action_path(name, agent)
+                if neighbor:
+                    nx, ny, path = neighbor
+                    agent.target_x, agent.target_y = nx, ny
+                    self.agent_paths[name] = path
             agent.current_location = norm_location
 
             return True
@@ -3218,7 +3508,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         if log_type == "action":
             if stripped.startswith("["):
-                return False
+                return stripped.startswith(("[行动计划]", "[开始行动]", "[行动结果]"))
             return stripped.startswith(("📋", "🚶", "🔎", "🔧", "💍", "🔨", "⚠️"))
 
         return log_type in {"chat", "kill", "error"}
@@ -3352,6 +3642,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._detective_chat_active_target = None
         self._detective_chat_pending_target = None
         self._detective_chat_job_id = 0
+        self._observation_events = []
+        self._observation_event_id = 1
+        self._memory_queue = MemoryQueue()
+        self._memory_task_id = 1
+        self._memory_worker_active = False
         self._silver_jewelry_holder = ""
 
         self._silver_knife_holder = ""
@@ -3478,6 +3773,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                         self._night_tick()
 
+                    self._process_next_memory_task()
+
                 # 锁外广播状态，避免阻塞游戏循环
 
                 self._broadcast_state()
@@ -3493,6 +3790,27 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
+
+    def _start_stage_reflection(self, stage: str) -> None:
+        if not getattr(self, "_running", False):
+            return
+        if stage != "night_start":
+            return
+
+        def _reflect(agent_name: str, agent) -> None:
+            try:
+                if hasattr(agent, "daily_reflection"):
+                    agent.daily_reflection(self.day, getattr(self, "dead_agents", []))
+            except Exception as exc:
+                with self._lock:
+                    self._log(f"[阶段反思] {display_name_for_person(agent_name)} 失败：{exc}", "system")
+
+        for agent_name, agent in list(self.agents.items()):
+            if agent_name == self.detective_name or not getattr(agent, "is_alive", False):
+                continue
+            thread = threading.Thread(target=_reflect, args=(agent_name, agent), daemon=True)
+            self.llm_threads.append(thread)
+            thread.start()
 
     def _day_tick(self):
 
@@ -3564,7 +3882,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self.llm_reflect_idx += 1
 
-            self._llm_tick()
+            # Stage reflection is triggered by explicit phase transitions, not the day tick.
 
 
 
@@ -3576,13 +3894,26 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         elapsed = time.time() - self.night_start_time
 
-        self._maybe_use_silver_knife_at_night()
-
         self._advance_night_hunt()
+
+        if elapsed >= self.night_duration / 2:
+            self._maybe_use_silver_knife_at_night()
 
         if elapsed >= self.night_duration:
 
+            progress = getattr(self, "_night_progress", {})
+            progress.update({"active": False, "stage": "complete", "complete": True})
+            self._night_progress = progress
+
+    def confirm_night_transition(self) -> dict:
+        with self._lock:
+            if self.phase != GamePhase.NIGHT:
+                return {"success": False, "error": "当前不是夜晚阶段"}
+            progress = getattr(self, "_night_progress", {})
+            if not progress.get("complete"):
+                return {"success": False, "error": "夜晚尚未结束"}
             self._transition_to_day()
+            return {"success": True, "phase": self.phase.value, "day": self.day}
 
 
 
@@ -4190,7 +4521,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             elif self.phase == GamePhase.DUSK_DISCUSSION:
 
-                self._transition_to_night()
+                self._log("黄昏讨论和投票流程尚未完成，不能直接进入夜晚。", "system")
 
             # 其他阶段忽略
 
@@ -4211,6 +4542,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._chat_round_count = {}  # 新一天重置对话轮数
 
         self._silver_knife_night_checked = False
+
+        self._night_progress = {"active": True, "stage": "werewolf", "complete": False}
 
         self._log("夜幕降临...")
 
@@ -4292,6 +4625,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 "kill",
 
+            )
+            self._record_observation_event(
+                event_type="body_discovered",
+                subject=body.victim_name,
+                text=f"发现尸体：{display_name_for_person(body.victim_name)}，地点：{self._destination_label_zh(body.location)}。",
+                x=body.x,
+                y=body.y,
+                public=True,
+                hidden=False,
+                source="public_event",
             )
 
         return body
@@ -4727,6 +5070,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if not location:
 
             location = victim.current_location or "unknown location"
+        self._record_observation_event(
+            event_type="night_kill",
+            subject=target_name,
+            text=f"{display_name_for_person(target_name)}在夜里遭到袭击。",
+            x=victim.x,
+            y=victim.y,
+            public=False,
+            hidden=True,
+            witnesses=set(witnesses),
+            source="night",
+        )
 
         self.bodies.append(BodyRecord(
 
@@ -5072,6 +5426,200 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
+    def _planning_order(self) -> list[str]:
+        active_order = CONFIG.get("game", {}).get("active_agents", list(self.agents.keys()))
+        return [
+            name for name in active_order
+            if name in self.agents and name != self.detective_name
+            and self.agents[name].is_alive and name not in self._jailed
+        ]
+
+    def _current_planning_candidate(self) -> str | None:
+        order = self._planning_order()
+        if not order:
+            return None
+        if not hasattr(self, "_planning_turn_index"):
+            self._planning_turn_index = 0
+        if not hasattr(self, "_planning_cycle_started_at"):
+            self._planning_cycle_started_at = time.time()
+        self._planning_turn_index %= len(order)
+        return order[self._planning_turn_index]
+
+    def _advance_planning_turn(self, name: str | None = None) -> None:
+        order = self._planning_order()
+        if not order:
+            self._planning_turn_index = 0
+            self._planning_cycle_started_at = time.time()
+            return
+        self._planning_turn_index %= len(order)
+        if name is not None and order[self._planning_turn_index] != name:
+            return
+        old_index = self._planning_turn_index
+        self._planning_turn_index = (self._planning_turn_index + 1) % len(order)
+        if self._planning_turn_index <= old_index:
+            now = time.time()
+            self._last_planning_cycle_seconds = max(0.0, now - getattr(self, "_planning_cycle_started_at", now))
+            self._planning_cycle_started_at = now
+
+    def _skip_planning_turn_if_current(self, name: str) -> None:
+        if getattr(self, "_active_planning_agent", None):
+            return
+        if self._current_planning_candidate() == name:
+            self._advance_planning_turn(name)
+
+    def _game_minutes_to_real_seconds(self, minutes: int | float) -> float:
+        day_duration = float(getattr(self, "day_duration", CONFIG.get("game", {}).get("day_duration_seconds", 600)) or 600)
+        return max(0.0, float(minutes) * day_duration / 1440.0)
+
+    def _action_duration_minutes(self, pending_action: dict | None) -> int:
+        pending_action = pending_action or {}
+        try:
+            planned = int(float(pending_action.get("duration_minutes", 30)))
+        except (TypeError, ValueError):
+            planned = 30
+        planned = max(5, min(30, planned))
+        cycle_seconds = float(getattr(self, "_last_planning_cycle_seconds", 0.0) or 0.0)
+        if cycle_seconds <= 0:
+            planned = max(planned, 30)
+        else:
+            day_duration = float(getattr(self, "day_duration", CONFIG.get("game", {}).get("day_duration_seconds", 600)) or 600)
+            planned = max(planned, int(math.ceil(cycle_seconds * 1440.0 / day_duration)))
+        return max(5, min(30, planned))
+
+    def _action_duration_seconds(self, pending_action: dict | None) -> float:
+        configured_min = float(CONFIG.get("agent", {}).get("min_act_seconds", 5) or 0)
+        configured_max = float(CONFIG.get("agent", {}).get("max_act_seconds", 15) or 0)
+        if configured_min <= 0 and configured_max <= 0:
+            return 0.0
+        return max(6.0, self._game_minutes_to_real_seconds(self._action_duration_minutes(pending_action)))
+
+    def _action_start_bubble_seconds(self) -> float:
+        return max(0.0, float(CONFIG.get("game", {}).get("bubble_lifetime_seconds", 6) or 0))
+
+    def _mark_action_started(self, agent, now: float | None = None) -> None:
+        started_at = float(now if now is not None else time.time())
+        agent._action_started_at = started_at
+        agent._action_status_visible_at = 0
+        visible_until = started_at + self._action_start_bubble_seconds()
+        agent._action_start_visible_until = visible_until
+        agent._action_move_ready_at = visible_until
+
+    def _mark_action_arrived(self, agent, now: float | None = None) -> float:
+        arrived_at = float(now if now is not None else time.time())
+        agent._arrived_at_time = arrived_at
+        started_at = float(getattr(agent, "_action_started_at", 0) or arrived_at)
+        visible_at = max(arrived_at, started_at + self._action_start_bubble_seconds())
+        agent._action_status_visible_at = visible_at
+        return visible_at
+
+    def _neighbor_action_path(self, name: str, agent) -> tuple[int, int, list[tuple[int, int]]] | None:
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            tx, ty = agent.x + dx, agent.y + dy
+            if (
+                ty < 0
+                or ty >= len(self.collision_maze)
+                or tx < 0
+                or tx >= len(self.collision_maze[ty])
+                or self.collision_maze[ty][tx] != 0
+                or not self._is_tile_free_of_blocking_objects(tx, ty)
+            ):
+                continue
+            path = self._find_navigation_path((agent.x, agent.y), (tx, ty), blocked=self._occupied_tiles({name}))
+            if path is not None:
+                return tx, ty, path or [(tx, ty)]
+        return None
+
+    def _default_continuing_action(self, name: str, location: str = "") -> str:
+        defaults = {
+            "Arthur Burton": "整理工具架",
+            "Isabella Rodriguez": "整理咖啡杯盘",
+            "Klaus Mueller": "整理课堂资料",
+            "Maria Lopez": "清点药房货架",
+            "Sam Moore": "擦拭吧台",
+            "Jane Moreno": "修剪花枝",
+            "Mei Lin": "整理书架",
+        }
+        return defaults.get(name, "整理手头事务")
+
+    def _action_status_text(self, agent, pending_action: dict | None = None) -> str:
+        pending_action = pending_action or getattr(agent, "_pending_action", {}) or {}
+        text = str(pending_action.get("action_status") or pending_action.get("action") or getattr(agent, "current_action", "") or "").strip()
+        text = re.sub(r"^.*?[说講讲][:：]\s*", "", text)
+        text = re.sub(r"^(正在|正|在)\s*", "", text)
+        text = re.sub(r"^(要回|回到|返回|前往|去|留在)\S+\s+", "", text)
+        for marker in ("，也", "，还", "，并", "，再", "，检查", "，留意", "。", "；", ";"):
+            if marker in text:
+                text = text.split(marker, 1)[0].strip()
+        for prefix in ("前往", "去", "留在"):
+            if text.startswith(prefix) and "，" in text:
+                text = text.split("，", 1)[1].strip()
+        text = text or self._default_continuing_action(getattr(agent, "name", ""))
+        return localize_visible_character_names(text[:16].rstrip("。！？") + "...")
+
+    def _show_action_status_bubble(self, name: str, agent, pending_action: dict | None = None) -> None:
+        pending_action = pending_action or getattr(agent, "_pending_action", None)
+        if not pending_action or str(pending_action.get("action_type", "")).lower() in {"talk", "socialize"}:
+            return
+        self.chat_bubbles[name] = {"text": self._action_status_text(agent, pending_action), "target": "", "time": time.time(), "kind": "action_status"}
+
+    def _clear_action_status_bubble(self, name: str) -> None:
+        bubble = self.chat_bubbles.get(name)
+        if isinstance(bubble, dict) and bubble.get("kind") == "action_status":
+            self.chat_bubbles.pop(name, None)
+
+    def _arrive_at_pending_action(self, name: str, agent) -> None:
+        pending_action = getattr(agent, "_pending_action", None)
+        if not pending_action:
+            agent.runtime_state = "idle"
+            return
+        action_type = str(pending_action.get("action_type", "")).lower()
+        target_person = pending_action.get("target_person", "")
+        target_text = " ".join(
+            str(pending_action.get(key, "") or "")
+            for key in ("action", "action_status", "expected_result")
+        )
+        is_chat_like = action_type in {"talk", "socialize"} or (
+            target_person and any(word in target_text for word in ("打招呼", "询问", "聊天", "交谈", "说话"))
+        )
+        if is_chat_like and target_person:
+            target = self.agents.get(target_person)
+            threshold = 1 if target_person == self.detective_name else 2
+            if target and target.is_alive and self._agent_distance(agent, target) <= threshold:
+                if target_person == self.detective_name:
+                    self._trigger_npc_to_detective_chat(name, pending_action.get("action", ""))
+                else:
+                    self._trigger_npc_chat(name, target_person)
+                agent._pending_action = None
+                agent.runtime_state = "idle"
+                return
+            if target and target.is_alive:
+                path_res = self._path_adjacent_to((agent.x, agent.y), (target.x, target.y), blocked=self._occupied_tiles({name, target_person}), preferred_distance=threshold)
+                if path_res:
+                    tx, ty, path = path_res
+                    agent.target_x, agent.target_y = tx, ty
+                    self.agent_paths[name] = path
+                    agent.runtime_state = "moving"
+                    return
+        agent.runtime_state = "acting"
+        self._mark_action_arrived(agent)
+        self._show_action_status_bubble(name, agent, pending_action)
+
+    def _start_pending_action_execution_if_ready(self, name: str, agent, now: float | None = None) -> bool:
+        if getattr(agent, "runtime_state", "") != "starting_action":
+            return False
+        pending_action = getattr(agent, "_pending_action", None)
+        if not pending_action:
+            agent.runtime_state = "idle"
+            return True
+        now = float(now if now is not None else time.time())
+        if now < float(getattr(agent, "_action_start_visible_until", 0) or 0):
+            return True
+        if self.agent_paths.get(name) or agent.x != agent.target_x or agent.y != agent.target_y:
+            agent.runtime_state = "moving"
+            return True
+        self._arrive_at_pending_action(name, agent)
+        return True
+
     def _update_agent_schedules(self):
 
         """遍历存活NPC：先看每日计划，计划没有新目标再等LLM决策
@@ -5103,6 +5651,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if not agent.is_alive:
 
                 continue
+            if getattr(agent, "runtime_state", "") == "idle" and str(getattr(agent, "current_thought", "")).strip() == "我想适应小镇生活":
+                agent.current_thought = ""
+                agent.current_thought_time = 0
 
             # Crow 由玩家操控移动和交谈，不参与居民自主行动决策。
 
@@ -5113,6 +5664,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 continue
             # Jailed residents cannot move or act on their own
             if name in self._jailed:
+                continue
+
+            if float(getattr(agent, "_report_busy_until", 0) or 0) > now:
+                self._skip_planning_turn_if_current(name)
                 continue
 
 
@@ -5162,9 +5717,27 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     self._log(f"[NPC聊天] {name} 与 {partner_name} 对话超时释放", "system")
 
+                elif partner_name == self.detective_name:
+
+                    detective = self.agents.get(self.detective_name)
+
+                    if detective and getattr(detective, "in_conversation_with", None) != name:
+
+                        agent.in_conversation_with = None
+
+                        agent._conversation_started_at = 0
+
+                        agent.runtime_state = "idle"
+
+                        self._log(f"[NPC聊天] {name} 与警长的对话锁已孤立，自动释放", "system")
 
 
 
+
+
+            if self._start_pending_action_execution_if_ready(name, agent, now):
+                self._skip_planning_turn_if_current(name)
+                continue
 
             # 正在移动 → 跳过，不思考不决策
 
@@ -5175,6 +5748,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if is_moving:
 
                 agent.runtime_state = "moving"
+                self._skip_planning_turn_if_current(name)
 
                 continue
 
@@ -5195,6 +5769,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             # 正在对话中 → 跳过自主决策和行动更新
 
             if getattr(agent, 'in_conversation_with', None) is not None:
+                self._skip_planning_turn_if_current(name)
 
                 continue
 
@@ -5202,13 +5777,103 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-            # acting 状态：到达目标后停留一段时间，届时完成行动
+            # 有 pending action 但不在执行状态：先走 starting_action / arrival 流程
+            pending_action = getattr(agent, '_pending_action', None)
+            if pending_action:
+                state = getattr(agent, 'runtime_state', '')
+                if state in ("planning", "moving", "starting_action"):
+                    self._skip_planning_turn_if_current(name)
+                    continue
+                if (
+                    str(pending_action.get("action_type", "")).lower() in {"talk", "socialize"}
+                    and pending_action.get("target_person")
+                    and state != "acting"
+                ):
+                    self._arrive_at_pending_action(name, agent)
+                    self._skip_planning_turn_if_current(name)
+                    continue
+                if state != "acting":
+                    action_type = pending_action.get("action_type", "continue_current")
+                    if action_type == "stay":
+                        action_type = "continue_current"
+                    action_text = pending_action.get("action") or "继续当前事务"
+                    agent.current_action = action_text
+                    agent.current_action_type = action_type
+                    agent.current_emoji = self._get_emoji(action_text)
+                    self._mark_action_started(agent, now)
+                    agent.runtime_state = "starting_action"
+                    pending_action["duration_minutes"] = self._action_duration_minutes(pending_action)
+                    pending_action["duration_seconds"] = self._action_duration_seconds(pending_action)
+                    agent.current_thought = ""
+                    agent.current_thought_time = 0
+                    self._log(
+                        f"[开始行动] {display_name_for_person(name)}: 执行既定行动，"
+                        f"{localize_visible_character_names(action_text)}"
+                        f"（{ACTION_TYPE_LABELS_ZH.get(action_type, action_type)}）",
+                        "action",
+                    )
+                    self._record_observation_event(
+                        "action_start",
+                        name,
+                        f"{display_name_for_person(name)}开始行动：{action_text}",
+                        x=agent.x,
+                        y=agent.y,
+                        object=str(pending_action.get("target_object", "") or ""),
+                        source="action",
+                    )
+                    self._skip_planning_turn_if_current(name)
+                    continue
+
+            # acting 状态：使用 duration helpers 计时
 
             if getattr(agent, 'runtime_state', '') == "acting":
 
                 arrived_at = getattr(agent, '_arrived_at_time', 0)
 
-                min_act = CONFIG.get("agent", {}).get("min_act_seconds", 5)
+                pending_action = getattr(agent, '_pending_action', None)
+
+                if pending_action and "duration_seconds" in pending_action:
+                    try:
+                        act_duration = max(6.0, float(pending_action.get("duration_seconds") or 0))
+                    except (TypeError, ValueError):
+                        act_duration = float(self._action_duration_seconds(pending_action))
+                else:
+                    act_duration = float(self._action_duration_seconds(pending_action))
+
+                visible_at = float(getattr(agent, "_action_status_visible_at", 0) or 0)
+                if visible_at <= 0:
+                    started_at = float(getattr(agent, "_action_started_at", 0) or arrived_at)
+                    visible_at = max(float(arrived_at or now), started_at + self._action_start_bubble_seconds())
+                    agent._action_status_visible_at = visible_at
+
+                if now - visible_at < act_duration:
+                    self._skip_planning_turn_if_current(name)
+
+                    continue  # 还在做事
+
+                else:
+
+                    self._complete_agent_action(name, agent)
+
+                    agent.runtime_state = "idle"
+
+                    continue
+
+
+
+            # == 第一步：每日计划仅作参考，不强制移动 ==
+
+            # daily_plan 不再直接设置 target_x/target_y
+
+            # NPC 的移动完全由 LLM 决策驱动，daily_plan 只在 prompt 中作为参考
+
+
+
+            # == 第二步：LLM 决策（按配置间隔） ==
+
+            llm_interval = CONFIG.get("llm", {}).get("action_decision_interval_seconds", 20)
+
+            if False:
 
                 max_act = CONFIG.get("agent", {}).get("max_act_seconds", 15)
 
@@ -5331,6 +5996,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 scene_parts.append(f"你看到：{'、'.join(nearby_objs)}")
 
             scene_info = "。".join(scene_parts)
+            obs_packet = self._build_observation_packet(name, agent)
+            nearby_info, scene_info = self._format_observation_for_decision(obs_packet)
 
 
 
@@ -5350,7 +6017,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             # 异步调用 LLM
 
-            def _llm_thread(n, a, nearby, si):
+            def _llm_thread(n, a, nearby, si, packet):
 
                 try:
 
@@ -5397,7 +6064,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     def _fallback_continue_current(reason: str):
                         loc_now = a.current_location or self._reverse_lookup_location(a.x, a.y) or "某处"
                         a.current_location = loc_now
-                        a.current_action = "继续当前事务，等待下一次可执行计划"
+                        a.current_action = self._default_continuing_action(n, loc_now)
                         a.current_action_type = "continue_current"
                         a.current_emoji = self._get_emoji(a.current_action)
                         a._pending_action = {
@@ -5409,13 +6076,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                             "thought": reason,
 
-                            "expected_result": "等待下一次行动机会",
+                            "expected_result": "完成当前事务",
 
                         }
 
-                        a.runtime_state = "acting"
+                        a.runtime_state = "starting_action"
 
-                        a._arrived_at_time = time.time()
+                        self._mark_action_started(a, time.time())
                         self._log(
                             f"[行动解析] {actor_label}: 地点={self._destination_label_zh(loc_now)}；"
                             f"行动={a.current_action}；类型=continue_current；原因={reason}",
@@ -5457,6 +6124,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     thought = _text(decision.get("thought"))
 
                     expected_result = _text(decision.get("expected_result"))
+
+                    action_status = self._ground_action_status(n, a, _text(decision.get("action_status")), packet)
 
 
 
@@ -5803,9 +6472,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                         "action": action,
 
+                        "action_status": action_status,
+
                         "thought": thought,
 
                         "expected_result": expected_result,
+
+                        "observation_before": packet,
 
                     }
 
@@ -5819,6 +6492,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     a.current_action_type = action_type or "continue_current"
                     a.current_emoji = self._get_emoji(a.current_action)
+                    self._record_observation_event(
+                        event_type="action_start",
+                        subject=n,
+                        text=f"{display_name_for_person(n)}开始：{localize_visible_character_names(action_status or action)}",
+                        x=a.x,
+                        y=a.y,
+                        public=False,
+                    )
 
                     a.runtime_state = "planning"
 
@@ -5921,7 +6602,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                                 self._log(f"[路径失败] {display_name_for_person(n)}: 无法接近 {display_name_for_person(target_person)}，稍后重试", "think")
 
-                                a.runtime_state = "idle"
+                                _fallback_continue_current(f"暂时无法接近{display_name_for_person(target_person)}")
 
                                 a._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
 
@@ -6091,13 +6772,24 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                         # 不需要移动：原地执行
 
-                        a.runtime_state = "acting"
+                        a.runtime_state = "starting_action"
 
                         a.current_thought = ""
 
                         a.current_thought_time = 0
 
-                        a._arrived_at_time = time.time()
+                        if target_obj and (a.target_x, a.target_y) == (a.x, a.y):
+                            neighbor = self._neighbor_action_path(n, a)
+                            if neighbor:
+                                nx, ny, path = neighbor
+                                a.target_x, a.target_y = nx, ny
+                                self.agent_paths[n] = path
+                            else:
+                                a.target_x = a.x + 1
+                                a.target_y = a.y
+                                self.agent_paths[n] = [(a.target_x, a.target_y)]
+
+                        self._mark_action_started(a, time.time())
 
                         # 确保 current_location 是正确的
 
@@ -6121,9 +6813,24 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 except Exception as e:
 
-                    self._log(f"[LLM状态] {display_name_for_person(n)}: 行动决策失败：{e}，保持idle，稍后重试", "think")
-
-                    a.runtime_state = "idle"
+                    loc_now = a.current_location or self._reverse_lookup_location(a.x, a.y) or "当前位置"
+                    fallback_action = self._default_continuing_action(n, loc_now)
+                    a.current_location = loc_now
+                    a.current_action = fallback_action
+                    a.current_action_type = "continue_current"
+                    a.current_emoji = self._get_emoji(fallback_action)
+                    a._pending_action = {
+                        "action_type": "continue_current",
+                        "target_location": loc_now,
+                        "target_object": "",
+                        "target_person": "",
+                        "action": fallback_action,
+                        "thought": f"模型暂时无法给出计划：{e}",
+                        "expected_result": "完成当前事务",
+                    }
+                    a.runtime_state = "starting_action"
+                    self._mark_action_started(a, time.time())
+                    self._log(f"[LLM状态] {display_name_for_person(n)}: 行动决策失败：{e}，转为continue_current，稍后重试", "think")
 
                     a._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
 
@@ -6135,7 +6842,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-            t = threading.Thread(target=_llm_thread, args=(name, agent, nearby_info, scene_info), daemon=True)
+            t = threading.Thread(target=_llm_thread, args=(name, agent, nearby_info, scene_info, obs_packet), daemon=True)
 
             t.start()
 
@@ -7047,12 +7754,21 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if departure_delay > 0 and now < departure_delay:
 
                 continue
+            move_ready_at = getattr(agent, "_action_move_ready_at", 0)
+            if move_ready_at > 0 and now < move_ready_at:
+                continue
 
 
 
 
 
             if agent.x == agent.target_x and agent.y == agent.target_y:
+
+                if getattr(agent, "runtime_state", "") == "moving" and getattr(agent, "_pending_action", None):
+                    self._arrive_at_pending_action(name, agent)
+                    loc = self._reverse_lookup_location(agent.x, agent.y)
+                    agent.current_location = loc
+                    continue
 
                 if self.agent_paths.pop(name, None):
 
@@ -7190,13 +7906,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     self.agent_paths.pop(name, None)
 
-                    agent.runtime_state = "acting"
-
-                    agent._arrived_at_time = time.time()
-
                     loc = self._reverse_lookup_location(agent.x, agent.y)
 
                     agent.current_location = loc
+
+                    if getattr(agent, "_pending_action", None):
+                        self._arrive_at_pending_action(name, agent)
+                    else:
+                        agent.runtime_state = "acting"
+                        agent._arrived_at_time = time.time()
 
 
 
@@ -7422,6 +8140,36 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         agent.update_scratch(currently=f"刚完成：{result_sentence[:100]}")
 
+        observation_after = self._build_observation_packet(name, agent)
+        self._record_observation_event(
+            event_type="action_complete",
+            subject=name,
+            text=f"{display_name_for_person(name)}完成：{localize_visible_character_names(result_sentence)}",
+            x=agent.x,
+            y=agent.y,
+            public=False,
+        )
+        self._enqueue_memory_task(
+            name,
+            {
+                "kind": "action_completed",
+                "day": self.day,
+                "game_hour": self.game_hour,
+                "action_type": action_type,
+                "target_location": location,
+                "target_object": target_object,
+                "target_person": target_person,
+                "action": action,
+                "action_status": pending.get("action_status", ""),
+                "thought": pending.get("thought", ""),
+                "expected_result": expected_result,
+                "action_result": result_sentence,
+                "observation_before": pending.get("observation_before", {}),
+                "observation_after": observation_after,
+                "visible_events": observation_after.get("visible_events", []),
+            },
+        )
+
 
 
 
@@ -7457,6 +8205,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         agent._pending_action = None
 
         agent._action_completed = True
+        self._clear_action_status_bubble(name)
 
 
 
@@ -7476,7 +8225,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if getattr(self, "_detective_chat_active_target", None):
                 return False
+            if getattr(self, "_body_burial", None):
+                return False
             self._detective_chat_pending_target = None
+            if self.phase == GamePhase.DUSK_DISCUSSION:
+                return False
             if self.phase not in (GamePhase.DAY, GamePhase.DUSK_DISCUSSION) or self.game_over or getattr(self, "_gathering_active", False):
                 return False
             detective = self.agents.get(self.detective_name)
@@ -7562,6 +8315,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         with self._lock:
 
             if getattr(self, "_detective_chat_active_target", None):
+                return False
+            if getattr(self, "_body_burial", None):
+                self._detective_chat_pending_target = None
                 return False
             target = self.agents.get(target_name)
             if not target or not target.is_alive or target_name == self.detective_name:
@@ -7699,6 +8455,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if not text:
             return ""
 
+        if text in {"适应小镇生活", "正常生活", "日常活动", "继续生活"}:
+            return ""
+
+        text = re.sub(r"^(Thought|Thinking|Reasoning)\s*[:：]\s*", "", text, flags=re.IGNORECASE)
+
         for marker in ("行动：", "行动:", "Action:", "action:"):
             if marker in text:
                 text = text.split(marker, 1)[1].strip()
@@ -7719,6 +8480,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 text = sentences[-1]
 
         text = re.sub(r"^(我会|我要|我准备|我打算|我将|开始|准备)\s*", "", text).strip()
+        if re.match(r"^(去|前往|回到|返回|要回|留在)", text):
+            verb_match = re.search(r"(检查|整理|准备|清点|修剪|擦拭|询问|调查|查看|记录).+", text)
+            if verb_match:
+                text = verb_match.group(0).strip()
+            else:
+                text = re.sub(r"^(去|前往|回到|返回|要回|留在)\S+\s*", "", text).strip()
+        text = re.sub(r"^(检查|整理|准备|清点|修剪|擦拭|询问|调查)", r"\1", text).strip()
+        if text in {"适应小镇生活", "正常生活", "日常活动", "继续生活"}:
+            return ""
+        if len(text) > 36:
+            text = text[:36].rstrip("，,。.;；")
         return text or str(action or "").strip()
 
 
@@ -8025,6 +8797,57 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             getattr(self, "_detective_chat_pending_target", None),
         }
 
+    def _release_conversation_for_expired_bubble(self, name: str, bubble: dict | None = None) -> None:
+        bubble = bubble or self.chat_bubbles.get(name)
+        target_name = bubble.get("target") if isinstance(bubble, dict) else None
+        if not target_name:
+            return
+        agent = self.agents.get(name)
+        target = self.agents.get(target_name)
+        if agent and getattr(agent, "in_conversation_with", None) == target_name:
+            agent.in_conversation_with = None
+            agent._conversation_started_at = 0
+        if target and getattr(target, "in_conversation_with", None) == name:
+            target.in_conversation_with = None
+            target._conversation_started_at = 0
+        if hasattr(self, "_npc_chat_key"):
+            self._npc_chat_tokens.pop(self._npc_chat_key(name, target_name), None)
+        if name == getattr(self, "detective_name", None):
+            if getattr(self, "_detective_chat_active_target", None) == target_name:
+                self._detective_chat_active_target = None
+            if getattr(self, "_detective_chat_pending_target", None) == target_name:
+                self._detective_chat_pending_target = None
+        if target_name == self.detective_name:
+            if getattr(self, "_detective_chat_active_target", None) == name:
+                self._detective_chat_active_target = None
+            if getattr(self, "_detective_chat_pending_target", None) == name:
+                self._detective_chat_pending_target = None
+
+    def _enqueue_speech_job(self, job_id: str, priority: int, func) -> None:
+        with self._lock:
+            self._speech_queue_seq += 1
+            self._speech_queue.append((int(priority), self._speech_queue_seq, str(job_id), func))
+            if self._speech_worker_active:
+                return
+            self._speech_worker_active = True
+
+        def _worker():
+            while True:
+                with self._lock:
+                    if not self._speech_queue:
+                        self._speech_worker_active = False
+                        return
+                    self._speech_queue.sort(key=lambda item: (item[0], item[1]))
+                    _, _, _, job = self._speech_queue.pop(0)
+                try:
+                    job()
+                except Exception as exc:
+                    print(f"[Speech Queue Error] {exc}", file=sys.stderr, flush=True)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        self.llm_threads.append(t)
+        t.start()
+
 
 
 
@@ -8074,9 +8897,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             base = localize_visible_character_names(action or expected_result or "我有些想法想告诉你。")
 
+            base = re.sub(r"^\s*(我会|我要|我想|准备)?\s*(去)?\s*(找|向)?\s*警长\s*(汇报|说明|报告)?", "", base).strip(" ，。:：")
+            if not base:
+                base = localize_visible_character_names(expected_result or "我有些情况想告诉你")
+
             if self._agent_distance(source, detective) <= 1:
 
-                message = base
+                message = base if base.startswith("警长") else f"警长，{base}"
 
             else:
 
@@ -8096,9 +8923,35 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         now = time.time()
 
-        source.in_conversation_with = self.detective_name
+        source.in_conversation_with = None
+        detective.in_conversation_with = None
 
-        source._conversation_started_at = now
+        source._conversation_started_at = 0
+        detective._conversation_started_at = 0
+        source.current_thought = ""
+        source.current_thought_time = 0
+        source.current_action = ""
+        source.current_action_type = ""
+        source.current_emoji = ""
+        source._pending_action = None
+        source._last_decision = {}
+        source._last_raw_response = ""
+        source._is_thinking = False
+        source._is_reflecting = False
+        source.runtime_state = "idle"
+        source._report_busy_until = now + float(CONFIG.get("game", {}).get("bubble_lifetime_seconds", 12))
+        if not hasattr(source, "action_history") or not isinstance(source.action_history, list):
+            source.action_history = []
+        source.action_history.append({
+            "action_type": "report_to_detective",
+            "location": getattr(source, "current_location", ""),
+            "action": action,
+            "expected_result": expected_result,
+            "message": message,
+            "time": now,
+        })
+        if len(source.action_history) > 10:
+            source.action_history = source.action_history[-10:]
 
         self.chat_bubbles[source_name] = {
 
@@ -8113,6 +8966,25 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._log(f"💬 [主动汇报] {display_name_for_person(source_name)} 对克罗说：{message}", "chat")
 
         source.add_memory(f"我主动向警长克罗说明：{message}", self.day)
+        self._record_observation_event(
+            event_type="speech",
+            subject=source_name,
+            text=f"{display_name_for_person(source_name)}对{display_name_for_person(self.detective_name)}说：{message[:120]}",
+            x=source.x,
+            y=source.y,
+            witnesses={source_name, self.detective_name},
+        )
+        self._enqueue_memory_task(
+            source_name,
+            {
+                "kind": "conversation_completed",
+                "speaker": source_name,
+                "listener": self.detective_name,
+                "transcript": [(source_name, message)],
+                "day": self.day,
+                "game_hour": self.game_hour,
+            },
+        )
 
 
 
@@ -8218,6 +9090,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             target.in_conversation_with = self.detective_name
 
             target._conversation_started_at = time.time()
+            target.target_x = target.x
+            target.target_y = target.y
+            target.runtime_state = "acting"
+            target.current_thought = ""
+            target.current_thought_time = 0
+            target.current_action = ""
+            target.current_action_type = ""
+            target._pending_action = None
+            self.agent_paths.pop(target_name, None)
+            self._clear_action_status_bubble(target_name)
 
             detective.in_conversation_with = target_name
 
@@ -8295,6 +9177,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 "time": time.time(),
 
+            }
+
+            self.chat_bubbles[target_name] = {
+                "text": "...",
+                "target": self.detective_name,
+                "time": time.time(),
             }
 
             should_broadcast_start = True
@@ -8397,15 +9285,31 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 )
 
+            self._record_observation_event(
+                event_type="speech",
+                subject=self.detective_name,
+                text=f"{display_name_for_person(self.detective_name)}问{display_name_for_person(target_name)}：{incoming_message[:120]}",
+                x=detective.x,
+                y=detective.y,
+                witnesses={self.detective_name, target_name},
+            )
+            self._record_observation_event(
+                event_type="speech",
+                subject=target_name,
+                text=f"{display_name_for_person(target_name)}回答{display_name_for_person(self.detective_name)}：{response[:120]}",
+                x=target.x,
+                y=target.y,
+                witnesses={self.detective_name, target_name},
+            )
+            self._enqueue_conversation_memory(
+                self.detective_name,
+                target_name,
+                [(self.detective_name, incoming_message), (target_name, response)],
+            )
 
 
-            # 对话完成，释放锁定
 
-            target.in_conversation_with = None
-
-            target._conversation_started_at = 0
-
-            # 清除NPC的思考/行动状态，避免回复后残留蓝泡泡状态
+            # 清除NPC的思考/行动状态，避免回复后残留蓝泡泡状态；对话锁等白色气泡过期时释放。
 
             target.current_thought = ""
 
@@ -8425,10 +9329,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             target._is_reflecting = False
 
-            detective.in_conversation_with = None
-
-            detective._conversation_started_at = 0
-
             # 同时也清除侦探的思考/行动状态
 
             detective.current_thought = ""
@@ -8438,10 +9338,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             detective._is_thinking = False
 
             detective._is_reflecting = False
-
-            self._detective_chat_active_target = None
-            self._detective_chat_pending_target = None
-
 
             self.chat_bubbles[target_name] = {
 
@@ -8840,6 +9736,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             token = f"{started_at:.6f}:{name1}:{name2}"
 
             self._npc_chat_tokens[chat_key] = token
+            agent1._pending_action = None
+            self.chat_bubbles[name1] = {
+                "text": "...",
+                "target": name2,
+                "time": started_at,
+                "kind": "conversation_pending",
+            }
 
 
 
@@ -9010,6 +9913,28 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     }
 
                 self._log(f"💬 {name2}: {response2[:100]}", "chat")
+                with self._lock:
+                    self._record_observation_event(
+                        event_type="speech",
+                        subject=name1,
+                        text=f"{display_name_for_person(name1)}对{display_name_for_person(name2)}说：{msg1[:120]}",
+                        x=agent1.x,
+                        y=agent1.y,
+                        witnesses={name1, name2},
+                    )
+                    self._record_observation_event(
+                        event_type="speech",
+                        subject=name2,
+                        text=f"{display_name_for_person(name2)}回应{display_name_for_person(name1)}：{response2[:120]}",
+                        x=agent2.x,
+                        y=agent2.y,
+                        witnesses={name1, name2},
+                    )
+                    self._enqueue_conversation_memory(
+                        name1,
+                        name2,
+                        [(name1, msg1), (name2, response2)],
+                    )
 
 
 
@@ -9023,31 +9948,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 with self._lock:
 
-                    if self._npc_chat_tokens.get(chat_key) == token:
+                    if self._npc_chat_tokens.get(chat_key) == token and not self.chat_bubbles.get(name1) and not self.chat_bubbles.get(name2):
 
-                        self._npc_chat_tokens.pop(chat_key, None)
-
-                    if getattr(agent1, "in_conversation_with", None) == name2:
-
-                        agent1.in_conversation_with = None
-
-                        agent1._conversation_started_at = 0
-
-                    if getattr(agent2, "in_conversation_with", None) == name1:
-
-                        agent2.in_conversation_with = None
-
-                        agent2._conversation_started_at = 0
+                        self._release_conversation_for_expired_bubble(name1, {"target": name2})
 
 
 
 
 
-        t = threading.Thread(target=_do_chat, daemon=True)
-
-        self.llm_threads.append(t)
-
-        t.start()
+        self._enqueue_speech_job(chat_key, 1, _do_chat)
 
 
 
@@ -9250,6 +10159,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "true_role": true_role,
 
                 "has_new_clue": self._agent_has_visible_clue_hint(name, agent),
+                "has_visible_clue_hint": self._agent_has_visible_clue_hint(name, agent),
+                "has_detective_hint": self._agent_has_visible_clue_hint(name, agent),
 
                 "thought": "" if is_detective else getattr(agent, 'current_thought', ''),
 
@@ -9273,6 +10184,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 "runtime_state": "idle" if is_detective else getattr(agent, 'runtime_state', 'idle'),
                 "visual_moving": visual_moving,
+                "action_status_visible_at": 0 if is_detective else getattr(agent, "_action_status_visible_at", 0),
+                "departure_delay_until": 0 if is_detective else getattr(agent, "_departure_delay_until", 0),
                 "last_decision": {} if is_detective else public_last_decision,
 
                 "last_error": "" if is_detective else localize_visible_character_names(last_decision.get("error", "")),
@@ -9467,7 +10380,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             elif self.phase == GamePhase.DUSK_DISCUSSION:
 
-                if self._dusk_vote_active and self._dusk_jail_target is None:
+                if getattr(self, "_dusk_stage", "") == "escorting":
+
+                    primary_cta = None
+
+                elif self._dusk_vote_active and self._dusk_jail_target is None:
 
                     primary_cta = "jail_choice"  # 等待玩家选择拘留目标
 

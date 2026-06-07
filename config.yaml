@@ -33,34 +33,34 @@ game:
   - Sam Moore
   - Jane Moreno
   - Mei Lin
-  bubble_lifetime_seconds: 12
+  bubble_lifetime_seconds: 6
   crow_intro_line_delay_seconds: 2.0
-  day_duration_seconds: 1800
+  day_duration_seconds: 600
   gathering_speech_visible_seconds: 2.5
-  gathering_departure_gap_seconds: 1.0
+  gathering_departure_gap_seconds: 0.5
   max_days: 5
   move_steps_per_tick: 1
   night_duration_seconds: 300
-  npc_chat_delay_seconds: 1.0
+  npc_chat_delay_seconds: 0.5
   tick_interval_seconds: 0.16
 llm:
   action_decision_interval_seconds: 20
   agent_models:
-    Arthur Burton: Qwen3.6-35B-A3B
-    Crow: MiMo-V2.5-Pro
+    Arthur Burton: Qwen3.5-Flash
+    Crow: MiMo-V2-Flash
     Isabella Rodriguez: Kimi-K2.6
     Klaus Mueller: deepseek-v4-flash
-    Maria Lopez: Qwen3.6-35B-A3B
-    Sam Moore: MiMo-V2.5-Pro
+    Maria Lopez: Qwen3.5-Flash
+    Sam Moore: MiMo-V2-Flash
     Jane Moreno: Kimi-K2.6
     Mei Lin: deepseek-v4-flash
   api_base: http://127.0.0.1:8000/v1
   api_key: ${CHAT2API_API_KEY}
   available_models:
-  - Qwen3.6-35B-A3B
+  - Qwen3.5-Flash
   - Kimi-K2.6
   - deepseek-v4-flash
-  - MiMo-V2.5-Pro
+  - MiMo-V2-Flash
   enable_daily_plan_on_start: false
   max_concurrent_requests: 3
   max_retries: 3
@@ -85,6 +85,8 @@ night_behavior:
 perception:
   hear_range: 5
   max_range: 20
+  observation_radius: 10
+  observation_ttl_seconds: 300
   occlusion_enabled: false
 ui:
   host: 127.0.0.1

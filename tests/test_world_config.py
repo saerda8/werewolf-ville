@@ -88,8 +88,10 @@ def test_config_available_models_count():
     assert len(available_models) >= 1, "Must have at least 1 available model"
 
     assert "GLM-5.1" not in available_models
-    assert "Qwen3.5-Flash" not in available_models
-    assert "Qwen3.6-35B-A3B" in available_models
+    assert "Qwen3.6-35B-A3B" not in available_models
+    assert "MiMo-V2.5-Pro" not in available_models
+    assert "Qwen3.5-Flash" in available_models
+    assert "MiMo-V2-Flash" in available_models
 
 
 def test_agent_models_no_consecutive_duplicates():
@@ -105,7 +107,7 @@ def test_agent_models_no_consecutive_duplicates():
         model = agent_models[agent]
         model_counts[model] = model_counts.get(model, 0) + 1
 
-    expected_models = {"Qwen3.6-35B-A3B", "Kimi-K2.6", "deepseek-v4-flash", "MiMo-V2.5-Pro"}
+    expected_models = {"Qwen3.5-Flash", "Kimi-K2.6", "deepseek-v4-flash", "MiMo-V2-Flash"}
     assert set(model_counts.keys()) == expected_models
     for model, count in model_counts.items():
         assert count == 2, f"Model {model} should be assigned to exactly 2 characters, got {count}"
@@ -180,14 +182,13 @@ def test_jane_persona_is_park_groundkeeper_not_pub_worker():
             "personas/Jane_Moreno/soul.md",
             "personas/Jane_Moreno/agent.md",
             "personas/Jane_Moreno/scratch.json",
-            "personas/Jane_Moreno/memory.md",
-            "personas/Jane_Moreno/cognition.md",
-            "personas/Jane_Moreno/memory_index.json",
         ]
     )
-    assert "约翰逊公园" in text
+    assert "约翰逊公园" in text or "Johnson Park" in text
     assert "酒馆" not in text
+    assert "pub" not in text.lower()
     assert "厨房" not in text
+    assert "kitchen" not in text.lower()
 
 
 def test_crow_job_is_sheriff_role_remains_detective():

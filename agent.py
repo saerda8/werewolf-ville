@@ -17,6 +17,7 @@ import json as _json
 import time as _time
 import math
 import threading
+import uuid
 from llm import chat, chat_for_agent, get_model_for_agent, get_last_error_for_agent
 from config_loader import load_config, get_config
 from utils import safe_truncate, tokenize_chinese
@@ -69,8 +70,14 @@ class Agent:
         self.target_x = 0
         self.target_y = 0
         self.current_action = ""
+        self.current_action_type = ""
         self.current_emoji = ""
         self.current_location = ""
+        self.runtime_state = "idle"
+        self._pending_action = {}
+        self._last_decision = {}
+        self._last_raw_response = ""
+        self._last_response_error = ""
 
         # 寻路控制
         self._llm_decided = False
@@ -123,6 +130,25 @@ class Agent:
         path = os.path.join(self.folder, "memory_index.json")
         with open(path, "w", encoding="utf-8") as f:
             _json.dump(self.memory_index, f, ensure_ascii=False, indent=2)
+
+    # ==================== Typed Memory Index ====================
+
+    def _load_typed_memory_index(self) -> list:
+        """加载类型化记忆索引文件 typed_memory_index.json"""
+        path = os.path.join(self.folder, "typed_memory_index.json")
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return _json.load(f)
+            except Exception:
+                return []
+        return []
+
+    def _save_typed_memory_index(self, index: list):
+        """保存类型化记忆索引文件 typed_memory_index.json"""
+        path = os.path.join(self.folder, "typed_memory_index.json")
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(index, f, ensure_ascii=False, indent=2)
 
     def _score_importance(self, event: str) -> int:
         """重要性打分 1-10（纯规则打分，避免同步 LLM 调用阻塞）"""
@@ -182,6 +208,87 @@ class Agent:
             "timestamp": _time.time(),
         })
         self._save_memory_index()
+
+    def add_typed_memory(self, *, memory_type: str = "", type: str = "event", day: int = 0, game_hour: float = 0,
+                          subject: str = "", predicate: str = "", object: str = "", text: str = "",
+                          importance: int = None, keywords: list = None,
+                          evidence=None, source: str = "", visibility: str = "private", **_extra) -> str:
+        """添加结构化类型化记忆，支持 thought/plan/chat 等类型未来检索。
+
+        字段：id/type/created_at/day/game_hour/subject/predicate/object/text/
+              importance/keywords/evidence/source/visibility
+        解析异常安全降级，新旧记录兼容。
+        """
+        # 安全解析：类型只允许特定值
+        allowed_types = {"event", "chat", "thought", "plan"}
+        requested_type = memory_type or type
+        memory_type = requested_type if requested_type in allowed_types else "event"
+
+        # 安全解析：重要性
+        if importance is None:
+            importance = self._score_importance(text or "")
+        try:
+            importance = max(1, min(10, int(importance)))
+        except (TypeError, ValueError):
+            importance = self._score_importance(text or "")
+
+        # 安全解析：keywords
+        if keywords is None:
+            keywords = []
+        elif isinstance(keywords, str):
+            keywords = [keywords]
+        elif not isinstance(keywords, list):
+            keywords = []
+        keywords = [str(k).strip() for k in keywords if str(k).strip()]
+
+        # 安全解析：visibility
+        allowed_visibility = {"public", "private", "witnessed"}
+        if visibility not in allowed_visibility:
+            visibility = "private"
+
+        if isinstance(evidence, str):
+            evidence = [evidence] if evidence.strip() else []
+        elif not isinstance(evidence, list):
+            evidence = []
+        evidence = [str(item).strip() for item in evidence if str(item).strip()]
+
+        entry = {
+            "id": str(uuid.uuid4()),
+            "type": memory_type,
+            "created_at": _time.time(),
+            "day": day,
+            "game_hour": game_hour,
+            "subject": str(subject or "").strip(),
+            "predicate": str(predicate or "").strip(),
+            "object": str(object or "").strip(),
+            "text": str(text or "").strip(),
+            "importance": importance,
+            "keywords": keywords,
+            "evidence": evidence,
+            "source": str(source or "").strip(),
+            "visibility": visibility,
+        }
+
+        # 同时追加到旧索引（兼容检索）
+        self.memory_index.append({
+            "day": day,
+            "event": text or "",
+            "importance": importance,
+            "timestamp": entry["created_at"],
+            "type": memory_type,
+        })
+        self._save_memory_index()
+
+        # 追加到 memory.md（完整文本）
+        if text:
+            self._append_md("memory.md", f"\n### [第{day}天] {text}\n")
+
+        # 保存 typed memory 索引
+        typed_index = self._load_typed_memory_index()
+        typed_index.append(entry)
+        self._save_typed_memory_index(typed_index)
+
+        return entry["id"]
 
     def retrieve_memories(self, query: str, top_k: int = 10) -> list:
         """
@@ -400,7 +507,7 @@ class Agent:
             learned=learned or "无特殊习得特质",
             fear=fear or "无特殊恐惧",
             lifestyle=lifestyle or "小镇日常生活",
-            currently="适应小镇生活",
+            currently="",
         )
 
     # ==================== 可访问性控制 ====================
@@ -972,12 +1079,113 @@ class Agent:
                 break
         return best
 
+    # ==================== 记忆整理 ====================
+
+    @staticmethod
+    def parse_memory_consolidation_result(raw: str) -> dict:
+        """Parse memory-lane JSON into a stable shape."""
+        default = {"memories": [], "current_goal": ""}
+        if not raw:
+            return default
+
+        extracted = Agent._extract_json_text(str(raw))
+        if not extracted:
+            return default
+
+        try:
+            parsed = _json.loads(extracted)
+        except Exception:
+            return default
+        if not isinstance(parsed, dict):
+            return default
+
+        allowed_types = {"event", "chat", "thought", "plan"}
+        memories = []
+        raw_memories = parsed.get("memories", [])
+        if not isinstance(raw_memories, list):
+            raw_memories = []
+
+        for item in raw_memories:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            memory = dict(item)
+            memory_type = str(memory.get("type", "event")).strip()
+            memory["type"] = memory_type if memory_type in allowed_types else "event"
+            try:
+                importance = int(memory.get("importance", 1))
+            except (TypeError, ValueError):
+                importance = 1
+            memory["importance"] = max(1, min(10, importance))
+            keywords = memory.get("keywords", [])
+            if isinstance(keywords, str):
+                keywords = [keywords]
+            elif not isinstance(keywords, list):
+                keywords = []
+            memory["keywords"] = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
+            for key in ("subject", "predicate", "object"):
+                memory[key] = str(memory.get(key, "")).strip()
+            memories.append(memory)
+
+        return {
+            "memories": memories,
+            "current_goal": str(parsed.get("current_goal", "") or "").strip(),
+        }
+
+    @staticmethod
+    def build_memory_consolidation_prompt(payload: dict, agent_name: str = "NPC") -> tuple[str, str]:
+        try:
+            payload_text = _json.dumps(payload or {}, ensure_ascii=False, indent=2, default=str)
+        except TypeError:
+            payload_text = str(payload)
+
+        system_prompt = f"""你是 {agent_name} 的 NPC 记忆整理模块。
+只整理记忆，不决定行动。
+输入可能包含：本轮观察、NPC 思考、计划、行动、行动结果、对话、旁观事件。
+输出 JSON，memories 中的 type 只能是 event|chat|thought|plan。
+
+规则：
+- 不编造输入之外的事实，不补不存在的人、物、地点、关系或动机。
+- 只沉淀对未来决策有用的事件、对话、想法、计划、怀疑、恐惧、关系、线索和身份风险。
+- 隐藏身份事实只能在 NPC 知道或亲眼见证时写入；不能因为系统提示、角色真相或旁白而写入。
+- 例行低价值动作可以低重要度记录，也可以省略。
+
+只输出 JSON，不要解释。"""
+
+        user_prompt = f"""请整理以下输入，输出格式固定为：
+{{
+  "memories": [
+    {{
+      "type": "event|chat|thought|plan",
+      "text": "完整中文句子",
+      "importance": 1,
+      "keywords": ["关键词"],
+      "subject": "主体",
+      "predicate": "关系或动作",
+      "object": "对象"
+    }}
+  ],
+  "current_goal": "短期目标；没有则空字符串"
+}}
+
+输入：
+{payload_text}"""
+        return system_prompt, user_prompt
+
+    def consolidate_memory(self, payload: dict) -> dict:
+        system_prompt, user_prompt = self.build_memory_consolidation_prompt(payload, self.name)
+        raw = chat_for_agent(self.name, system_prompt, user_prompt, temperature=0.2)
+        return self.parse_memory_consolidation_result(raw or "")
+
     # ==================== 行动决策 ====================
 
     def decide_next_action(self, game_hour, day, dead_list, nearby_info, scene_info="") -> dict:
         """BDI风格行动决策：Belief→Desire→Intention→Action
         返回 {"ok": bool, "target_location": ..., "target_object": ..., "target_person": ...,
-               "action": ..., "action_type": ..., "thought": ..., "expected_result": ..., "raw_response": ...}
+               "action": ..., "action_status": ..., "action_type": ..., "thought": ..., "expected_result": ...,
+               "has_visible_clue_hint": bool, "has_detective_hint": bool, "raw_response": ...}
         失败时 ok=False，调用方不应合成 fallback。"""
         soul = safe_truncate(self.read_soul(), 400)
         # 检索相关记忆
@@ -1089,12 +1297,17 @@ class Agent:
 - 不要写"准备去某地"却把 action_type 写成 continue_current；continue_current 只表示继续当前已经在做的事务
 - 不要在多个地点之间无目的地"散步"或"闲逛"
 - action 必须具体，如"向店员打听昨晚是否有人深夜出现"，而非含糊的"活动"
+- action_status 是行动持续白色气泡文本，只写正在做的短任务，8-16字左右；不要写地点、原因、计划、"也/还/今天会..."，例如"准备早餐"、"整理药房货架"、"检查库存"
+- action_status 必须只描述当前真实存在的人、物或事务；不得虚构客人、顾客、镇民、对方或不存在的目标；如果附近没有可互动的人，只能写物件或职业相关短任务
+- thought 必须 60-100 个中文字符，只基于当前可见信息、相关记忆、短期目标或最近行动结果；不得使用 NPC 不知道的隐藏事实，不写全局推理长文
+- plan 必须 20-40 个中文字符，格式严格为“去/留在/接近 <目标>，<做一件事>”；只描述下一步，不写后续连环计划，解释放在 thought
 - target_location 必须从上方的可选地点列表中选，一字不差！不要自己编造地点名（如"码头"、"广场东侧"等）
 - 如果你需要交换信息、试探嫌疑、请别人帮忙或确认线索，优先选择 talk/socialize，并把 target_person 填为8人名单里的中文名。
-- 如果你发现了线索但暂时不适合当面告诉警长，可以选择 inspect/observe/work，并在 thought 或 expected_result 里明确写出"线索/证据/异常/怀疑"，右侧UI会提示警长来问你。
+- 如果你发现了线索、怀疑、可疑事实或自己笃信的推理，但判断不需要立刻主动告诉警长，选择 inspect/observe/work/continue_current，并把 has_visible_clue_hint 设为 true；右侧UI会亮灯泡，等待警长来深挖。
+- 只有你判断必须马上告诉警长的明确线索或紧急重要事项，才选择 talk/socialize 并把 target_person 填为"克罗"或"Crow"；普通怀疑不要主动找警长。
 
 用JSON格式回复：
-{{"action_type": "move_to|continue_current|observe|inspect|work|rest|investigate|socialize|talk|hide", "target_location": "地点名", "target_object": "目标物件（可选）", "target_person": "目标人物中文名（可选，只能填8人名单里的中文名）", "action": "具体做什么（60字以内）", "thought": "行动动机（100字以内，如果是move_to必须说明去哪个坐标）", "expected_result": "期望达到什么效果（30字以内）"}}
+{{"action_type": "move_to|continue_current|observe|inspect|work|rest|investigate|socialize|talk|hide", "target_location": "地点名", "target_object": "目标物件（可选）", "target_person": "目标人物中文名（可选，只能填8人名单里的中文名）", "action": "开始行动蓝泡短句：前往目标并做什么（36字以内）", "plan": "去/留在/接近 <目标>，<做一件事>（20-40字）", "action_status": "行动持续白泡短句：只写正在做什么（8-16字，不含也/还/计划尾巴）", "thought": "行动动机（60-100字，只基于当前可见/记忆）", "expected_result": "期望达到什么效果（30字以内）", "duration_minutes": 5-30之间的游戏内分钟数, "has_visible_clue_hint": true/false, "has_detective_hint": true/false}}
 
 action_type 含义：
 - move_to: 需要移动到另一个地点
@@ -1108,6 +1321,11 @@ action_type 含义：
 - talk: 和某人交谈
 - hide: 隐藏自己
 
+duration_minutes 含义：
+- 这是游戏内分钟，不是现实秒数
+- 普通行动根据事情长短选择5到30分钟，不要全部写30
+- 简短观察/拿取物品可短一些，整理书架/看书/工作可长一些
+
 只输出JSON，不要其他内容。"""
 
         raw_original = ""
@@ -1118,14 +1336,14 @@ action_type 含义：
             if not raw_original:
                 last_error = get_last_error_for_agent(self.name)
                 error = f"empty_response; last_error={last_error}" if last_error else "empty_response"
-                return {"ok": False, "error": error, "target_location": "", "target_object": "", "target_person": "", "action": "", "action_type": "", "thought": "", "expected_result": "", "raw_response": ""}
+                return {"ok": False, "error": error, "target_location": "", "target_object": "", "target_person": "", "action": "", "action_status": "", "action_type": "", "thought": "", "expected_result": "", "raw_response": ""}
 
             # 提取 JSON（健壮解析，支持围栏、前后文字、值内花括号）
             raw = self._extract_json_text(raw_original)
             if not raw:
                 return {"ok": False, "error": "json_extraction_failed: no valid JSON found in response",
                         "target_location": "", "target_object": "", "target_person": "",
-                        "action": "", "action_type": "", "thought": "",
+                        "action": "", "action_status": "", "action_type": "", "thought": "",
                         "expected_result": "", "raw_response": raw_original}
 
             result = _json.loads(raw)
@@ -1136,8 +1354,25 @@ action_type 含义：
             result.setdefault("target_object", "")
             result.setdefault("target_person", "")
             result.setdefault("action", "")
+            result.setdefault("plan", "")
+            result.setdefault("action_status", "")
             result.setdefault("thought", "")
             result.setdefault("expected_result", "")
+            def _duration_minutes(value):
+                try:
+                    duration = int(float(value))
+                except (TypeError, ValueError):
+                    duration = 15
+                return max(5, min(30, duration))
+            result["duration_minutes"] = _duration_minutes(result.get("duration_minutes", 15))
+            def _bool_field(value):
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, str):
+                    return value.strip().lower() in {"true", "yes", "1", "是", "有"}
+                return bool(value)
+            result["has_visible_clue_hint"] = _bool_field(result.get("has_visible_clue_hint", False))
+            result["has_detective_hint"] = _bool_field(result.get("has_detective_hint", False))
             if result.get("thought"):
                 self.current_thought = str(result["thought"]).strip()
                 self.current_thought_time = _time.time()
@@ -1145,7 +1380,7 @@ action_type 含义：
             result["raw_response"] = raw_original
             return result
         except Exception as e:
-            return {"ok": False, "error": f"json_parse_error: {e}", "target_location": "", "target_object": "", "target_person": "", "action": "", "action_type": "", "thought": "", "expected_result": "", "raw_response": raw_original}
+            return {"ok": False, "error": f"json_parse_error: {e}", "target_location": "", "target_object": "", "target_person": "", "action": "", "action_status": "", "action_type": "", "thought": "", "expected_result": "", "raw_response": raw_original}
 
     @staticmethod
     def _extract_json_text(raw: str) -> str:

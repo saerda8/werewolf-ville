@@ -205,6 +205,15 @@ def _test_local_chat2api_agent() -> tuple[str, str]:
 
 
 def _frontend_version() -> str:
+    version_file = os.path.join(PROJECT_ROOT, "FRONTEND_VERSION")
+    try:
+        with open(version_file, "r", encoding="utf-8") as f:
+            version = f.read().strip()
+        if version:
+            return version
+    except OSError:
+        pass
+
     try:
         count = int(subprocess.check_output(
             ["git", "-C", PROJECT_ROOT, "rev-list", "--count", "HEAD"],
@@ -363,6 +372,28 @@ def jail_vote_target():
     data = request.json
     result = game.jail_vote_target(data.get("target_name", ""))
     return jsonify(result)
+
+
+@app.route("/api/submit_crow_vote", methods=["POST"])
+def submit_crow_vote():
+    if game is None:
+        return jsonify({"error": "game not started"})
+    data = request.get_json(silent=True) or {}
+    result = game.submit_crow_vote(data.get("target_name", ""))
+    return jsonify(result)
+
+@app.route("/api/confirm_vote_result", methods=["POST"])
+def confirm_vote_result():
+    if game is None:
+        return jsonify({"error": "game not started"})
+    return jsonify(game.confirm_vote_result())
+
+
+@app.route("/api/confirm_night_transition", methods=["POST"])
+def confirm_night_transition():
+    if game is None:
+        return jsonify({"error": "game not started"})
+    return jsonify(game.confirm_night_transition())
 
 
 @app.route("/api/acquire_silver_bullet", methods=["POST"])
@@ -554,6 +585,24 @@ def on_jail_vote_target(data):
     if game:
         result = game.jail_vote_target(data.get("target_name", ""))
         emit("jail_result", result)
+
+
+@socketio.on("submit_crow_vote")
+def on_submit_crow_vote(data):
+    if game:
+        result = game.submit_crow_vote(data.get("target_name", ""))
+        emit("crow_vote_result", result)
+
+@socketio.on("confirm_vote_result")
+def on_confirm_vote_result():
+    if game:
+        emit("confirm_vote_result_response", game.confirm_vote_result())
+
+
+@socketio.on("confirm_night_transition")
+def on_confirm_night_transition():
+    if game:
+        emit("confirm_night_transition_response", game.confirm_night_transition())
 
 
 @socketio.on("acquire_silver_bullet")

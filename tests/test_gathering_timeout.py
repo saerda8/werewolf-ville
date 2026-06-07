@@ -385,7 +385,7 @@ def test_gathering_json_accepts_explanation_around_object(monkeypatch):
     assert parsed["leaving_object"] == "bookshelf"
 
 
-def test_crow_starts_scene_investigation_after_gathering_ends(monkeypatch):
+def test_crow_does_not_start_agent_action_after_gathering_ends(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._init_gathering()
     engine._gathering_round = 2
@@ -403,11 +403,14 @@ def test_crow_starts_scene_investigation_after_gathering_ends(monkeypatch):
 
     for _ in range(200):
         engine._move_agents()
-        if crow.current_action:
-            break
 
-    assert crow.current_action == "调查案发现场与尸体周边线索"
-    assert crow.runtime_state == "acting"
+    assert crow.current_action == ""
+    assert crow.current_action_type == ""
+    assert crow.runtime_state == "idle"
+    assert not any(
+        entry.get("type") == "action" and ("Crow" in entry.get("message", "") or "克罗" in entry.get("message", ""))
+        for entry in engine.game_log
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +709,8 @@ def test_round_two_departure_delay_sets_departure_delay_until(monkeypatch):
     engine._init_gathering()
     engine._gathering_round = 2
     monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 3.0)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_speech_visible_seconds", 2.5)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_departure_gap_seconds", 0.5)
 
     monkeypatch.setattr(
         game_engine,
@@ -719,6 +724,7 @@ def test_round_two_departure_delay_sets_departure_delay_until(monkeypatch):
     klaus = engine.agents["Klaus Mueller"]
     engine._gathering_busy = True
     engine._gathering_speaker_idx = engine._gathering_queue.index("Klaus Mueller")
+    start = time.time()
     engine._trigger_round_two_speak("Klaus Mueller")
 
     for _ in range(20):
@@ -731,6 +737,10 @@ def test_round_two_departure_delay_sets_departure_delay_until(monkeypatch):
     assert getattr(klaus, '_departure_delay_until', 0) > time.time(), (
         "Departure delay must be set to a future timestamp"
     )
+    speech_delay = klaus._departure_delay_until - start
+    assert 2.0 <= speech_delay <= 3.2, f"Departure must wait for speech visibility, got {speech_delay}"
+    queue_gap = engine._gathering_next_tick - start
+    assert 0.3 <= queue_gap <= 1.0, f"Next speaker should advance after short gap, got {queue_gap}"
     # Speech bubble must be visible
     assert "Klaus Mueller" in engine.chat_bubbles
 
@@ -826,12 +836,12 @@ def test_departure_delay_seconds_from_config(monkeypatch):
     assert game_engine.WerewolfGameEngine._departure_delay_seconds() == 4.0
 
 
-def test_departure_delays_default_to_one_second(monkeypatch):
+def test_departure_delays_default_to_half_second(monkeypatch):
     monkeypatch.delitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", raising=False)
     monkeypatch.delitem(game_engine.CONFIG["game"], "gathering_departure_gap_seconds", raising=False)
 
-    assert game_engine.WerewolfGameEngine._departure_delay_seconds() == 1.0
-    assert game_engine.WerewolfGameEngine._gathering_departure_gap_seconds() == 1.0
+    assert game_engine.WerewolfGameEngine._departure_delay_seconds() == 0.5
+    assert game_engine.WerewolfGameEngine._gathering_departure_gap_seconds() == 0.5
 
 
 def test_round_one_speech_strips_neutral_mentions_instead_of_fallback(monkeypatch):
@@ -1084,12 +1094,12 @@ def test_round_one_timeout_logs_timeout_not_fallback(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Requirement: gathering_departure_gap_seconds default is 1.0
+# Requirement: gathering_departure_gap_seconds default is 0.5
 # ---------------------------------------------------------------------------
 
-def test_gathering_departure_gap_default_is_one_point_zero():
-    """The default gathering_departure_gap_seconds must be 1.0."""
-    assert game_engine.WerewolfGameEngine._gathering_departure_gap_seconds() == 1.0
+def test_gathering_departure_gap_default_is_half_second():
+    """The default gathering_departure_gap_seconds must be 0.5."""
+    assert game_engine.WerewolfGameEngine._gathering_departure_gap_seconds() == 0.5
 
 
 def test_gathering_departure_gap_reads_from_config(monkeypatch):
@@ -1110,9 +1120,9 @@ def test_gathering_departure_gap_used_in_round_two_transition(monkeypatch):
     engine._handle_round_one()
 
     assert engine._gathering_round == 2
-    # _gathering_next_tick should be 1000 + departure_gap (1.0 by default)
-    assert engine._gathering_next_tick == 1001.0, (
-        f"Expected 1001.0, got {engine._gathering_next_tick}"
+    # _gathering_next_tick should be 1000 + departure_gap (0.5 by default)
+    assert engine._gathering_next_tick == 1000.5, (
+        f"Expected 1000.5, got {engine._gathering_next_tick}"
     )
 
 
@@ -1150,7 +1160,7 @@ def test_gathering_departure_gap_applied_after_round_two_speech(monkeypatch):
 
     assert engine._gathering_left["Klaus Mueller"] is True
     # After speech completes, next_tick should be set with departure_gap
-    assert engine._gathering_next_tick >= 1501.0
+    assert engine._gathering_next_tick >= 1500.5
 
 
 def test_crow_case_intro_case_insensitivity_and_round_two_bypass(monkeypatch):
@@ -1507,11 +1517,11 @@ def test_unified_fallback_log_not_present_on_success(monkeypatch):
     )
 
 
-def test_round_one_success_uses_one_second_next_speaker_gap(monkeypatch):
-    """After a valid round-one speech, the next speaker should start after the configured 1s gap."""
+def test_round_one_success_uses_half_second_next_speaker_gap(monkeypatch):
+    """After a valid round-one speech, the next speaker should start after the configured 0.5s gap."""
     engine = _make_engine(monkeypatch)
     engine._init_gathering()
-    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_departure_gap_seconds", 1.0)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_departure_gap_seconds", 0.5)
     monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_speech_visible_seconds", 2.5)
     monkeypatch.setattr(
         game_engine,
@@ -1530,11 +1540,11 @@ def test_round_one_success_uses_one_second_next_speaker_gap(monkeypatch):
 
     assert engine._gathering_speech_history
     gap = engine._gathering_next_tick - start
-    assert 0.8 <= gap <= 1.8, f"Expected about 1s next-speaker gap, got {gap}"
+    assert 0.3 <= gap <= 1.0, f"Expected about 0.5s next-speaker gap, got {gap}"
 
 
-def test_round_one_prompt_keeps_sixty_to_seventy_two_char_contract(monkeypatch):
-    """The opening round prompt should keep the user's 60-72 Chinese character target."""
+def test_round_one_prompt_keeps_sixty_char_contract_without_hard_truncation(monkeypatch):
+    """The opening round prompt should target about 60 Chinese chars without hard truncation."""
     engine = _make_engine(monkeypatch)
     engine._init_gathering()
     seen = {}
@@ -1552,6 +1562,10 @@ def test_round_one_prompt_keeps_sixty_to_seventy_two_char_contract(monkeypatch):
     while time.time() < deadline and not seen:
         time.sleep(0.05)
 
-    assert "60-72" in seen["system_prompt"]
+    assert "60个中文字左右" in seen["system_prompt"]
+    assert "单句约30字以内" in seen["system_prompt"]
+    assert "不要长复句" in seen["system_prompt"]
+    assert "不要为了凑字数重复" in seen["system_prompt"]
+    assert "60-72" not in seen["system_prompt"]
     assert "不要像模板" in seen["system_prompt"]
     assert "90-130" not in seen["system_prompt"]

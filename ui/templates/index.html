@@ -11,6 +11,74 @@
 body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
 
 #game-container { position: absolute; top: 0; left: 0; right: 320px; bottom: var(--log-panel-height); overflow: hidden; }
+body.phase-locked #game-container { pointer-events: none; }
+#phase-atmosphere {
+  position: fixed; inset: 0 320px var(--log-panel-height) 0;
+  z-index: 45; pointer-events: none; opacity: 0;
+  transition: opacity 0.8s ease, background 0.8s ease;
+}
+#phase-atmosphere.dusk {
+  opacity: 1;
+  background: linear-gradient(180deg, rgba(31, 24, 54, 0.38), rgba(8, 13, 31, 0.58));
+}
+#phase-atmosphere.night {
+  opacity: 1;
+  background: rgba(2, 7, 22, 0.76);
+}
+
+#dusk-stage-label {
+  color: #f7d98a; font-size: 12px; margin-bottom: 8px;
+}
+.dusk-vote-row {
+  display: grid; grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 8px; align-items: center; min-height: 48px; padding: 6px;
+  margin-bottom: 6px; border: 1px solid rgba(142, 160, 196, 0.28);
+  border-radius: 8px; background: rgba(15, 23, 42, 0.72);
+}
+.dusk-vote-row.winner {
+  border-color: #ffdd57; background: rgba(117, 83, 18, 0.45);
+  box-shadow: 0 0 12px rgba(255, 221, 87, 0.28);
+}
+.dusk-portrait, .dusk-voter-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: #29436a; color: #fff; font-weight: 800;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  background-size: 300% 400%; background-position: 50% 0%; background-repeat: no-repeat;
+}
+.dusk-portrait { width: 34px; height: 34px; font-size: 15px; }
+.dusk-voter-icon { width: 22px; height: 22px; font-size: 10px; margin-left: -3px; }
+.dusk-vote-name { font-weight: 800; color: #fff; }
+.dusk-vote-meta { margin-top: 3px; color: #aebbd5; font-size: 10px; }
+.dusk-vote-button, #confirm-vote-result {
+  border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer;
+  background: #d95743; color: #fff; font-weight: 800;
+}
+.dusk-vote-button:hover, #confirm-vote-result:hover { background: #f06b55; }
+
+#night-transition-overlay {
+  display: none; position: fixed; inset: 0; z-index: 1200;
+  align-items: center; justify-content: center; pointer-events: all;
+  background: radial-gradient(circle at 50% 30%, rgba(25, 44, 87, 0.92), rgba(1, 5, 18, 0.98) 68%);
+}
+#night-transition-overlay.show { display: flex; }
+.night-transition-card {
+  width: min(520px, calc(100vw - 32px)); padding: 30px;
+  border: 1px solid rgba(150, 180, 230, 0.4); border-radius: 18px;
+  background: rgba(5, 13, 31, 0.9); text-align: center;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
+}
+.night-actors { display: flex; justify-content: center; gap: 20px; margin: 24px 0; }
+.night-actor {
+  width: 72px; height: 72px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-size: 36px; background: rgba(29, 48, 82, 0.9);
+  border: 1px solid rgba(164, 190, 232, 0.45);
+}
+.night-progress-track { height: 10px; overflow: hidden; border-radius: 999px; background: #17233a; }
+#night-progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, #6f87b8, #d6e5ff); transition: width 0.5s ease; }
+#night-finish-confirm {
+  display: none; margin: 20px auto 0; padding: 10px 28px; border: 0; border-radius: 7px;
+  background: #d8a928; color: #111827; font-weight: 900; cursor: pointer;
+}
 
 /* 右侧面板 */
 #side-panel {
@@ -478,35 +546,52 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
     margin-right: 6px;
   }
   #log-content .log-agent {
-    color: #58a6ff;
+    color: inherit;
     font-weight: bold;
   }
   #log-content .log-action {
-    color: #7ee787;
+    color: #6dff8f;
   }
   #log-content .log-think {
-    color: #d2a8ff;
+    color: #ff79c6;
+  }
+  #log-content .log-chat {
+    color: #6dff8f;
   }
   #log-content .log-error {
     color: #f85149;
   }
   #log-content .log-system {
-    color: #8b949e;
+    color: #f6c343;
   }
   #log-content .log-tag {
-    color: #8b949e;
+    color: #f6c343;
     margin-right: 4px;
     font-weight: bold;
   }
+  #log-content .log-tag-think {
+    color: #ff79c6;
+  }
+  #log-content .log-tag-action,
+  #log-content .log-tag-chat {
+    color: #6dff8f;
+  }
+  #log-content .log-tag-system {
+    color: #f6c343;
+  }
+  #log-content .log-tag-error,
+  #log-content .log-tag-kill {
+    color: #f85149;
+  }
   #log-content .log-llm-raw {
-    color: #ffa657;
+    color: #f85149;
     white-space: pre-wrap;
     word-break: break-word;
     font-family: monospace;
     font-size: 12px; /* Increased font-size by one level */
   }
   #log-content .log-kill {
-    color: #e94560;
+    color: #f85149;
     font-weight: bold;
   }
 </style>
@@ -552,7 +637,7 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
       <p><strong>目标：</strong>你扮演警长克罗，通过采访、线索和投票找出两名狼人。</p>
       <p><strong>身份：</strong>小镇共有 8 名参与者。每局随机产生 2 名狼人，狼人知道彼此身份，白天会伪装成普通居民。</p>
       <p><strong>白天：</strong>居民会自行行动和思考。警长每天需要采访所有存活且未被拘留的居民；每个白天有 3 次可选深度挖掘。</p>
-      <p><strong>黄昏：</strong>完成当天必要任务后，可以召集讨论和投票。居民可以投人，也可以弃票。投票结果展示后，由警长决定拘留谁。</p>
+      <p><strong>黄昏：</strong>完成当天必要任务后，可以召集讨论和投票。居民可以投人，也可以弃票。最高票者自动被拘留，平票时由警长的一票裁决。</p>
       <p><strong>夜晚：</strong>狼人每天晚上必须尝试杀死一名非克罗目标。克罗只能最后被杀。</p>
       <p><strong>银器：</strong>第二天起，警长需要收集五金店工具和银饰，之后才能制作一颗银质子弹。子弹只能用一次。</p>
       <p><strong>隐藏刀具：</strong>一名好人居民藏有银质小刀，可在夜里尝试击杀一名目标；如果误杀好人，也会造成死亡。</p>
@@ -592,6 +677,7 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
 </div>
 
 <div id="game-container"></div>
+<div id="phase-atmosphere"></div>
 <div id="coord-display"></div>
 
 <div id="side-panel">
@@ -623,13 +709,14 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
 
   <div id="dusk-statement-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #ffdd57; padding: 12px 16px;">
     <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px;">黄昏讨论发言</div>
+    <div id="dusk-stage-label"></div>
     <div id="dusk-discussion-list" style="font-size: 11px; line-height: 1.45; color: #ddd; max-height: 120px; overflow-y: auto; margin-bottom: 8px;"></div>
     <textarea id="dusk-statement-input" placeholder="输入克罗的黄昏总结..." style="width: 100%; height: 58px; resize: vertical; box-sizing: border-box; background: #0f172a; color: #eee; border: 1px solid #334155; border-radius: 4px; padding: 6px; font-size: 12px;"></textarea>
     <button id="dusk-statement-submit" onclick="submitDuskStatement()" style="width:100%; margin-top:6px; padding:8px; background:#e94560; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">提交发言，进入投票</button>
   </div>
 
   <div id="voting-panel" style="display: none; background: #1a1a3e; border-top: 2px solid #e94560; padding: 12px 16px;">
-    <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">🌅 黄昏投票与指控 (Dusk Voting)</div>
+    <div style="font-weight: bold; color: #ffdd57; margin-bottom: 6px; font-size: 13px; letter-spacing: 0.5px;">黄昏投票</div>
     <div id="voting-votes" style="font-size: 11px; line-height: 1.5; color: #eee; max-height: 150px; overflow-y: auto; margin-bottom: 10px;"></div>
     <div id="voting-counts" style="font-size: 11px; line-height: 1.5; color: #ffdd57; margin-bottom: 10px;"></div>
     <div id="jail-buttons" style="display: flex; flex-direction: column; gap: 4px;"></div>
@@ -669,6 +756,21 @@ body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; }
   <div id="game-over-text"></div>
   <div id="game-over-sub"></div>
   <button id="restart-btn" onclick="restartGame()">再来一局</button>
+</div>
+
+<div id="night-transition-overlay" aria-live="polite">
+  <div class="night-transition-card">
+    <div style="font-size:13px; color:#8ea0c4; letter-spacing:0.18em;">NIGHT SEQUENCE</div>
+    <div id="night-stage-text" style="font-size:28px; font-weight:900; margin-top:8px;">夜幕降临</div>
+    <div class="night-actors">
+      <div class="night-actor wolf" title="匿名狼人">🐺</div>
+      <div class="night-actor wolf" title="匿名狼人">🐺</div>
+      <div class="night-actor knife" title="匿名银刀执行者">🗡️</div>
+    </div>
+    <div class="night-progress-track"><div id="night-progress-fill"></div></div>
+    <div id="night-progress-text" style="margin-top:10px; color:#aebbd5;">夜间行动准备中</div>
+    <button id="night-finish-confirm" onclick="confirmNightTransition()">确认天亮</button>
+  </div>
 </div>
 
 <script>
@@ -800,23 +902,46 @@ let firstStateReceived = false;
 let pendingChatTarget = null;
 let pendingChatPhase = ""; // "moving" | "waiting"
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你先说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
-const BUBBLE_LIFETIME_SECONDS = 12;
+const BUBBLE_LIFETIME_SECONDS = 6;
 let thoughtBubbleCache = {};
 let blueBubbleCache = {};
+
+function isActionStartBubbleHtml(html) {
+  return String(html || "").includes("开始行动：");
+}
+
+function blueBubbleActionKey(persona, html) {
+  const p = persona || {};
+  const actionStartedAt = Number(p.action_started_at || 0);
+  if (actionStartedAt > 0) return `started:${actionStartedAt}`;
+  return [
+    "fallback",
+    String(p.runtime_state || ""),
+    String(p.action || ""),
+    String(p.action_type || ""),
+    String(p.action_target_location || ""),
+    String(p.action_target_object || ""),
+    String(p.action_target_person || ""),
+    String(p.path_len || 0),
+    isActionStartBubbleHtml(html) ? "action" : "thought"
+  ].join("|");
+}
 
 function applyBlueBubbleTTL(name, html, persona) {
   if (!html) {
     return "";
   }
   const now = Date.now();
+  const actionKey = blueBubbleActionKey(persona, html);
   let cached = blueBubbleCache[name];
   if (!cached) {
-    cached = { html: html, firstShown: now, expired: false };
+    cached = { html: html, firstShown: now, expired: false, actionKey: actionKey };
     blueBubbleCache[name] = cached;
-  } else if (cached.html !== html) {
+  } else if (cached.html !== html || cached.actionKey !== actionKey) {
     cached.html = html;
     cached.firstShown = now;
     cached.expired = false;
+    cached.actionKey = actionKey;
   }
   if (cached.expired) {
     return "";
@@ -826,6 +951,17 @@ function applyBlueBubbleTTL(name, html, persona) {
     return "";
   }
   return html;
+}
+
+function actionStartBubbleEnded(name, persona) {
+  const cached = blueBubbleCache[name];
+  if (!cached || !isActionStartBubbleHtml(cached.html) || cached.expired !== true) {
+    return false;
+  }
+  if (persona) {
+    return cached.actionKey === blueBubbleActionKey(persona, cached.html);
+  }
+  return true;
 }
 let pendingCrowBubble = null;
 
@@ -880,6 +1016,13 @@ function initSocket() {
     const submit = document.getElementById("dusk-statement-submit");
     if (submit) submit.disabled = false;
     if (resp && resp.error) {
+      addChatMsg("系统", resp.error, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("crow_vote_result", (resp) => {
+    if (resp && resp.error && gameState && gameState.vote_summary) {
+      gameState.vote_summary.crow_vote_submitted = false;
       addChatMsg("系统", resp.error, true);
     }
     fetchCurrentState();
@@ -1040,11 +1183,6 @@ function testRuntimeLlmOptions(options) {
   }
 
   saveRuntimeLlmOptions(runtimeOptions);
-  if (runtimeOptions.provider === "chat2api") {
-    setLlmTestStatus("使用本地 Chat2API 配置，无需远程 API 检测。", "ok");
-    return Promise.resolve({ok: true, provider: "chat2api"});
-  }
-
   setLlmTestStatus("正在检测 API...", "busy");
   setStartButtonsBusy(true);
   return fetch("/api/test_llm_provider", {
@@ -1190,6 +1328,223 @@ function submitDuskStatement() {
   }
 }
 
+function duskStage(state) {
+  const voteSummary = state && state.vote_summary ? state.vote_summary : {};
+  const explicit = voteSummary.stage || voteSummary.current_stage || state.dusk_stage || state.current_dusk_stage;
+  if (explicit) return String(explicit).trim().toLowerCase();
+  if (voteSummary.active) return "voting";
+  if (state && (state.dusk_discussion_active || voteSummary.discussion_active)) return "npc_discussion";
+  return "";
+}
+
+function eligibleDuskParticipants(state) {
+  const voteSummary = state.vote_summary || {};
+  const explicit = voteSummary.eligible_participants || state.eligible_participants;
+  if (Array.isArray(explicit) && explicit.length) {
+    return explicit.map(item => typeof item === "string" ? item : (item.name || item.id || "")).filter(Boolean);
+  }
+  return Object.entries(state.personas || {})
+    .filter(([, persona]) => persona && persona.alive !== false && !persona.jailed)
+    .map(([name]) => name);
+}
+
+function duskPortraitUrl(name) {
+  return `/static/assets/characters/${encodeURIComponent(String(name || "").replace(/ /g, "_"))}.png`;
+}
+
+function hasCrowVoted(voteSummary) {
+  if (voteSummary.crow_vote_submitted === true || voteSummary.player_voted === true || voteSummary.crow_voted === true) return true;
+  const votes = voteSummary.votes || {};
+  return Object.prototype.hasOwnProperty.call(votes, "Crow") || Object.prototype.hasOwnProperty.call(votes, "克罗");
+}
+
+function normalizeVoteCounts(voteSummary) {
+  const result = {};
+  const rawCounts = voteSummary.counts || {};
+  if (Array.isArray(rawCounts)) {
+    rawCounts.forEach(count => {
+      const name = count.target || count.name || count.candidate || "";
+      if (!name) return;
+      result[name] = {
+        count: Math.trunc(Number(count.count !== undefined ? count.count : count.votes) || 0),
+        voters: Array.isArray(count.voters) ? count.voters : []
+      };
+    });
+  } else {
+    Object.entries(rawCounts).forEach(([name, count]) => {
+      result[name] = {
+        count: Math.trunc(Number(typeof count === "object" ? (count.count !== undefined ? count.count : count.votes) : count) || 0),
+        voters: count && typeof count === "object" && Array.isArray(count.voters) ? count.voters : []
+      };
+    });
+  }
+  if (Object.keys(result).length) return result;
+  Object.entries(voteSummary.votes || {}).forEach(([voter, vote]) => {
+    const target = typeof vote === "string" ? vote : (vote && (vote.target || vote.target_name || vote.voted_for));
+    if (!target || ["none", "null", "abstain"].includes(String(target).toLowerCase())) return;
+    if (!result[target]) result[target] = {count: 0, voters: []};
+    result[target].count += 1;
+    result[target].voters.push(voter);
+  });
+  return result;
+}
+
+function submitCrowVote(name) {
+  if (!name || !gameState) return;
+  const voteSummary = gameState.vote_summary || {};
+  if (hasCrowVoted(voteSummary) || duskStage(gameState) !== "voting") return;
+  voteSummary.crow_vote_submitted = true;
+  voteSummary.crow_vote = name;
+  renderDuskVotingFlow(gameState);
+  if (socket && socket.connected) {
+    socket.emit("submit_crow_vote", {target_name: name});
+  } else {
+    fetch("/api/submit_crow_vote", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({target_name: name})
+    }).then(() => fetchCurrentState());
+  }
+}
+
+function confirmVoteResult() {
+  if (!["results", "result"].includes(duskStage(gameState || {}))) return;
+  if (socket && socket.connected) {
+    socket.emit("confirm_vote_result");
+  } else {
+    fetch("/api/confirm_vote_result", {method: "POST"}).then(() => fetchCurrentState());
+  }
+}
+
+function confirmNightTransition() {
+  if (socket && socket.connected) {
+    socket.emit("confirm_night_transition");
+  } else {
+    fetch("/api/confirm_night_transition", {method: "POST"}).then(() => fetchCurrentState());
+  }
+}
+
+function renderNightTransition(state) {
+  const overlay = document.getElementById("night-transition-overlay");
+  if (!overlay) return;
+  const sequence = state.night_transition || state.night_sequence || state.night_progress || {};
+  const stage = String(sequence.stage || sequence.current_stage || sequence.status || "").toLowerCase();
+  const finished = sequence.complete === true || sequence.completed === true || ["complete", "completed", "finished", "night_end"].includes(stage);
+  const active = state.phase === "night" || !!sequence.active || !!stage;
+  overlay.classList.toggle("show", active);
+  if (!active) return;
+
+  const rawProgress = Number(sequence.progress);
+  const elapsed = Number(sequence.elapsed || state.night_elapsed || 0);
+  const duration = Math.max(1, Number(sequence.duration || state.night_duration || 1));
+  const progress = Number.isFinite(rawProgress) ? (rawProgress <= 1 ? rawProgress * 100 : rawProgress) : (elapsed / duration) * 100;
+  document.getElementById("night-progress-fill").style.width = `${Math.max(0, Math.min(100, progress))}%`;
+  const stageLabels = {
+    wolves: "狼人行动中",
+    werewolf: "狼人行动中",
+    werewolves: "狼人行动中",
+    silver_knife: "银刀行动中",
+    knife: "银刀行动中"
+  };
+  document.getElementById("night-stage-text").textContent = finished ? "夜晚结束" : (stageLabels[stage] || "夜间行动进行中");
+  document.getElementById("night-progress-text").textContent = finished ? "所有匿名行动已结束" : "只显示匿名进度，不展示目标与行动者";
+  document.getElementById("night-finish-confirm").style.display = finished ? "block" : "none";
+}
+
+function renderDuskVotingFlow(state) {
+  const voteSummary = state.vote_summary || {};
+  const stage = duskStage(state);
+  const discussionPanel = document.getElementById("dusk-statement-panel");
+  const votingPanel = document.getElementById("voting-panel");
+  const statementInput = document.getElementById("dusk-statement-input");
+  const statementSubmit = document.getElementById("dusk-statement-submit");
+  const crowInputStage = stage === "crow_statement" || stage === "crow_input";
+  const discussionStages = ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input"];
+  const votingStages = ["voting", "results", "result", "escorting", "escort"];
+  const duskInteractionLocked = isDusk && stage !== "crow_statement" && stage !== "crow_input";
+  document.body.classList.toggle("phase-locked", isDusk || isNight);
+  const gameplayLocked = isDusk || isNight;
+  ["chat-input", "chat-send", "chat-btn", "deep-dive", "end-turn-btn", "announce-btn"].forEach(id => {
+    const control = document.getElementById(id);
+    if (control && gameplayLocked) control.disabled = true;
+  });
+
+  if (discussionPanel) discussionPanel.style.display = isDusk && discussionStages.includes(stage) ? "block" : "none";
+  if (statementInput) statementInput.style.display = crowInputStage ? "block" : "none";
+  if (statementSubmit) statementSubmit.style.display = crowInputStage ? "block" : "none";
+  const stageLabel = document.getElementById("dusk-stage-label");
+  const labels = {
+    gathering: "全员正在前往广场集合",
+    knowledge_reveal: "正在揭露狼人知识",
+    npc_discussion: "居民按顺序讨论中",
+    discussion: "居民按顺序讨论中",
+    crow_statement: "轮到克罗最后发言",
+    crow_input: "轮到克罗最后发言",
+    voting: "投票进行中",
+    results: "投票结果",
+    result: "投票结果",
+    escorting: "克罗正在押送最高票者",
+    escort: "克罗正在押送最高票者"
+  };
+  if (stageLabel) stageLabel.textContent = labels[stage] || "黄昏流程进行中";
+
+  const discussionList = document.getElementById("dusk-discussion-list");
+  if (discussionList) {
+    const statements = state.dusk_discussion_statements || voteSummary.discussion_statements || [];
+    discussionList.innerHTML = Array.isArray(statements) && statements.length
+      ? statements.map(item => `<div style="margin-bottom:5px;"><strong style="color:#ffdd57;">${escapeHtml(getDisplayName(item.speaker || "", state))}</strong>：${escapeHtml(item.text || "")}</div>`).join("")
+      : '<div style="color:#888;">等待当前阶段完成。</div>';
+  }
+
+  if (!votingPanel) return;
+  votingPanel.style.display = isDusk && votingStages.includes(stage) ? "block" : "none";
+  if (!isDusk || !votingStages.includes(stage)) return;
+
+  const participants = eligibleDuskParticipants(state);
+  const counts = normalizeVoteCounts(voteSummary);
+  const winner = voteSummary.winner || voteSummary.jail_target || "";
+  const crowHasVoted = hasCrowVoted(voteSummary);
+  const showVoteButtons = stage === "voting" && !crowHasVoted;
+  const rows = document.getElementById("voting-votes");
+  rows.innerHTML = "";
+  participants.forEach(name => {
+    const count = counts[name] || {count: 0, voters: []};
+    const row = document.createElement("div");
+    row.className = `dusk-vote-row${name === winner ? " winner" : ""}`;
+    const voterIcons = count.voters.map(voter => `<span class="dusk-voter-icon" title="${escapeHtml(getDisplayName(voter, state))}" style="background-image:url('${duskPortraitUrl(voter)}')"></span>`).join("");
+    row.innerHTML = `
+      <span class="dusk-portrait" title="${escapeHtml(getDisplayName(name, state))}" style="background-image:url('${duskPortraitUrl(name)}')"></span>
+      <span><span class="dusk-vote-name">${escapeHtml(getDisplayName(name, state))}</span>
+      <span class="dusk-vote-meta">${stage === "voting" ? (crowHasVoted ? "已投票，等待其他人" : "可投票，包括自己") : `${Math.trunc(Number(count.count) || 0)} 票 ${voterIcons}`}</span></span>
+    `;
+    if (showVoteButtons) {
+      const button = document.createElement("button");
+      button.className = "dusk-vote-button";
+      button.textContent = "投票";
+      button.addEventListener("click", () => submitCrowVote(name));
+      row.appendChild(button);
+    }
+    rows.appendChild(row);
+  });
+
+  const countsEl = document.getElementById("voting-counts");
+  if (countsEl) {
+    countsEl.textContent = voteSummary.tie_broken_by_crow
+      ? "最高票平票，按警长裁决权，由警长所投对象胜出。"
+      : (crowHasVoted && stage === "voting" ? "克罗已投票，等待其他参与者完成投票。" : "");
+  }
+  const actions = document.getElementById("jail-buttons");
+  if (actions) {
+    actions.innerHTML = "";
+    if (["results", "result"].includes(stage)) {
+      const winnerText = winner ? `并押送 ${escapeHtml(getDisplayName(winner, state))}` : "";
+      actions.innerHTML = `<button id="confirm-vote-result" onclick="confirmVoteResult()">确认结果${winnerText}</button>`;
+    } else if (["escorting", "escort"].includes(stage)) {
+      actions.innerHTML = '<div style="color:#f7d98a;">正在押送最高票者，请稍候。</div>';
+    }
+  }
+}
+
 function renderVoteHistory(state) {
   const el = document.getElementById("vote-history-content");
   if (!el) return;
@@ -1219,11 +1574,21 @@ function updateUI(state) {
 
   document.getElementById("day-num").textContent = state.day;
   const phase = state.phase;
+  const stage = duskStage(state);
   isNight = phase === "night";
-  isDusk = phase === "dusk_discussion";
+  isDusk = !isNight && (
+    phase === "dusk_discussion" ||
+    phase === "dusk" ||
+    ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(stage)
+  );
   const phaseEl = document.getElementById("phase-text");
   phaseEl.textContent = isNight ? "夜晚" : (isDusk ? "黄昏" : "白天");
   phaseEl.className = isNight ? "phase-night" : "phase-day";
+  const atmosphere = document.getElementById("phase-atmosphere");
+  if (atmosphere) {
+    atmosphere.className = isNight ? "night" : (isDusk ? "dusk" : "");
+  }
+  renderNightTransition(state);
 
   const hour = Math.floor(state.game_hour);
   const min = Math.floor((state.game_hour % 1) * 60);
@@ -1243,9 +1608,10 @@ function updateUI(state) {
     const m = Math.floor(left / 60);
     const s = Math.floor(left % 60);
     document.getElementById("day-timer").textContent = m + ":" + String(s).padStart(2,"0");
-    document.getElementById("night-btn").disabled = false;
-    document.getElementById("night-btn").textContent = state.day_time_expired
-      ? "进入夜晚（白天结束！）" : "进入夜晚";
+    document.getElementById("night-btn").disabled = isDusk;
+    document.getElementById("night-btn").textContent = isDusk
+      ? "黄昏流程进行中..."
+      : (state.day_time_expired ? "进入夜晚（白天结束！）" : "进入夜晚");
   }
 
   // Update Director Summary & calculate isDirectorSummaryViewed
@@ -1300,7 +1666,7 @@ function updateUI(state) {
       showSummary = true;
       const forced = hunt.forced_completion ? " | FORCED" : "";
       huntEl.style.display = "block";
-      huntEl.textContent = `Night hunt: ${hunt.stage} | target: ${hunt.target_name || "-"}${forced}`;
+      huntEl.textContent = `Night hunt: ${hunt.stage} | hidden action${forced}`;
     } else if (huntEl) {
       huntEl.style.display = "none";
     }
@@ -1401,126 +1767,7 @@ function updateUI(state) {
   // Update task list in side panel
   updateTasks(state);
   maybeTriggerPendingAutoChat(state);
-
-  const voteSummary = state.vote_summary || {};
-  const discussionActive = !!(state.dusk_discussion_active || voteSummary.discussion_active);
-  const discussionPanel = document.getElementById("dusk-statement-panel");
-  if (discussionPanel) {
-    discussionPanel.style.display = isDusk && discussionActive ? "block" : "none";
-    const discussionList = document.getElementById("dusk-discussion-list");
-    if (discussionList) {
-      const statements = state.dusk_discussion_statements || voteSummary.discussion_statements || [];
-      if (Array.isArray(statements) && statements.length) {
-        discussionList.innerHTML = statements.map(item => {
-          const speaker = getDisplayName(item.speaker || "", state);
-          const text = item.text || "";
-          return `<div style="margin-bottom:5px;"><strong style="color:#ffdd57;">${speaker}</strong>：${text}</div>`;
-        }).join("");
-      } else {
-        discussionList.innerHTML = '<div style="color:#888; font-style:italic;">居民正在整理发言。</div>';
-      }
-    }
-  }
-
-  // 🌅 Update Dusk Voting Panel when voting fields are exposed in status
-  const votingPanel = document.getElementById("voting-panel");
-  if (votingPanel) {
-    const hasVotingFields = state.vote_summary !== undefined || state.dusk_votes !== undefined || state.votes !== undefined || state.voting !== undefined || state.voting_results !== undefined;
-    if (hasVotingFields && isDusk && !!voteSummary.active) {
-      votingPanel.style.display = "block";
-      const votesObj = voteSummary.votes || state.dusk_votes || state.votes || state.voting || state.voting_results || {};
-      const reasonsObj = voteSummary.reasons || {};
-      const votesEl = document.getElementById("voting-votes");
-      const countsEl = document.getElementById("voting-counts");
-      const jailButtonsEl = document.getElementById("jail-buttons");
-      votesEl.innerHTML = "";
-      countsEl.innerHTML = "";
-      jailButtonsEl.innerHTML = "";
-      const counts = {};
-      const activePersonas = state.personas || {};
-      Object.keys(activePersonas).forEach(name => {
-        if (name !== "Crow" && activePersonas[name].alive) {
-          counts[name] = 0;
-        }
-      });
-      let votesCounted = 0;
-      Object.entries(votesObj).forEach(([voter, voteData]) => {
-        const voterDisplay = getDisplayName(voter, state);
-        let target = "";
-        let reason = "";
-        if (typeof voteData === 'string') {
-          target = voteData;
-          reason = reasonsObj[voter] || "";
-        } else if (voteData && typeof voteData === 'object') {
-          target = voteData.target || voteData.target_name || voteData.voted_for || "";
-          reason = voteData.reason || voteData.thought || "";
-        }
-        if (target && target !== "None" && target !== "null") {
-          const targetDisplay = getDisplayName(target, state);
-          const reasonHtml = reason ? `<br><span style="color:#aaa; font-style:italic; padding-left:12px;">“${reason}”</span>` : "";
-          const div = document.createElement("div");
-          div.style.marginBottom = "6px";
-          div.innerHTML = `<strong style="color:${PERSONA_LABEL_COLORS[voter] || '#fff'}">${voterDisplay}</strong> 投给了 <strong style="color:${PERSONA_LABEL_COLORS[target] || '#fff'}">${targetDisplay}</strong>${reasonHtml}`;
-          votesEl.appendChild(div);
-          if (counts[target] !== undefined) {
-            counts[target]++;
-          } else {
-            counts[target] = 1;
-          }
-          votesCounted++;
-        } else {
-          const div = document.createElement("div");
-          div.style.marginBottom = "6px";
-          div.innerHTML = `<strong style="color:${PERSONA_LABEL_COLORS[voter] || '#fff'}">${voterDisplay}</strong> 选择弃票/未投`;
-          votesEl.appendChild(div);
-        }
-      });
-      if (votesCounted === 0) {
-        votesEl.innerHTML = '<div style="color:#888; font-style:italic;">暂无投票记录</div>';
-      }
-      const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-      let countsHtml = "<div style='font-weight:bold; margin-bottom:4px;'>📊 得票统计 (Vote Counts):</div>";
-      sortedCounts.forEach(([name, count]) => {
-        const displayName = getDisplayName(name, state);
-        countsHtml += `<div style="display:flex; justify-content:space-between; padding: 2px 0;">
-          <span>${displayName}:</span>
-          <span style="font-weight:bold; color:#e94560;">${count} 票</span>
-        </div>`;
-      });
-      countsEl.innerHTML = countsHtml;
-      let buttonsHtml = "<div style='font-weight:bold; margin-bottom:4px; font-size:11px; color:#ffdd57;'>👮 警长抉择：将嫌疑人关入大牢 (Jail Agent):</div>";
-      let hasLivingNpcs = false;
-      Object.entries(activePersonas).forEach(([name, p]) => {
-        if (name !== "Crow" && p.alive && !p.jailed) {
-          hasLivingNpcs = true;
-          const displayName = getDisplayName(name, state);
-          const btn = document.createElement("button");
-          btn.textContent = `关押 ${displayName}`;
-          btn.style.width = "100%";
-          btn.style.padding = "6px";
-          btn.style.background = "#e94560";
-          btn.style.color = "#fff";
-          btn.style.border = "none";
-          btn.style.borderRadius = "4px";
-          btn.style.fontWeight = "bold";
-          btn.style.cursor = "pointer";
-          btn.style.marginBottom = "4px";
-          btn.style.transition = "background 0.2s";
-          btn.onmouseover = () => btn.style.background = "#d93550";
-          btn.onmouseout = () => btn.style.background = "#e94560";
-          btn.onclick = () => jailAgent(name);
-          const wrapper = document.createElement("div");
-          wrapper.appendChild(btn);
-          jailButtonsEl.appendChild(wrapper);
-        }
-      });
-      if (!hasLivingNpcs) {
-        jailButtonsEl.innerHTML = '<div style="color:#888; font-style:italic;">没有可关押的存活居民</div>';
-      }
-    } else {
-      votingPanel.style.display = "none";
-    }
-  }
+  renderDuskVotingFlow(state);
 
   if (state.game_over) showGameOver(state);
   updateLog(state);
@@ -1535,10 +1782,17 @@ function shouldDisplayAgentLogEntry(entry) {
 }
 
 function shouldDisplayAgentLogEntryAscii(entry) {
+  const lifecycleMsg = String(entry && entry.message || "");
+  if (
+    lifecycleMsg.includes("[行动计划]") ||
+    lifecycleMsg.includes("[开始行动]") ||
+    lifecycleMsg.includes("[行动结果]")
+  ) return true;
   const type = entry.type || "system";
-  const showTypes = ["think", "chat", "kill", "action", "error"];
+  const showTypes = ["think", "chat", "kill", "action", "error", "system"];
   if (!showTypes.includes(type)) return false;
   const msg = String(entry.message || "");
+  if (msg.includes("[行动计划]") || msg.includes("[开始行动]") || msg.includes("[行动结果]")) return true;
   const hasTimeout = msg.includes("超时"); // 思考超时
   const hasModel = msg.includes("LLM") || msg.includes("模型") || msg.includes("大模型");
   if (hasTimeout && hasModel) return true;
@@ -1556,13 +1810,45 @@ function shouldDisplayAgentLogEntryAscii(entry) {
   return true;
 }
 
+function isBlueBubbleLogEntry(entry) {
+  const type = entry.type || "system";
+  const msg = String(entry.message || "").trim();
+  return (
+    (type === "think" && msg.startsWith("💭")) ||
+    msg.includes("[行动计划]") ||
+    msg.includes("[开始行动]")
+  );
+}
+
+function logColorClass(entry) {
+  const type = entry.type || "system";
+  if (type === "kill") return "log-kill";
+  if (type === "error" || type === "llm_raw") return "log-error";
+  if (isBlueBubbleLogEntry(entry)) return "log-think";
+  if (type === "chat") return "log-chat";
+  if (type === "action") return "log-action";
+  if (type === "system") return "log-system";
+  return "log-action";
+}
+
+function logTagColorClass(entry) {
+  const type = entry.type || "system";
+  if (type === "kill") return "log-tag-kill";
+  if (type === "error" || type === "llm_raw") return "log-tag-error";
+  if (isBlueBubbleLogEntry(entry)) return "log-tag-think";
+  if (type === "chat") return "log-tag-chat";
+  if (type === "action") return "log-tag-action";
+  if (type === "system") return "log-tag-system";
+  return "log-tag-action";
+}
+
 function updateLog(state) {
   const logs = state.recent_log || [];
   if (!logs.length) return;
 
   const logEl = document.getElementById("log-content");
   if (!logEl) return;
-  const visibleLogTypes = ["think", "chat", "kill", "action", "error"];
+  const visibleLogTypes = ["think", "chat", "kill", "action", "error", "system"];
 
   for (let i = 0; i < logs.length; i++) {
     const entry = logs[i];
@@ -1580,28 +1866,21 @@ function updateLog(state) {
     const timeStr = new Date(entry.time * 1000).toLocaleTimeString("en-US",
       {hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit"});
 
-    let cls = "log-system";
+    let cls = logColorClass(entry);
     let prefix = "";
     if (logType === "think") {
-      cls = "log-think";
       prefix = "";
     } else if (logType === "system") {
-      cls = "log-system";
       prefix = "";
     } else if (logType === "action") {
-      cls = "log-action";
       prefix = "";
     } else if (logType === "chat") {
-      cls = "log-action";
       prefix = "💬 ";
     } else if (logType === "kill") {
-      cls = "log-kill";
       prefix = "💀 ";
     } else if (logType === "memory") {
-      cls = "log-agent";
       prefix = "🧠 ";
     } else if (logType === "llm_raw") {
-      cls = "log-llm-raw";
       prefix = "";
     }
 
@@ -1622,7 +1901,8 @@ function updateLog(state) {
         labelText = "行动";
       }
     }
-    const tagHtml = `<span class="log-tag">[${labelText}]</span> `;
+    const tagClass = ` ${logTagColorClass(entry)}`;
+    const tagHtml = `<span class="log-tag${tagClass}">[${labelText}]</span> `;
 
     let found = false;
     for (const name of PERSONA_NAMES) {
@@ -1847,20 +2127,6 @@ function submitDeepDiveChat(name, msg) {
     });
   }
   closeDeepDiveModal();
-}
-
-function jailAgent(name) {
-  if (confirm(`确定要关押 ${getDisplayName(name, gameState)} 吗？这将终结其在小镇的自由行动并确认其嫌疑！`)) {
-    if (socket && socket.connected) {
-      socket.emit("jail_vote_target", { target_name: name });
-    } else {
-      fetch("/api/jail_vote_target", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_name: name })
-      }).then(() => fetchCurrentState());
-    }
-  }
 }
 
 /* Helper function to render Dynamic Sheriff Tasks */
@@ -2333,11 +2599,12 @@ function updateAgentList(state, isDirectorSummaryViewed) {
       : "";
 
     const deepDiveAvailable = p.deep_dive_available !== undefined ? !!p.deep_dive_available : ddRemaining > 0;
-    const showBulb = p.alive && p.has_new_clue === true && !isNight && !isDusk && !isGathering && (chatAvailable || deepDiveAvailable);
+    const hasClueHint = p.has_new_clue === true || p.has_visible_clue_hint === true || p.has_detective_hint === true;
+    const showBulb = p.alive && hasClueHint && !isNight && !isDusk && !isGathering && (chatAvailable || deepDiveAvailable);
     const bulbHtml = showBulb ? `<span id="clue-bulb-${safeName}" class="clue-bulb" style="margin-left: 6px; font-size: 13px; filter: drop-shadow(0 0 3px #ffd700); cursor: help;" title="有新线索">💡</span>` : '';
 
     // Signature-based diffing to prevent hover flicker
-    const signature = `${name}|${displayName}|${p.alive}|${showBulb}|${roleVal}|${modelName}|${modelFailed}|${selectedAgent === name}|${chatAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}`;
+    const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${showBulb}|${roleVal}|${modelName}|${modelFailed}|${selectedAgent === name}|${chatAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}`;
     const targetContainer = name === "Crow" ? crowList : list;
     if (card.dataset.renderSignature === signature) {
       if (card.parentElement !== targetContainer) {
@@ -2421,7 +2688,9 @@ function summarizeThoughtForDisplay(text, maxChars = 100) {
     if (candidate.length > maxChars) break;
     summary = candidate;
   }
-  return summary || "正在整理当前情况。";
+  if (summary) return summary;
+  if (!thought) return "";
+  return thought.slice(0, Math.max(1, maxChars - 1)).trimEnd() + "…";
 }
 
 function escapeHtml(text) {
@@ -2453,13 +2722,150 @@ function compactBubbleText(text, maxChars = 58) {
   return summarizeThoughtForDisplay(localizePersonNames(replaceEnglishNames(text || "", gameState), gameState), maxChars);
 }
 
+function translateObject(obj) {
+  if (!obj) return "";
+  const dict = {
+    "behind the supply store counter": "五金店柜台后",
+    "behind the cafe counter": "咖啡馆柜台后",
+    "classroom student seating": "教室学生座位",
+    "pharmacy store shelf": "药房货架",
+    "behind the bar counter": "酒吧柜台后",
+    "park garden": "公园花园",
+    "bookshelf": "书架",
+    "supply store product shelf": "五金店商品货架",
+    "bed": "床",
+    "closet": "衣柜",
+    "desk": "书桌",
+    "shelf": "货架",
+    "cabinet": "柜子",
+    "table": "桌子",
+    "chair": "椅子",
+    "sofa": "沙发"
+  };
+  const trimmed = String(obj).trim();
+  return dict[trimmed] || trimmed;
+}
+
+function actionTargetText(p, state) {
+  if (!p) return "";
+  if (p.action_target_person && String(p.action_target_person).trim() !== "") {
+    return getDisplayName(p.action_target_person, state);
+  }
+  if (p.action_target_object && String(p.action_target_object).trim() !== "") {
+    return translateObject(p.action_target_object);
+  }
+  if (p.action_target_location_label && String(p.action_target_location_label).trim() !== "") {
+    return String(p.action_target_location_label).trim();
+  }
+  if (p.location_label && String(p.location_label).trim() !== "") {
+    return String(p.location_label).trim();
+  }
+  return "";
+}
+
+function stripActionPlanningTail(text) {
+  let value = String(text || "").replace(/\s+/g, " ").trim();
+  if (!value) return "";
+  const firstSentence = value.split(/[。！？.!?；;]/).map(s => s.trim()).filter(Boolean)[0];
+  if (firstSentence) value = firstSentence;
+  const tailMarkers = ["，今天", "。今天", "但会", "但是", "同时", "并且", "并会", "会特别", "会留意", "留意他们", "观察他们"];
+  tailMarkers.push("，也", "，还", "，再", "，并", "；也", "；还", "。也", "。还");
+  for (const marker of tailMarkers) {
+    const idx = value.indexOf(marker);
+    if (idx > 0) value = value.slice(0, idx).trim();
+  }
+  const firstClause = value.split(/[，,]/).map(s => s.trim()).filter(Boolean)[0];
+  if (firstClause && firstClause.length >= 4) value = firstClause;
+  return value.replace(/^[\s，,。.;；]+|[\s，,。.;；]+$/g, "");
+}
+
+function shortActionTask(text, target) {
+  let value = stripActionPlanningTail(text)
+    .replace(/^(行动：|行动:|Action:|action:)/, "")
+    .replace(/^(我会|我要|我准备|我打算|我将|开始|I will|I'll|I am going to|I plan to)\s*/i, "")
+    .trim();
+  if (!value) return "继续当前事务";
+
+  const targetText = String(target || "").trim();
+  if (targetText) {
+    const idx = value.indexOf(targetText);
+    if (idx >= 0) {
+      const after = value.slice(idx + targetText.length).replace(/^[\s，,。:：；;]+/, "").trim();
+      if (after.length >= 2) value = after;
+    }
+  }
+
+  value = value
+    .replace(/^(前往|去往|走向|返回|回到|要回|去|到|在)\s*/, "")
+    .replace(/^(正在|在)\s*/, "")
+    .replace(/^[\s，,。.;；]+|[\s，,。.;；]+$/g, "");
+
+  const knownPlaces = [
+    "霍布斯咖啡馆", "哈维橡树五金店", "橡树山学院", "柳树市场药房",
+    "玫瑰与皇冠酒吧", "约翰逊公园", "五金店", "咖啡馆", "学院",
+    "药房", "酒吧", "公园", "图书馆", "家中"
+  ];
+  for (const place of knownPlaces) {
+    if (value.startsWith(place)) {
+      const after = value.slice(place.length).replace(/^[\s，,。:：；;]+/, "").trim();
+      if (after.length >= 2) {
+        value = after;
+        break;
+      }
+    }
+  }
+
+  value = value
+    .replace(/^(也|又|还|继续)\s*/, "")
+    .replace(/^[\s，,。.;；]+|[\s，,。.;；]+$/g, "");
+  if (!value) value = "继续当前事务";
+  return compactBubbleText(value, 28);
+}
+
+function formatActionStartLine(p, state) {
+  const target = actionTargetText(p, state);
+  const task = shortActionTask(p && p.action, target);
+  if (target) return `前往${target}，${task}`;
+  return task;
+}
+
+function formatActionDurationLine(p, state) {
+  const target = actionTargetText(p, state);
+  const task = shortActionTask(p && p.action, target).replace(/[。.!！]+$/, "");
+  return `${task || "继续当前事务"}...`;
+}
+
 function buildNpcThoughtBubble(name, persona, state) {
   if (name === "Crow") return "";
   if (String(name).trim().toLowerCase() === "crow") return "";
+
   const p = persona || {};
   const runtime = String(p.runtime_state || "");
   const activeForPlan = runtime === "thinking" || runtime === "planning";
-  const activeForAction = runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0;
+  // Only preserve thought/plan while the backend is still planning. Once the
+  // action state begins, the action-start bubble must replace it immediately.
+  const cached = blueBubbleCache[name];
+  if (activeForPlan && cached && !cached.expired && (cached.html.includes("思考：") || cached.html.includes("计划："))) {
+    return cached.html;
+  }
+
+  // 检查是否正在移动或行动（无论是后端状态、有路径，还是前端正在进行平滑插值移动）
+  let isVisuallyMoving = false;
+  if (typeof sceneRef !== "undefined" && sceneRef && typeof sprites !== "undefined" && sprites && sprites[name]) {
+    const sprite = sprites[name];
+    const targetPx = (p.x || 0) * TILE_W;
+    const targetPy = (p.y || 0) * TILE_W;
+    const dx = targetPx - sprite.x;
+    const dy = targetPy - sprite.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 1) {
+      isVisuallyMoving = true;
+    }
+  }
+  const departureDelayUntil = Number(p.departure_delay_until || 0);
+  const departureWaiting = departureDelayUntil > (Date.now() / 1000);
+  const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);
+
   const thoughtTime = Number(p.thought_time || 0);
   const recentThought = thoughtTime > 0 && ((Date.now() / 1000) - thoughtTime <= BUBBLE_LIFETIME_SECONDS);
   if (!activeForPlan && !activeForAction && !recentThought) return "";
@@ -2468,19 +2874,25 @@ function buildNpcThoughtBubble(name, persona, state) {
   const owner = `<div class="bubble-owner">${escapeHtml(displayName)}</div>`;
 
   if (activeForAction) {
-    const action = compactBubbleText(p.action || "开始行动。", 70);
-    const type = actionTypeLabel(p.action_type);
-    const where = p.action_target_location_label || p.location_label || "";
-    const whereText = where ? `，目标：${where}` : "";
-    const sentence = `${type}：${action}${whereText}`;
-    return `${owner}<div class="bubble-row"><span class="bubble-key">行动：</span>${escapeHtml(sentence)}</div>`;
+    const sentence = formatActionStartLine(p, state);
+    return `${owner}<div class="bubble-row"><span class="bubble-key">开始行动：</span>${escapeHtml(sentence)}</div>`;
   }
 
+  const hasRawThoughtText = !!(p.thought_summary || p.thought);
   const rawThoughtText = freshThoughtForDisplay(name, p.thought_summary || p.thought || "", p);
-  const thought = compactBubbleText(rawThoughtText || "正在整理当前情况。", 70);
+  if (hasRawThoughtText && !rawThoughtText) {
+    if (!activeForPlan) {
+      return "";
+    }
+  }
+
+  const waitingThoughtDisplay = "正在整理当前情况。";
+  const thought = compactBubbleText(rawThoughtText, 70);
+  const thoughtDisplay = thought || waitingThoughtDisplay;
   const planSource = p.action_plan || p.action || "";
   const plan = compactBubbleText(planSource || "先判断下一步怎么做。", 70);
-  return `${owner}<div class="bubble-row"><span class="bubble-key">思考：</span>${escapeHtml(thought)}</div><div class="bubble-row"><span class="bubble-key">计划：</span>${escapeHtml(plan)}</div>`;
+
+  return `${owner}<div class="bubble-row"><span class="bubble-key">思考：</span>${escapeHtml(thoughtDisplay)}</div><div class="bubble-row"><span class="bubble-key">计划：</span>${escapeHtml(plan)}</div>`;
 }
 
 function freshThoughtForDisplay(name, rawText, persona) {
@@ -2495,20 +2907,22 @@ function freshThoughtForDisplay(name, rawText, persona) {
   }
   const now = Date.now() / 1000;
   const thoughtTime = persona && Number(persona.thought_time || 0);
+  const departureDelayUntil = persona ? Number(persona.departure_delay_until || 0) : 0;
+  const departureWaiting = departureDelayUntil > now;
   if (thoughtTime > 0 && now - thoughtTime > BUBBLE_LIFETIME_SECONDS) {
     delete thoughtBubbleCache[name];
     return "";
   }
   const activeNow = !!(
     persona &&
-    (persona.conversation_with || persona.path_len > 0 || ["thinking", "planning", "moving", "acting"].includes(persona.runtime_state))
+    (persona.conversation_with || (!departureWaiting && persona.path_len > 0) || ["thinking", "planning", "starting_action", "acting"].includes(persona.runtime_state) || (!departureWaiting && persona.runtime_state === "moving"))
   );
   const cached = thoughtBubbleCache[name];
   if (!cached || cached.text !== text || (thoughtTime > 0 && cached.time !== thoughtTime)) {
     thoughtBubbleCache[name] = { text, time: thoughtTime || now };
     return text;
   }
-  if (!activeNow && now - cached.time > BUBBLE_LIFETIME_SECONDS) {
+  if (now - cached.time > BUBBLE_LIFETIME_SECONDS) {
     return "";
   }
   return cached.text;
@@ -2600,6 +3014,49 @@ function bubbleSpeechText(speaker, payload) {
   if (!payload) return "";
   let text = typeof payload === "string" ? payload : (payload.text || "");
   text = replaceEnglishNames(text, gameState);
+  const kind = typeof payload === "object" ? String(payload.kind || "") : "";
+  if (kind === "action_status") {
+    text = stripActionPlanningTail(text);
+
+    // 过滤可能的名字和说话前缀，例如 "克罗对林梅说：" "Sam说：" "Sam对Jack说：" "Sam: "等
+    const nameCandidates = [];
+    if (gameState && gameState.personas) {
+      for (const n of Object.keys(gameState.personas)) {
+        nameCandidates.push(n);
+        nameCandidates.push(getDisplayName(n, gameState));
+        if (n.includes(" ")) {
+          nameCandidates.push(n.split(" ")[0]);
+        }
+      }
+    }
+    for (const n of PERSONA_NAMES) {
+      if (!nameCandidates.includes(n)) nameCandidates.push(n);
+      const dn = getDisplayName(n, gameState);
+      if (!nameCandidates.includes(dn)) nameCandidates.push(dn);
+      if (n.includes(" ")) {
+        const first = n.split(" ")[0];
+        if (!nameCandidates.includes(first)) nameCandidates.push(first);
+      }
+    }
+    nameCandidates.sort((a, b) => b.length - a.length);
+    const escapeRegex = (str) => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const namePat = nameCandidates.map(escapeRegex).join("|");
+
+    if (nameCandidates.length > 0) {
+      const toSayRegex = new RegExp(`^(?:${namePat})?\\s*对\\s*(?:${namePat})?\\s*说[：:]\\s*`, 'i');
+      text = text.replace(toSayRegex, "");
+      const sayRegex = new RegExp(`^(?:${namePat})\\s*说[：:]\\s*`, 'i');
+      text = text.replace(sayRegex, "");
+      const colonRegex = new RegExp(`^(?:${namePat})\\s*[：:]\\s*`, 'i');
+      text = text.replace(colonRegex, "");
+    }
+    text = text.replace(/^.*?说[：:]\s*/, "");
+
+    text = text
+      .replace(/^(正在|在|也|又|还|继续)\s*/, "")
+      .trim();
+    return `${text.replace(/[。.!！]+$/, "") || "继续当前事务"}...`;
+  }
   const target = typeof payload === "object" ? payload.target : "";
 
   const speakerDisplayName = getDisplayName(speaker, gameState);
@@ -3352,23 +3809,67 @@ function resolveBubbleLayout() {
     const bubblePayload = chatBubbles[name] || null;
     const suppressChatDisplay = isChatSuppressedFor(name);
     const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);
-    let thoughtText = suppressChatDisplay ? "" : buildNpcThoughtBubble(name, p, gameState);
-    thoughtText = applyBlueBubbleTTL(name, thoughtText, p);
 
-    // Hide thought bubble when speech bubble is visible, unless it is an action bubble
-    if (speechText && p.alive) {
-      const runtime = String(p.runtime_state || "");
-      const activeForAction = runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0;
-      if (!activeForAction) {
-        thoughtText = "";
+    // 计算是否处于移动或行动中，从而豁免气泡抑制条件
+    const targetPx = p.x * TILE_W;
+    const targetPy = p.y * TILE_W;
+    const dx = targetPx - sprite.x;
+    const dy = targetPy - sprite.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const isVisuallyMoving = dist > 1;
+    const runtime = String(p.runtime_state || "");
+    const departureDelayUntil = Number(p.departure_delay_until || 0);
+    const departureWaiting = departureDelayUntil > (Date.now() / 1000);
+    const activeForAction = !departureWaiting && (runtime === "starting_action" || runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0 || p.visual_moving === true || isVisuallyMoving);
+
+    const isActionStatusBubble = bubblePayload && typeof bubblePayload === "object" && String(bubblePayload.kind || "") === "action_status";
+    const realSpeechVisible = !!speechText && p.alive && !isActionStatusBubble;
+    let thoughtText = (suppressChatDisplay && !activeForAction) ? "" : buildNpcThoughtBubble(name, p, gameState);
+
+    // Hide thought/action bubble when real speech is visible. A hidden blue
+    // bubble must not start or advance its TTL; otherwise execution can unlock
+    // even though the player never saw "开始行动".
+    if (realSpeechVisible) {
+      thoughtText = "";
+    } else {
+      thoughtText = applyBlueBubbleTTL(name, thoughtText, p);
+    }
+
+    let displaySpeechText = "";
+    if (!thoughtText) {
+      displaySpeechText = speechText;
+    }
+
+    // action_status 不受普通说话 TTL 提前隐藏，只由 runtime/action gate 控制，且不受 layout 互斥提前隐藏
+    const actionStatusVisibleAt = Number(p.action_status_visible_at || 0);
+    const actionStatusReady = actionStatusVisibleAt <= 0 || (Date.now() / 1000) >= actionStatusVisibleAt;
+    const canShowActionDuration = runtime === "acting" && !isVisuallyMoving && Number(p.path_len || 0) <= 0 && actionStartBubbleEnded(name, p) && actionStatusReady;
+    if (isActionStatusBubble && !canShowActionDuration) {
+      displaySpeechText = "";
+    }
+    if (canShowActionDuration) {
+      if (isActionStatusBubble) {
+        displaySpeechText = speechText;
+      }
+    }
+    if (!displaySpeechText && p.alive && canShowActionDuration) {
+      const act = String(p.action || "").trim();
+      if (act) {
+        displaySpeechText = formatActionDurationLine(p, gameState);
+      }
+    }
+
+    // 无论哪个路径，action_status 结尾必须有 ...
+    if ((isActionStatusBubble || canShowActionDuration) && displaySpeechText) {
+      displaySpeechText = displaySpeechText.replace(/[。.!！]+$/, "").trim();
+      if (!displaySpeechText.endsWith("...")) {
+        displaySpeechText = displaySpeechText + "...";
       }
     }
 
     // Hide stale thought bubbles for NPC in active detective chat
     const isNPCInActiveChat = (pendingChatTarget && pendingChatTarget === name);
     if (isNPCInActiveChat && p.alive) {
-      const runtime = String(p.runtime_state || "");
-      const activeForAction = runtime === "moving" || runtime === "acting" || Number(p.path_len || 0) > 0;
       if (!activeForAction) {
         thoughtText = "";
       }
@@ -3418,7 +3919,7 @@ function resolveBubbleLayout() {
     let hasSpeechShown = false;
 
     // 1. 发言气泡渲染
-    if (speechText && p.alive && bubbleEl) {
+    if (displaySpeechText && p.alive && bubbleEl) {
       bubbleEl.dataset.owner = name;
       let screenX = cx - cam.scrollX + bubbleSideOffset(bubbleSide);
       let screenY = cy - cam.scrollY - 55;
@@ -3431,7 +3932,7 @@ function resolveBubbleLayout() {
       const inVisibleScreen = screenX >= 0 && screenX <= viewportWidth && screenY >= 0 && screenY <= viewportHeight;
 
       if (isNPCVisible && inVisibleScreen) {
-        bubbleEl.textContent = speechText;
+        bubbleEl.textContent = displaySpeechText;
         applyBubbleSide(bubbleEl, bubbleSide);
         bubbleEl.style.display = "block";
 
@@ -3728,11 +4229,21 @@ function update(time, delta) {
       if (dist > 1) {
         // 有距离差，播放walk动画并插值移动
         if (Math.abs(dx) > Math.abs(dy)) {
-          if (dx > 0) sprite.anims.play(key + "-right-walk", true);
-          else sprite.anims.play(key + "-left-walk", true);
+          if (dx > 0) {
+            sprite.anims.play(key + "-right-walk", true);
+            sprite.lastDir = "right";
+          } else {
+            sprite.anims.play(key + "-left-walk", true);
+            sprite.lastDir = "left";
+          }
         } else {
-          if (dy > 0) sprite.anims.play(key + "-front-walk", true);
-          else sprite.anims.play(key + "-back-walk", true);
+          if (dy > 0) {
+            sprite.anims.play(key + "-front-walk", true);
+            sprite.lastDir = "down";
+          } else {
+            sprite.anims.play(key + "-back-walk", true);
+            sprite.lastDir = "up";
+          }
         }
         if (Math.abs(dx) > step) sprite.x += Math.sign(dx) * step;
         else sprite.x = targetPx;
@@ -3745,7 +4256,19 @@ function update(time, delta) {
         // 非移动状态 → stop动画
         sprite.setPosition(targetPx, targetPy);
         sprite.anims.stop();
-        sprite.setTexture(key, "down");
+
+        // 稳定朝向站姿逻辑：如果上一帧有水平或垂直移动方向，不能在中间帧强切回正面
+        if (sprite.lastDir === "left") {
+          sprite.setTexture(key, "left-walk.000");
+        } else if (sprite.lastDir === "right") {
+          sprite.setTexture(key, "right-walk.000");
+        } else if (sprite.lastDir === "up") {
+          sprite.setTexture(key, "up-walk.000");
+        } else if (sprite.lastDir === "down") {
+          sprite.setTexture(key, "down-walk.000");
+        } else {
+          sprite.setTexture(key, "down");
+        }
       }
     }
 

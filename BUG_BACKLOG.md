@@ -380,6 +380,42 @@ ID:
 
 相关提交：本次修复提交。
 
+### BUG-012：开局尸体送走前克罗可被玩家乱点移动，蓝色气泡停留过久且行动气泡混入思考
+
+严重度：Major
+关联需求：REQ-101, REQ-102, REQ-104, REQ-132
+回归测试：`tests/test_engine_foundation.py`, `tests/test_ui_bubble_layout.py`, `tests/test_agent_action_json.py`
+状态：Closed
+验收状态：Closed
+
+期望：
+1. 开局聚集和尸体送走/返回流程未完成前，地图点击、角色卡靠近 NPC、API 移动都不能改变克罗目标。
+2. 普通白色说话气泡、蓝色思考气泡和蓝色行动气泡统一约 6 秒，不因 NPC 仍在行动或思考而无限续命。
+3. 第一轮、第二轮和黄昏 NPC 发言结束后约 0.5 秒接下一位。
+3. NPC 行动气泡只显示短动作，不展示完整思考、计划或模型内心独白。
+
+根因：
+1. `move_detective_to()` 和 `move_detective_to_agent()` 只判断了晨会聚集状态，没有判断 `_body_burial` 尸体送走/返回流程。
+2. 前端蓝色气泡缓存会在行动态持续豁免 TTL，思考缓存也曾依赖非活跃状态才过期。
+3. NPC 行动 prompt 只限制字数，没有明确禁止把 thought/plan 写进 action；后端展示清洗也不够短。
+
+修复方案：
+1. 后端两个克罗移动入口共用 `_detective_opening_locked()`，聚集或尸体处理流程未结束时直接拒绝移动。
+2. `bubble_lifetime_seconds` 和前端 `BUBBLE_LIFETIME_SECONDS` 统一为 6 秒；蓝色气泡内容不变时按 TTL 消失。
+3. `gathering_departure_gap_seconds` 和 `npc_chat_delay_seconds` 默认改为 0.5 秒；黄昏 NPC 发言逐个广播并按配置 sleep。
+3. action prompt 改为“只写可见短动作”，后端 `_action_for_display()` 再剥离 `Thought:`、因果推理前缀并限制展示长度。
+
+验证结果（2026-06-05）：
+- `python -m py_compile agent.py game_engine.py engine_bubbles.py ui/app.py` 通过。
+- `python -m pytest tests -q` 通过：393 passed，只有 pytest cache 权限警告。
+
+关闭门禁：
+- [x] 对应回归测试通过。
+- [x] 编译门禁通过。
+- [x] 根因与关联需求已记录。
+
+相关提交：本次修复提交。
+
 ## 已知外部问题
 
 
@@ -393,3 +429,70 @@ ID:
 验收状态：Deferred
 
 说明：这类问题不一定能通过代码修复。代码侧应保证超时保底、优先级队列和日志清晰。
+
+### BUG-013：NPC 思考后可能未执行行动，或克罗相关对话状态残留
+
+严重度：Major
+关联需求：REQ-159, REQ-160, REQ-161, REQ-162, REQ-163, REQ-164
+回归测试：`tests/test_engine_foundation.py`, `tests/test_daytime_npc_behavior.py`, `tests/test_agent_action_json.py`
+状态：Closed
+验收状态：Closed
+
+期望：
+1. NPC 完成一次思考/计划后，必须先进入一次可见行动、移动、交谈或兜底 continue_current，不能直接进入下一轮思考。
+2. 如果计划后目标临时不可达或无法接近，NPC 转为可见的 continue_current 行动，而不是空回 idle。
+3. NPC 主动找克罗汇报属于单向报告，不给克罗或 NPC 留下对话锁、pending action、thinking/acting 残留状态。
+4. NPC-NPC 交谈期间双方锁定到白色气泡消失；气泡消失后释放锁并允许后续行动循环。
+5. 警长主动找 NPC 交谈会立即中断目标 NPC 的旧移动和旧行动；等待模型回复期间显示 `...`，回复白泡消失后才释放交谈锁并恢复正常思考/计划。
+6. 通用真实交谈白泡不能与开始行动蓝泡共存；第二轮离场发言使用阶段特殊流程，先说完再开始蓝色离场行动和移动。
+
+修复方案：
+1. Daytime 调度加入串行 planning lane：同一时间只允许一个 NPC 进入模型思考；已有 pending/moving/acting/conversation 的 NPC 被跳过，不会重复思考。
+2. pending action 必须落到 moving/acting/conversation；行动持续时间使用模型给出的 5-30 游戏分钟，并受最近一轮串行规划耗时兜底。
+3. 无法接近交谈目标或目标物时转为 continue_current 可见行动，避免“计划后空转再思考”。
+4. 主动汇报克罗后立即清理 NPC/Crow 对话锁和行动状态；普通警长访谈从模型请求排队起进入交谈占用，回复白泡消失后才释放锁。
+5. NPC-NPC 对话锁改为随白色气泡生命周期释放，模型等待期先显示 `...`。
+6. 警长问话入口清除目标 NPC 的旧路径、旧 pending action 和旧行动持续泡；移动循环也会跳过任何正在交谈的 NPC。
+7. 第二轮离场通过独立等待期延迟蓝色行动泡和移动，不放宽通用交谈气泡互斥规则。
+
+验证结果（2026-06-06）：
+- `python -m pytest tests -q` 通过：406 passed，只有 pytest cache 权限警告。
+- `python -m py_compile game_engine.py engine_bubbles.py agent.py` 通过。
+- 版本 30 最终回归：`python -m pytest tests -q -p no:cacheprovider` 通过，443 passed；完整 `py_compile` 通过。
+
+### BUG-014：行动蓝泡被旧缓存吞掉，交谈错误进入普通行动持续期
+
+严重度：Major
+关联需求：REQ-159, REQ-160, REQ-162, REQ-163, REQ-164
+回归测试：`tests/test_engine_foundation.py`, `tests/test_ui_bubble_layout.py`
+状态：Closed
+验收状态：Closed
+
+期望：
+1. 每次新行动都必须显示新的“开始行动”蓝泡；NPC 必须等蓝泡展示期结束后才开始移动、普通行动或真实聊天。
+2. 打招呼、询问、聊天、交谈等意图必须靠近目标人物后进入真实发言模型管线，不能进入普通 `acting` 持续期或显示假交谈状态泡。
+3. NPC 到达交谈目标旧位置后，如果目标已经移动，应重新靠近；无法靠近则转为可见 `continue_current`。
+4. NPC 真实发言日志显示绿色；思考、计划、开始行动、行动结果日志保持粉色。
+
+根因：
+1. 前端蓝泡缓存只按 HTML 文本判断新旧，相同动作会复用已经过期的旧缓存；旧思考/计划缓存还会在后端已开始行动后继续阻挡行动蓝泡。
+2. `talk/socialize` 到达目标后沿用了普通行动的 `acting` 持续期，真实交谈管线要等持续期结束才触发。
+3. 后端设置路径后同一游戏 tick 立即移动，蓝色开始行动气泡还没展示完成，人物已经位移或聊天已经开始。
+4. 前端把 `chat` 日志错误映射到了粉色行动样式。
+
+修复方案：
+1. 状态报文增加 `action_started_at`，前端按每次行动开始时间刷新蓝泡缓存；行动状态开始后立即替换旧思考/计划泡。
+2. `talk/socialize` 到达目标或原本就在交谈范围内时立即进入真实交谈管线；目标移动则重新寻路，失败则转为 `continue_current`。
+3. 增加 `starting_action` 展示期，持续到蓝色开始行动气泡结束；展示期结束后才分发到移动、普通持续行动或真实聊天。
+4. 明确打招呼/询问/聊天等文本意图，即使模型返回了错误行动类型也强制归入 `talk`。
+5. 新增绿色 `log-chat` 样式，真实发言不再复用粉色行动日志样式。
+6. 前端只有在蓝色行动泡真实显示时才启动蓝泡 TTL；被真实白泡互斥隐藏的蓝泡不算展示完成。
+7. NPC 主动向 Crow 单向汇报仍不留下对话锁或 pending/acting，但白色汇报泡可见期间会被调度器视为忙碌，避免立刻进入下一轮规划。
+
+验证结果（2026-06-07）：
+- `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_navigation.py engine_tasks.py engine_bubbles.py engine_dusk.py` 通过。
+- 相关回归通过：315 passed。
+- 正式全量回归通过：471 passed。
+- 前端内联脚本语法检查通过。
+- 内置浏览器已加载版本 32，新模板包含 `log-chat` 与 `starting_action`。
+- 前端版本：32。

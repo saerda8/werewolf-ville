@@ -1,6 +1,16 @@
 # Werewolf Ville 项目连续性文档
 
-更新日期：2026-06-04（本节新增 12-13）
+## Upstream Reference Project
+
+Original Stanford Smallville / Generative Agents reference project:
+
+```text
+G:\generative_agents-main
+```
+
+Treat this path as a read-only upstream reference for agent architecture, memory, reflection, planning, map vocabulary, persona concepts, and assets. Check it before using web search when comparing Werewolf Ville against the original project.
+
+更新日期：2026-06-07
 
 ## 1. 文档目的
 
@@ -66,17 +76,19 @@ Werewolf Ville 的目标不是单纯复刻狼人杀，也不是纯粹看 NPC 自
 
 黄昏不是直接投票。正确流程是：
 
-1. 玩家点击“结束本回合开始讨论”。
-2. 所有存活、未被监禁的参与者集合。
-3. 先进入黄昏讨论，每个 NPC 基于自己的记忆、线索、怀疑和阵营目标独立发言。
-4. 玩家控制克罗打字发言。
-5. 全部发言结束后才进入投票。
-6. NPC 独立投票，也可以弃票；他们可以不听克罗号召。
-7. 所有 NPC 投完后，显示投票结果 UI：谁投了谁、每个人得几票、谁弃票。
-8. 玩家再决定克罗最终投谁或如何处理平票。
-9. 被选中的人发表遗言。
-10. 克罗把此人押送到警长区域的牢房，该角色等价出局：不能移动、不能交谈、不能投票、不能夜间行动。
-11. 克罗发表入夜提醒后进入夜晚。
+1. 玩家点击“结束本回合，进入黄昏讨论”，场景进入黄昏压暗状态。
+2. 克罗程序化召集所有存活、未被监禁的参与者回到早晨使用的广场环形站位。
+3. 第一天黄昏先触发固定的狼人知识揭露事件；发言者即使是狼人也可以伪装成好人提供真实知识。
+4. 克罗程序化说明讨论与投票规则，然后从克罗左手边开始顺时针由 NPC 逐个发言。
+5. 每个 NPC 基于自己的记忆、线索、白天经历、怀疑和阵营目标独立发言；克罗最后由玩家打字发言。
+6. 克罗发言后程序化宣布投票开始，进入 30 秒投票阶段。
+7. 所有存活未拘留参与者都可投票并允许投自己；NPC 可独立投票或弃票，玩家只控制克罗的一票。
+8. 结果 UI 展示每个人的整数票数、投给他的人的头像和弃票情况，并高亮最终胜者。
+9. 得票最高者自动被拘留；最高票平票时，克罗所投对象在平票者中胜出，等价于警长 1.5 票裁决权。
+10. 玩家确认结果后，克罗程序化宣布结果，亲自押送最高票者到牢房，再回警长办公室。
+11. 克罗回到警长办公室后进入夜晚。夜晚只显示匿名执行者图标和阶段进度，玩家不可操作且看不到行动目标与结果。
+
+完整台词、UI 和异常边界见 `docs/superpowers/specs/2026-06-07-dusk-voting-night-transition-design.md`。
 
 ### 4.5 夜晚与狼人
 

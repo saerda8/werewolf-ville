@@ -147,6 +147,65 @@ class TestDecideNextActionExtraction:
         assert result.get("ok") is True
         assert result.get("action") == "ask about {the murder}"
 
+    def test_visible_clue_hint_bool_fields_are_normalized(self, monkeypatch):
+        agent = Agent(name="TestAgent", role="villager", model="test")
+        raw = (
+            '{"action_type": "observe", "target_location": "Hobbs Cafe", '
+            '"action": "留意昨晚异常", "thought": "我怀疑有人隐瞒行踪", '
+            '"expected_result": "等待警长深挖", '
+            '"has_visible_clue_hint": "true", "has_detective_hint": false}'
+        )
+        result = _make_decision_raw(agent, raw, monkeypatch)
+        assert result.get("ok") is True
+        assert result.get("has_visible_clue_hint") is True
+        assert result.get("has_detective_hint") is False
+
+    def test_duration_minutes_is_normalized(self, monkeypatch):
+        agent = Agent(name="TestAgent", role="villager", model="test")
+        raw = (
+            '{"action_type": "work", "target_location": "Hobbs Cafe", '
+            '"action": "整理柜台", "thought": "继续营业", '
+            '"expected_result": "保持秩序", "duration_minutes": 2}'
+        )
+        result = _make_decision_raw(agent, raw, monkeypatch)
+        assert result.get("ok") is True
+        assert result.get("duration_minutes") == 5
+
+    def test_duration_minutes_defaults_and_caps(self, monkeypatch):
+        agent = Agent(name="TestAgent", role="villager", model="test")
+        too_long = (
+            '{"action_type": "inspect", "target_location": "Oak Hill College", '
+            '"action": "查阅旧档案", "thought": "找资料", '
+            '"expected_result": "发现线索", "duration_minutes": 90}'
+        )
+        capped = _make_decision_raw(agent, too_long, monkeypatch)
+        assert capped.get("ok") is True
+        assert capped.get("duration_minutes") == 30
+
+        missing = (
+            '{"action_type": "observe", "target_location": "Johnson Park", '
+            '"action": "观察周围", "thought": "确认安全", '
+            '"expected_result": "发现异常"}'
+        )
+        defaulted = _make_decision_raw(agent, missing, monkeypatch)
+        assert defaulted.get("ok") is True
+        assert defaulted.get("duration_minutes") == 15
+
+    def test_action_status_is_preserved_as_separate_visible_duration_text(self, monkeypatch):
+        agent = Agent(name="TestAgent", role="villager", model="test")
+        raw = (
+            '{"action_type": "work", "target_location": "Hobbs Cafe", '
+            '"action": "前往霍布斯咖啡馆，准备开门营业", '
+            '"action_status": "准备开门营业", '
+            '"thought": "咖啡馆需要恢复营业", "expected_result": "开始营业"}'
+        )
+
+        result = _make_decision_raw(agent, raw, monkeypatch)
+
+        assert result.get("ok") is True
+        assert result.get("action") == "前往霍布斯咖啡馆，准备开门营业"
+        assert result.get("action_status") == "准备开门营业"
+
     def test_invalid_json_returns_error(self, monkeypatch):
         agent = Agent(name="TestAgent", role="villager", model="test")
         raw = '{"action_type": "stay", "target_location": broken json here}'

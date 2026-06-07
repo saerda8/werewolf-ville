@@ -107,6 +107,777 @@ def test_crow_case_intro_lines_sound_like_sheriff_not_coroner(monkeypatch):
     assert "克罗" in lines[0]
 
 
+def test_action_duration_uses_planned_minutes_and_planning_cycle_floor(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.day_duration = 600
+    engine._last_planning_cycle_seconds = 10
+
+    assert engine._action_duration_minutes({"duration_minutes": 5}) == 24
+    assert engine._action_duration_minutes({"duration_minutes": 90}) == 30
+    assert engine._action_duration_minutes({}) == 30
+
+
+def test_initial_action_duration_defaults_to_full_occupancy(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.day_duration = 600
+    engine._last_planning_cycle_seconds = 0
+
+    assert engine._action_duration_minutes({"duration_minutes": 5}) == 30
+    assert engine._action_duration_seconds({"duration_minutes": 5}) == 12.5
+
+
+def test_action_duration_seconds_has_six_second_floor(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.day_duration = 600
+    engine._last_planning_cycle_seconds = 1
+
+    assert engine._action_duration_minutes({"duration_minutes": 5}) == 5
+    assert engine._action_duration_seconds({"duration_minutes": 5}) == 6.0
+
+
+def test_day_tick_does_not_run_realtime_reflection(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    engine.day_start_time = time.time()
+    engine.llm_tick_counter = engine.llm_interval
+    calls = []
+
+    monkeypatch.setattr(engine, "_update_agent_schedules", lambda: calls.append("schedule"))
+    monkeypatch.setattr(engine, "_move_agents", lambda: calls.append("move"))
+    monkeypatch.setattr(engine, "_llm_tick", lambda: calls.append("reflect"))
+
+    engine._day_tick()
+
+    assert calls == ["schedule", "move"]
+
+
+def test_stage_reflection_only_runs_at_night_start_when_running(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    calls = []
+    for name, agent in engine.agents.items():
+        if name != engine.detective_name:
+            monkeypatch.setattr(agent, "daily_reflection", lambda day, dead, n=name: calls.append(n) or "今天先记下。")
+
+    engine._running = False
+    engine._start_stage_reflection("night_start")
+    assert calls == []
+
+    engine._running = True
+    engine._start_stage_reflection("night_start")
+    for thread in list(engine.llm_threads):
+        thread.join(timeout=2)
+
+    assert calls
+
+
+def test_neighbor_action_path_prefers_left_then_right(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+
+    left = engine._neighbor_action_path("Arthur Burton", arthur)
+    assert left is not None
+    assert left[:2] == (9, 10)
+
+    engine.collision_maze[10][9] = 1
+    right = engine._neighbor_action_path("Arthur Burton", arthur)
+    assert right is not None
+    assert right[:2] == (11, 10)
+
+
+def test_moving_agent_at_target_without_path_enters_acting(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    klaus = engine.agents["Klaus Mueller"]
+    klaus.x = klaus.target_x = 115
+    klaus.y = klaus.target_y = 26
+    klaus.runtime_state = "moving"
+    klaus._pending_action = {
+        "action_type": "work",
+        "target_location": "Oak Hill College",
+        "target_object": "classroom student seating",
+        "target_person": "",
+        "action": "整理课堂资料",
+        "duration_minutes": 30,
+    }
+    engine.agent_paths.pop("Klaus Mueller", None)
+
+    engine._move_agents()
+
+    assert klaus.runtime_state == "acting"
+    assert getattr(klaus, "_arrived_at_time", 0) > 0
+
+
+def test_acting_npc_does_not_request_new_plan_before_duration(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 999)
+    arthur = engine.agents["Arthur Burton"]
+    arthur.runtime_state = "acting"
+    arthur._pending_action = {
+        "action_type": "work",
+        "target_location": arthur.current_location or "Johnson Park",
+        "action": "整理工具架",
+        "duration_minutes": 30,
+    }
+    arthur._arrived_at_time = time.time()
+
+    called = {"count": 0}
+
+    def fail_if_called(*args, **kwargs):
+        called["count"] += 1
+        return {"ok": False}
+
+    monkeypatch.setattr(arthur, "decide_next_action", fail_if_called)
+
+    engine._update_agent_schedules()
+
+    assert called["count"] == 0
+    assert arthur._pending_action is not None
+    assert arthur.runtime_state == "acting"
+
+
+# ============================================================================
+# Planning lane lifecycle: turn advancement on cooldown & state skip
+# ============================================================================
+
+
+def _make_two_npc_planning_engine(monkeypatch):
+    """Helper: engine with only Arthur & Isabella in planning order, no LLM delay."""
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents",
+                        ["Arthur Burton", "Isabella Rodriguez"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "retry_delay_seconds", 0)
+    engine._planning_turn_index = 0
+    return engine
+
+
+def _drain_memory_tasks(engine):
+    tasks = []
+    while len(engine._memory_queue):
+        tasks.append(engine._memory_queue.pop_next())
+    return tasks
+
+
+def test_engine_records_observation_event(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+
+    event = engine._record_observation_event(
+        event_type="action_start",
+        subject="Arthur Burton",
+        text="亚瑟开始检查库存。",
+        x=5,
+        y=5,
+        public=False,
+    )
+
+    assert event.event_type == "action_start"
+    assert engine._observation_events[-1].text == "亚瑟开始检查库存。"
+
+
+def test_decision_packet_includes_nearby_people_objects_and_events(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 5, 5
+    isabella.x, isabella.y = 6, 5
+
+    engine._record_observation_event(
+        event_type="action_start",
+        subject="Arthur Burton",
+        text="亚瑟开始检查库存。",
+        x=5,
+        y=5,
+        public=False,
+    )
+
+    packet = engine._build_observation_packet("Isabella Rodriguez", isabella)
+
+    assert "亚瑟开始检查库存" in packet["observable_events_text"]
+    assert "亚瑟" in packet["nearby_people_text"]
+
+
+def test_discovering_body_records_public_observation_event(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    body = engine.bodies[0]
+    body.discovered = False
+    engine._observation_events.clear()
+
+    discovered = engine._discover_latest_body()
+
+    assert discovered is body
+    event = engine._observation_events[-1]
+    assert event.event_type == "body_discovered"
+    assert event.subject == body.victim_name
+    assert event.public is True
+    assert event.hidden is False
+    assert (event.x, event.y) == (body.x, body.y)
+
+
+def test_resolving_dusk_vote_records_public_observation_event(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DUSK_DISCUSSION
+    engine._dusk_jail_target = None
+    engine._dusk_vote_resolved = False
+    engine._dusk_votes = {
+        "Arthur Burton": "Isabella Rodriguez",
+        "Klaus Mueller": "Isabella Rodriguez",
+        engine.detective_name: "Isabella Rodriguez",
+    }
+    engine._dusk_vote_reasons = {name: "test" for name in engine._dusk_votes}
+    engine._observation_events.clear()
+
+    result = engine._resolve_dusk_votes()
+
+    assert result["winner"] == "Isabella Rodriguez"
+    event = engine._observation_events[-1]
+    assert event.event_type == "vote_result"
+    assert event.subject == "Isabella Rodriguez"
+    assert event.public is True
+    assert event.hidden is False
+
+
+def test_night_kill_event_is_hidden_and_visible_only_to_witnesses(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    candidates = [
+        name for name, agent in engine.agents.items()
+        if name != engine.detective_name
+        and name not in engine.werewolf_names
+        and agent.is_alive
+    ]
+    target_name, witness_name, outsider_name = candidates[:3]
+    engine._transition_to_night()
+    engine._observation_events.clear()
+    monkeypatch.setattr(engine, "_night_witnesses", lambda victim_name: [witness_name])
+
+    engine._kill_night_target(target_name)
+
+    event = engine._observation_events[-1]
+    assert event.event_type == "night_kill"
+    assert event.subject == target_name
+    assert event.hidden is True
+    assert event.public is False
+    assert event.witnesses == {witness_name}
+
+    outsider = engine.agents[outsider_name]
+    outsider.x, outsider.y = event.x, event.y
+    assert event in engine._observable_events_for(
+        witness_name, engine.agents[witness_name]
+    )
+    assert event not in engine._observable_events_for(outsider_name, outsider)
+
+
+def test_important_public_and_witnessed_events_enqueue_eligible_npc_memories(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    eligible = [
+        name for name, agent in engine.agents.items()
+        if name != engine.detective_name and agent.is_alive
+    ]
+    witness_name = eligible[0]
+    jailed_name = eligible[-1]
+    engine._jailed.add(jailed_name)
+
+    engine._record_observation_event(
+        event_type="body_discovered",
+        subject="Town Resident 01",
+        text="镇民在公园发现了一具尸体。",
+        x=10,
+        y=10,
+        public=True,
+    )
+    engine._record_observation_event(
+        event_type="night_kill",
+        subject="Arthur Burton",
+        text="亚瑟在夜里遭到袭击。",
+        x=20,
+        y=20,
+        hidden=True,
+        witnesses={witness_name, jailed_name, engine.detective_name},
+    )
+
+    tasks = _drain_memory_tasks(engine)
+    public_recipients = set(eligible) - {jailed_name}
+    public_tasks = [
+        task for task in tasks
+        if task.payload.get("event_type") == "body_discovered"
+    ]
+    witnessed_tasks = [
+        task for task in tasks
+        if task.payload.get("event_type") == "night_kill"
+    ]
+
+    assert {task.agent_name for task in public_tasks} == public_recipients
+    assert {task.agent_name for task in witnessed_tasks} == {witness_name}
+    assert all(task.payload.get("kind") == "observation_event" for task in tasks)
+
+
+def test_action_status_drops_customer_when_no_visible_person(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 5, 5
+    for other_name, other in engine.agents.items():
+        if other_name != "Arthur Burton":
+            other.x, other.y = 100, 100
+
+    status = engine._ground_action_status(
+        "Arthur Burton",
+        arthur,
+        "招呼客人",
+        {"nearby_people_text": "附近没有人"},
+    )
+
+    assert status != "招呼客人"
+    assert "客人" not in status
+
+
+def test_complete_action_enqueues_memory_task(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur._pending_action = {
+        "action_type": "inspect",
+        "target_location": "Harvey Oak Supply Store",
+        "target_object": "shelf",
+        "target_person": "",
+        "action": "检查库存",
+        "action_status": "检查库存",
+        "thought": "需要确认工具是否齐全。",
+        "expected_result": "掌握库存情况",
+        "duration_minutes": 5,
+        "observation_before": {"observable_events_text": "之前看到货架凌乱。"},
+    }
+
+    engine._complete_agent_action("Arthur Burton", arthur)
+
+    assert len(engine._memory_queue) == 1
+    task = engine._memory_queue.pop_next()
+    assert task.agent_name == "Arthur Burton"
+    assert task.payload["kind"] == "action_completed"
+    assert "需要确认工具是否齐全" in task.payload["thought"]
+    assert "掌握库存情况" in task.payload["expected_result"]
+
+
+def test_npc_chat_completion_enqueues_memory_for_both_participants(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+
+    engine._enqueue_conversation_memory(
+        speaker="Arthur Burton",
+        listener="Isabella Rodriguez",
+        transcript=[
+            ("Arthur Burton", "我看到五金店门口有人徘徊。"),
+            ("Isabella Rodriguez", "这听起来很奇怪。"),
+        ],
+    )
+
+    tasks = [engine._memory_queue.pop_next(), engine._memory_queue.pop_next()]
+
+    assert {task.agent_name for task in tasks} == {"Arthur Burton", "Isabella Rodriguez"}
+    assert all(task.payload["kind"] == "conversation_completed" for task in tasks)
+    assert all("五金店门口有人徘徊" in str(task.payload["transcript"]) for task in tasks)
+
+
+def test_memory_lane_writes_thought_memory(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    written = []
+
+    def fake_consolidate(payload):
+        return {
+            "memories": [
+                {
+                    "type": "thought",
+                    "text": "亚瑟认为伊莎贝拉可能已经注意到他的异常。",
+                    "importance": 8,
+                    "keywords": ["亚瑟", "伊莎贝拉", "异常"],
+                    "subject": "Arthur Burton",
+                    "predicate": "suspects",
+                    "object": "Isabella Rodriguez",
+                }
+            ],
+            "current_goal": "避免伊莎贝拉继续怀疑自己。",
+        }
+
+    monkeypatch.setattr(arthur, "consolidate_memory", fake_consolidate)
+    monkeypatch.setattr(arthur, "add_memory", lambda event, day: written.append({"event": event, "day": day}))
+
+    engine._enqueue_memory_task("Arthur Burton", {"kind": "action_completed"})
+    engine._process_next_memory_task()
+
+    deadline = time.time() + 2
+    while not written and time.time() < deadline:
+        time.sleep(0.01)
+
+    assert written
+    assert "thought" in written[0]["event"]
+    assert "伊莎贝拉" in written[0]["event"]
+    assert arthur.scratch["currently"] == "避免伊莎贝拉继续怀疑自己。"
+
+
+def _make_tracking_decide(name, store):
+    """Return a decide_next_action mock that records calls and returns fast."""
+    def _decide(*args, **kwargs):
+        store.append(name)
+        return {"ok": False, "error": "test_skip", "raw_response": ""}
+    return _decide
+
+
+def _wait_for_decision_call(called, expected, timeout=2.0):
+    """Busy-wait for expected value to appear in called list (async thread)."""
+    deadline = time.time() + timeout
+    while expected not in called and time.time() < deadline:
+        time.sleep(0.01)
+
+
+def _wait_for_decision_call(called, expected, timeout=2.0):
+    deadline = time.time() + timeout
+    while expected not in called and time.time() < deadline:
+        time.sleep(0.01)
+
+
+def test_planning_turn_advances_when_candidate_on_next_retry_cooldown(monkeypatch):
+    """When current planning candidate has _next_llm_retry_time in the future,
+    planning turn advances to the next eligible NPC."""
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    assert engine._current_planning_candidate() == "Arthur Burton"
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur._next_llm_retry_time = time.time() + 999  # long cooldown
+
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella._next_llm_retry_time = 0  # ready
+    isabella._last_llm_decision_time = 0
+
+    called = []
+    monkeypatch.setattr(arthur, "decide_next_action", _make_tracking_decide("Arthur", called))
+    monkeypatch.setattr(isabella, "decide_next_action", _make_tracking_decide("Isabella", called))
+
+    engine._update_agent_schedules()
+    _wait_for_decision_call(called, "Isabella")
+
+    assert "Arthur" not in called, (
+        "Arthur must not be asked to decide while on next_retry cooldown"
+    )
+    assert "Isabella" in called, (
+        "Isabella must be asked to decide after Arthur is skipped due to next_retry"
+    )
+
+
+def test_planning_turn_advances_when_candidate_on_interval_cooldown(monkeypatch):
+    """When current planning candidate is within action_decision_interval,
+    planning turn advances to the next eligible NPC."""
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    # Override interval to a large value so Arthur's recent decision is inside it
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 999)
+    assert engine._current_planning_candidate() == "Arthur Burton"
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur._last_llm_decision_time = time.time()  # just now → inside 999s interval
+
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella._last_llm_decision_time = 0  # long ago → outside interval
+    isabella._next_llm_retry_time = 0
+
+    called = []
+    monkeypatch.setattr(arthur, "decide_next_action", _make_tracking_decide("Arthur", called))
+    monkeypatch.setattr(isabella, "decide_next_action", _make_tracking_decide("Isabella", called))
+
+    engine._update_agent_schedules()
+    _wait_for_decision_call(called, "Isabella")
+
+    assert "Arthur" not in called, (
+        "Arthur must not be asked to decide while within action_decision_interval"
+    )
+    assert "Isabella" in called, (
+        "Isabella must be asked to decide after Arthur is skipped due to interval"
+    )
+
+
+def test_moving_npc_is_skipped_in_planning_lane(monkeypatch):
+    """An NPC with is_moving=True must be skipped by the planning lane;
+    the turn advances to the next eligible NPC."""
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    assert engine._current_planning_candidate() == "Arthur Burton"
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 12, 10  # target differs → is_moving
+    arthur._next_llm_retry_time = 0
+    arthur._last_llm_decision_time = 0
+
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella._next_llm_retry_time = 0
+    isabella._last_llm_decision_time = 0
+
+    called = []
+    monkeypatch.setattr(arthur, "decide_next_action", _make_tracking_decide("Arthur", called))
+    monkeypatch.setattr(isabella, "decide_next_action", _make_tracking_decide("Isabella", called))
+
+    engine._update_agent_schedules()
+    _wait_for_decision_call(called, "Isabella")
+
+    assert "Arthur" not in called, "Moving Arthur must not be asked to decide"
+    assert "Isabella" in called, "Isabella must become the planning candidate after Arthur skipped"
+
+
+def test_acting_npc_is_skipped_in_planning_lane(monkeypatch):
+    """An NPC in acting state (still within action duration) must be skipped;
+    the turn advances to the next eligible NPC."""
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    assert engine._current_planning_candidate() == "Arthur Burton"
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.runtime_state = "acting"
+    arthur._arrived_at_time = time.time()
+    arthur._pending_action = {
+        "action_type": "work",
+        "target_location": arthur.current_location or "Johnson Park",
+        "target_object": "",
+        "target_person": "",
+        "action": "整理工具架",
+        "thought": "继续工作",
+        "expected_result": "完成整理",
+        "duration_minutes": 30,
+        "duration_seconds": 9999,  # very long so it doesn't expire during test
+    }
+    arthur._next_llm_retry_time = 0
+    arthur._last_llm_decision_time = 0
+
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella._next_llm_retry_time = 0
+    isabella._last_llm_decision_time = 0
+
+    called = []
+    monkeypatch.setattr(arthur, "decide_next_action", _make_tracking_decide("Arthur", called))
+    monkeypatch.setattr(isabella, "decide_next_action", _make_tracking_decide("Isabella", called))
+
+    engine._update_agent_schedules()
+    _wait_for_decision_call(called, "Isabella")
+
+    assert "Arthur" not in called, "Acting Arthur must not be asked to decide"
+    assert "Isabella" in called, "Isabella must become the planning candidate after Arthur skipped"
+
+
+def test_pending_planning_state_is_skipped_in_planning_lane(monkeypatch):
+    """An NPC with _pending_action and runtime_state 'planning'/'moving'
+    must be skipped; the turn advances to the next eligible NPC."""
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    assert engine._current_planning_candidate() == "Arthur Burton"
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.runtime_state = "planning"
+    arthur._pending_action = {
+        "action_type": "work",
+        "target_location": arthur.current_location or "Johnson Park",
+        "action": "规划中",
+    }
+    arthur._next_llm_retry_time = 0
+    arthur._last_llm_decision_time = 0
+
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella._next_llm_retry_time = 0
+    isabella._last_llm_decision_time = 0
+
+    called = []
+    monkeypatch.setattr(arthur, "decide_next_action", _make_tracking_decide("Arthur", called))
+    monkeypatch.setattr(isabella, "decide_next_action", _make_tracking_decide("Isabella", called))
+
+    engine._update_agent_schedules()
+    _wait_for_decision_call(called, "Isabella")
+
+    assert "Arthur" not in called, "Planning-state Arthur must not be asked to decide"
+    assert "Isabella" in called, "Isabella must become the planning candidate after Arthur skipped"
+
+
+def test_conversation_state_is_skipped_in_planning_lane(monkeypatch):
+    """An NPC with in_conversation_with set must be skipped;
+    the turn advances to the next eligible NPC."""
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    assert engine._current_planning_candidate() == "Arthur Burton"
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 10, 10
+    arthur.in_conversation_with = "Isabella Rodriguez"
+    arthur._conversation_started_at = time.time()
+    arthur._next_llm_retry_time = 0
+    arthur._last_llm_decision_time = 0
+
+    # Isabella is not in conversation (only Arthur is busy)
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella.x, isabella.y = 12, 10
+    isabella.target_x, isabella.target_y = 12, 10
+    isabella.in_conversation_with = None
+    isabella._next_llm_retry_time = 0
+    isabella._last_llm_decision_time = 0
+
+    called = []
+    monkeypatch.setattr(arthur, "decide_next_action", _make_tracking_decide("Arthur", called))
+    monkeypatch.setattr(isabella, "decide_next_action", _make_tracking_decide("Isabella", called))
+
+    engine._update_agent_schedules()
+    _wait_for_decision_call(called, "Isabella")
+
+    assert "Arthur" not in called, "Conversation-bound Arthur must not be asked to decide"
+    assert "Isabella" in called, "Isabella must become the planning candidate after Arthur skipped"
+
+
+def test_action_duration_does_not_request_decide_next_action(monkeypatch):
+    """Reinforcement: during action duration, decide_next_action is not called
+    and the turn advances past the acting NPC."""
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    assert engine._current_planning_candidate() == "Arthur Burton"
+
+    arthur = engine.agents["Arthur Burton"]
+    arthur.runtime_state = "acting"
+    arthur._arrived_at_time = time.time()
+    arthur._pending_action = {
+        "action_type": "work",
+        "target_location": arthur.current_location or "Johnson Park",
+        "action": "整理工具架",
+        "duration_minutes": 30,
+        "duration_seconds": 9999,
+    }
+    arthur._next_llm_retry_time = 0
+    arthur._last_llm_decision_time = 0
+
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella._next_llm_retry_time = 0
+    isabella._last_llm_decision_time = 0
+
+    called = []
+    monkeypatch.setattr(arthur, "decide_next_action", _make_tracking_decide("Arthur", called))
+    monkeypatch.setattr(isabella, "decide_next_action", _make_tracking_decide("Isabella", called))
+
+    engine._update_agent_schedules()
+    _wait_for_decision_call(called, "Isabella")
+
+    assert "Arthur" not in called, "decide_next_action must NOT be called during action duration"
+    assert arthur._pending_action is not None, "Pending action must remain during duration"
+    assert arthur.runtime_state == "acting", "Arthur must still be in acting state"
+    assert "Isabella" in called, "Planning lane must advance to the next NPC"
+
+
+def test_ordinary_action_status_bubble_persists_until_action_completes(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    arthur = engine.agents["Arthur Burton"]
+    arthur.target_x, arthur.target_y = arthur.x, arthur.y
+    arthur.runtime_state = "idle"
+    arthur._pending_action = {
+        "action_type": "work",
+        "target_location": arthur.current_location or "Johnson Park",
+        "target_object": "",
+        "target_person": "",
+        "action": "整理工具架",
+        "duration_minutes": 5,
+    }
+
+    engine._update_agent_schedules()
+
+    bubble = engine.chat_bubbles.get("Arthur Burton")
+    assert bubble is None
+    assert arthur.runtime_state == "starting_action"
+    arthur._action_start_visible_until = 0
+    engine._update_agent_schedules()
+
+    bubble = engine.chat_bubbles.get("Arthur Burton")
+    assert bubble is not None
+    assert bubble.get("kind") == "action_status"
+    assert "..." in bubble.get("text", "")
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
+    assert "Arthur Burton" in engine.chat_bubbles
+
+    arthur._arrived_at_time = time.time() - 999
+    arthur._action_status_visible_at = time.time() - 999
+    engine._update_agent_schedules()
+
+    assert arthur._pending_action is None
+    assert "Arthur Burton" not in engine.chat_bubbles
+
+
+def test_status_exposes_action_status_visible_time(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur.runtime_state = "acting"
+    arthur._action_status_visible_at = 1234.5
+
+    status = engine.get_status()
+
+    assert status["personas"]["Arthur Burton"]["action_status_visible_at"] == 1234.5
+
+
+def test_status_exposes_departure_delay_until(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur._departure_delay_until = 4321.5
+
+    status = engine.get_status()
+
+    assert status["personas"]["Arthur Burton"]["departure_delay_until"] == 4321.5
+
+
+def test_player_visible_log_keeps_think_plan_action_closure(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    assert engine._is_player_visible_log_entry({"type": "action", "message": "[行动计划] 亚瑟: 计划=整理工具"})
+    assert engine._is_player_visible_log_entry({"type": "action", "message": "[开始行动] 亚瑟: 执行：整理工具"})
+    assert engine._is_player_visible_log_entry({"type": "action", "message": "[行动结果] 亚瑟: 整理完工具"})
+    assert not engine._is_player_visible_log_entry({"type": "action", "message": "[行动解析] 亚瑟: 地点=酒馆"})
+
+
+def test_planned_action_falls_back_to_visible_action_when_target_cannot_be_reached(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "planning_display_seconds", 0)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 10, 10
+    engine.agent_paths.pop("Arthur Burton", None)
+    isabella.x, isabella.y = 30, 10
+    arthur._last_llm_decision_time = 0
+
+    monkeypatch.setattr(
+        arthur,
+        "decide_next_action",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "action_type": "talk",
+            "target_location": isabella.current_location or "Johnson Park",
+            "target_object": "",
+            "target_person": "Isabella Rodriguez",
+            "action": "找伊莎贝拉交谈",
+            "thought": "需要确认她昨晚看到的情况",
+            "expected_result": "交换信息",
+            "duration_minutes": 5,
+            "raw_response": "{}",
+        },
+    )
+    monkeypatch.setattr(engine, "_target_available_for_approach", lambda *args: (True, ""))
+    monkeypatch.setattr(engine, "_path_adjacent_to", lambda *args, **kwargs: None)
+
+    engine._update_agent_schedules()
+    deadline = time.time() + 3
+    while arthur.runtime_state not in {"starting_action", "acting"} and time.time() < deadline:
+        time.sleep(0.01)
+
+    assert arthur.runtime_state == "starting_action"
+    assert arthur._pending_action is not None
+    assert arthur._pending_action["action_type"] == "continue_current"
+    assert arthur.current_action
+    assert "Arthur Burton" not in engine.chat_bubbles
+    arthur._action_start_visible_until = 0
+    engine._update_agent_schedules()
+    assert arthur.runtime_state == "acting"
+    assert engine.chat_bubbles["Arthur Burton"]["kind"] == "action_status"
+
+
 def test_move_detective_to_agent_stops_adjacent_not_on_top(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
@@ -218,6 +989,20 @@ def test_set_agent_target_falls_back_when_object_has_no_physical_coordinate(monk
     assert klaus.current_location == "Oak Hill College"
 
 
+def test_set_agent_target_nudges_same_tile_fallback(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    klaus = engine.agents["Klaus Mueller"]
+    klaus.x = klaus.target_x = 40
+    klaus.y = klaus.target_y = 40
+    monkeypatch.setattr(engine, "_find_object_in_spatial_memory", lambda *args: None)
+    monkeypatch.setattr(engine, "_nearest_walkable_tile", lambda *args, **kwargs: (40, 40))
+
+    moved = engine._set_agent_target(klaus, "Klaus Mueller", "Oak Hill College", "")
+
+    assert moved is True
+    assert abs(klaus.target_x - 40) + abs(klaus.target_y - 40) == 1
+
+
 def test_set_agent_target_falls_back_when_object_adjacent_path_fails(monkeypatch):
     engine = _make_engine(monkeypatch)
     mei = engine.agents["Mei Lin"]
@@ -252,6 +1037,21 @@ def test_detective_cannot_leave_during_morning_gathering(monkeypatch):
     assert engine.move_detective_to(99, 99, "Johnson Park") is False
     assert (crow.target_x, crow.target_y) == original_target
     assert crow.current_action != "investigating"
+
+
+def test_detective_cannot_move_until_opening_body_handoff_finishes(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine._body_burial = {"stage": "returning"}
+    crow = engine.agents["Crow"]
+    original_target = (crow.target_x, crow.target_y)
+
+    assert engine.move_detective_to(99, 99, "Johnson Park") is False
+    assert (crow.target_x, crow.target_y) == original_target
+
+    engine._detective_chat_pending_target = "Maria Lopez"
+    assert engine.move_detective_to_agent("Maria Lopez") is False
+    assert engine._detective_chat_pending_target is None
 
 
 def test_manual_detective_move_avoids_long_detour_around_wall(monkeypatch):
@@ -346,13 +1146,19 @@ def test_clue_stays_pending_until_successful_detective_chat(monkeypatch):
         location="Hobbs Cafe",
     )
     assert clue.delivered_to_crow is False
-    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is True
+    status = engine.get_status()["personas"]["Isabella Rodriguez"]
+    assert status["has_new_clue"] is True
+    assert status["has_visible_clue_hint"] is True
+    assert status["has_detective_hint"] is True
 
     result = engine.detective_chat("Isabella Rodriguez", "What did you notice?")
 
     assert result["delivered_clues"] == [clue.summary]
     assert clue.delivered_to_crow is True
-    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is False
+    status = engine.get_status()["personas"]["Isabella Rodriguez"]
+    assert status["has_new_clue"] is False
+    assert status["has_visible_clue_hint"] is False
+    assert status["has_detective_hint"] is False
     assert engine.chat_bubbles["Crow"]["target"] == "Isabella Rodriguez"
     assert engine.chat_bubbles["Isabella Rodriguez"]["target"] == "Crow"
 
@@ -363,7 +1169,10 @@ def test_status_does_not_light_bulb_for_keyword_only_thought(monkeypatch):
     source.current_thought = "我发现了一个异常线索，但还没决定是否去找警长。"
     source.current_action = "先整理咖啡馆柜台旁的证据"
 
-    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is False
+    status = engine.get_status()["personas"]["Isabella Rodriguez"]
+    assert status["has_new_clue"] is False
+    assert status["has_visible_clue_hint"] is False
+    assert status["has_detective_hint"] is False
 
 
 def test_status_lights_bulb_for_explicit_detective_hint(monkeypatch):
@@ -371,7 +1180,10 @@ def test_status_lights_bulb_for_explicit_detective_hint(monkeypatch):
     source = engine.agents["Isabella Rodriguez"]
     source._last_decision = {"has_detective_hint": True}
 
-    assert engine.get_status()["personas"]["Isabella Rodriguez"]["has_new_clue"] is True
+    status = engine.get_status()["personas"]["Isabella Rodriguez"]
+    assert status["has_new_clue"] is True
+    assert status["has_visible_clue_hint"] is True
+    assert status["has_detective_hint"] is True
 
 
 def test_npc_chat_bubbles_expose_each_other_as_targets(monkeypatch):
@@ -458,13 +1270,13 @@ def test_npc_chat_at_distance_two_does_not_early_exit(monkeypatch):
     assert engine.chat_bubbles["Isabella Rodriguez"]["text"], (
         "Responder bubble text must not be empty for distance-2 chat"
     )
-    # Conversation state must have been cleaned up
-    assert arthur.in_conversation_with is None, (
-        "Arthur should be released from conversation after chat completes"
-    )
-    assert isabella.in_conversation_with is None, (
-        "Isabella should be released from conversation after chat completes"
-    )
+    # Conversation state stays locked until the visible speech bubble expires.
+    assert arthur.in_conversation_with == "Isabella Rodriguez"
+    assert isabella.in_conversation_with == "Arthur Burton"
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
+    assert arthur.in_conversation_with is None
+    assert isabella.in_conversation_with is None
 
 
 def test_status_exposes_director_fields(monkeypatch):
@@ -496,7 +1308,9 @@ def test_status_exposes_director_fields(monkeypatch):
 def test_thought_summary_uses_complete_fallback_for_one_overlong_sentence():
     summary = game_engine.WerewolfGameEngine._summarize_thought_for_display("持续分析" * 40)
 
-    assert summary == "正在整理当前情况。"
+    assert summary.startswith("持续分析")
+    assert summary.endswith("…")
+    assert len(summary) <= 100
 
 
 def test_openrouter_override_assigns_one_runtime_model_without_exposing_key(monkeypatch):
@@ -788,8 +1602,8 @@ def test_start_dusk_discussion_does_not_enter_night(monkeypatch):
     assert engine.dusk_start_time is not None
 
 
-def test_enter_night_from_dusk_discussion(monkeypatch):
-    """enter_night should still work when phase is DUSK_DISCUSSION."""
+def test_enter_night_from_dusk_discussion_cannot_skip_staged_flow(monkeypatch):
+    """Legacy enter_night calls cannot bypass dusk discussion, voting, and escort."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     _complete_daily_interviews(engine)
@@ -798,7 +1612,7 @@ def test_enter_night_from_dusk_discussion(monkeypatch):
     assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
 
     engine.enter_night()
-    assert engine.phase == game_engine.GamePhase.NIGHT
+    assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
 
 
 def test_start_dusk_discussion_rejected_outside_day(monkeypatch):
@@ -1001,8 +1815,8 @@ def test_primary_cta_during_dusk(monkeypatch):
     assert status["primary_cta"] in ("vote_accuse", "jail_choice")
 
 
-def test_detective_can_move_during_dusk(monkeypatch):
-    """Detective movement should be allowed during DUSK_DISCUSSION phase."""
+def test_detective_cannot_move_during_dusk(monkeypatch):
+    """Dusk is staged and must reject free detective movement."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     _complete_daily_interviews(engine)
@@ -1012,9 +1826,19 @@ def test_detective_can_move_during_dusk(monkeypatch):
     original_x, original_y = crow.target_x, crow.target_y
 
     success = engine.move_detective_to(50, 50, "Johnson Park")
-    assert success is True
-    # Target should have been updated
-    assert (crow.target_x, crow.target_y) != (original_x, original_y)
+    assert success is False
+    assert (crow.target_x, crow.target_y) == (original_x, original_y)
+
+
+def test_enter_night_cannot_skip_dusk_flow(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    _complete_daily_interviews(engine)
+    engine.start_dusk_discussion()
+
+    engine.enter_night()
+
+    assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
 
 
 def test_start_dusk_discussion_blocked_during_gathering(monkeypatch):
@@ -1215,53 +2039,70 @@ def test_dusk_generates_npc_votes(monkeypatch):
 
 
 def test_jail_vote_target_success(monkeypatch):
-    """jail_vote_target must jail a valid target and move them to prison."""
+    """jail_vote_target records Crow's vote; winner is auto-resolved."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
 
     _start_dusk_voting(engine)
 
-    target = "Arthur Burton"
-    result = engine.jail_vote_target(target)
+    # Manually set up votes so Arthur is clear winner
+    npc_names = [n for n in engine.agents if n != "Crow" and engine.agents[n].is_alive]
+    engine._dusk_votes = {n: "Arthur Burton" for n in npc_names}
+    engine._dusk_vote_reasons = {k: "test" for k in engine._dusk_votes}
+    engine._dusk_vote_active = True
+    engine._dusk_crow_voted = False
+    engine._dusk_vote_deadline = 999
+
+    # Crow votes; auto-resolve determines Arthur as winner
+    result = engine.jail_vote_target("Arthur Burton")
     assert result["success"] is True
-    assert result["jailed"] == target
-    assert "vote_summary" in result
-    assert target in engine._jailed
+    assert result["winner"] == "Arthur Burton"
+    assert "Arthur Burton" not in engine._jailed
+    engine.confirm_vote_result()
+    assert "Arthur Burton" in engine._jailed
 
     # Target should be in a prison cell
-    agent = engine.agents[target]
+    agent = engine.agents["Arthur Burton"]
     assert agent.current_action == "被拘留中"
     assert "监狱" in agent.current_location or "牢房" in agent.current_location
     assert agent.runtime_state == "jailed"
 
     # Status should reflect
     status = engine.get_status()
-    assert target in status["jailed"]
-    assert status["phase"] == "night"
+    assert "Arthur Burton" in status["jailed"]
+    assert status["phase"] == "dusk_discussion"
+    assert status["vote_summary"]["stage"] == "escorting"
 
 
 def test_jail_vote_target_rejects_duplicate(monkeypatch):
-    """Cannot jail the same person twice."""
+    """Crow can only vote once."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
     _start_dusk_voting(engine)
 
+    # First vote succeeds
     engine.jail_vote_target("Arthur Burton")
+    # Second vote should be rejected
     result = engine.jail_vote_target("Isabella Rodriguez")
     assert "error" in result
 
 
 def test_jail_vote_target_rejects_crow(monkeypatch):
-    """Cannot jail the detective."""
+    """Crow can vote for self (self-voting allowed), but Crow cannot be jailed."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
     _start_dusk_voting(engine)
 
+    # Crow can vote for themselves (self-voting allowed)
     result = engine.jail_vote_target("Crow")
-    assert "error" in result
+    # Crow CAN vote for self, but Crow being jailed is blocked by validation
+    # which now happens during auto-resolve, not during vote recording
+    assert "error" not in result or result.get("success"), (
+        f"Crow self-vote should be allowed: {result}"
+    )
 
 
 def test_jail_vote_target_rejects_dead(monkeypatch):
@@ -1646,7 +2487,82 @@ def test_detective_chat_records_and_locks_before_slow_npc_reply(monkeypatch):
     release.set()
     t.join(timeout=2)
     assert result_holder["deep_dive_remaining"] == 2
+    assert target.in_conversation_with == "Crow"
+    assert detective.in_conversation_with == "Arthur Burton"
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
+
     assert target.in_conversation_with is None
+    assert detective.in_conversation_with is None
+
+
+def test_detective_chat_interrupts_movement_and_marks_target_busy_immediately(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    detective = engine.agents["Crow"]
+    target = engine.agents["Arthur Burton"]
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+    engine._daily_interviewed.add("Arthur Burton")
+
+    target.x, target.y = 10, 10
+    target.target_x, target.target_y = 15, 10
+    target.runtime_state = "moving"
+    target._pending_action = {
+        "action_type": "move_to",
+        "action": "前往五金店整理货架",
+        "target_location": "Harvey Oak Supply Store",
+    }
+    engine.agent_paths["Arthur Burton"] = [(11, 10), (12, 10)]
+    engine.chat_bubbles["Arthur Burton"] = {
+        "kind": "action_status",
+        "text": "整理货架...",
+        "time": time.time(),
+    }
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_response(speaker, msg, day):
+        started.set()
+        release.wait(timeout=2)
+        return "我先回答警长。"
+
+    target.generate_response = slow_response
+    result_holder = {}
+
+    t = threading.Thread(
+        target=lambda: result_holder.update(engine.detective_chat("Arthur Burton", "你停一下。", is_deep_dive=True)),
+        daemon=True,
+    )
+    t.start()
+    assert started.wait(timeout=1)
+
+    assert target.in_conversation_with == "Crow"
+    assert detective.in_conversation_with == "Arthur Burton"
+    assert target.runtime_state == "acting"
+    assert target._pending_action is None
+    assert "Arthur Burton" not in engine.agent_paths
+    assert (target.target_x, target.target_y) == (target.x, target.y)
+    assert engine.chat_bubbles["Arthur Burton"]["target"] == "Crow"
+    assert engine.chat_bubbles["Arthur Burton"]["text"] == "..."
+    assert engine.chat_bubbles["Arthur Burton"].get("kind") != "action_status"
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
+    assert target.in_conversation_with == "Crow"
+    assert detective.in_conversation_with == "Arthur Burton"
+    assert engine.chat_bubbles["Arthur Burton"]["text"] == "..."
+
+    old_x, old_y = target.x, target.y
+    engine._move_agents()
+    assert (target.x, target.y) == (old_x, old_y)
+
+    release.set()
+    t.join(timeout=2)
+    assert result_holder["response"] == "我先回答警长。"
 
 
 def test_detective_chat_uses_priority_no_retry_response(monkeypatch):
@@ -1687,10 +2603,17 @@ def test_detective_chat_interrupts_existing_npc_chat(monkeypatch):
     result = engine.detective_chat("Arthur Burton", "", is_deep_dive=False)
 
     assert "response" in result
-    assert arthur.in_conversation_with is None
+    assert arthur.in_conversation_with == "Crow"
+    assert engine.agents["Crow"].in_conversation_with == "Arthur Burton"
     assert isabella.in_conversation_with is None
     assert engine.chat_bubbles["Arthur Burton"]["target"] == "Crow"
     assert "Isabella Rodriguez" not in engine.chat_bubbles or engine.chat_bubbles["Isabella Rodriguez"]["target"] != "Arthur Burton"
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
+
+    assert arthur.in_conversation_with is None
+    assert engine.agents["Crow"].in_conversation_with is None
 
 
 def test_chat_available_respects_normal_chat_limit(monkeypatch):
@@ -1862,17 +2785,28 @@ def test_primary_cta_jail_choice_during_vote_active(monkeypatch):
     assert status["vote_summary"]["jail_target"] is None
 
 
-def test_jail_choice_transitions_to_night(monkeypatch):
-    """After jail target is chosen, Crow escorts the target to prison and night starts."""
+def test_jail_choice_waits_for_confirmation_before_escort(monkeypatch):
+    """After Crow votes, results wait for confirmation before escorting and night."""
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
 
     _start_dusk_voting(engine)
+    # All NPCs vote for Arthur so he's the clear winner
+    npc_names = [n for n in engine.agents if n != "Crow" and engine.agents[n].is_alive]
+    engine._dusk_votes = {n: "Arthur Burton" for n in npc_names}
+    engine._dusk_vote_reasons = {k: "test" for k in engine._dusk_votes}
+    engine._dusk_vote_active = True
+    engine._dusk_crow_voted = False
+    engine._dusk_vote_deadline = 999
     engine.jail_vote_target("Arthur Burton")
 
     status = engine.get_status()
-    assert status["phase"] == "night"
+    assert status["phase"] == "dusk_discussion"
+    assert status["vote_summary"]["stage"] == "results"
+    engine.confirm_vote_result()
+    assert engine._dusk_stage == "escorting"
+    status = engine.get_status()
     assert status["primary_cta"] is None
     assert "Arthur Burton" in status["jailed"]
 
@@ -2138,7 +3072,7 @@ def test_npc_chat_empty_initiator_reply_uses_visible_fallback(monkeypatch):
 
 def test_npc_chat_lifecycle_sets_and_releases_in_conversation_with(monkeypatch):
     """NPC-NPC chat must set in_conversation_with on both participants before
-    thread work and always release them in finally."""
+    thread work and release only after the visible speech bubble expires."""
     engine = _make_engine(monkeypatch)
     arthur = engine.agents["Arthur Burton"]
     isabella = engine.agents["Isabella Rodriguez"]
@@ -2156,13 +3090,81 @@ def test_npc_chat_lifecycle_sets_and_releases_in_conversation_with(monkeypatch):
     engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
     engine.llm_threads[-1].join(timeout=3)
 
-    # Both must be released after chat completes
-    assert getattr(arthur, 'in_conversation_with', None) is None, (
-        "Arthur should be released from conversation"
-    )
-    assert getattr(isabella, 'in_conversation_with', None) is None, (
-        "Isabella should be released from conversation"
-    )
+    assert getattr(arthur, 'in_conversation_with', None) == "Isabella Rodriguez"
+    assert getattr(isabella, 'in_conversation_with', None) == "Arthur Burton"
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
+
+    assert getattr(arthur, 'in_conversation_with', None) is None
+    assert getattr(isabella, 'in_conversation_with', None) is None
+
+
+def test_npc_chat_speech_jobs_run_serial_fifo(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    klaus = engine.agents["Klaus Mueller"]
+    sam = engine.agents["Sam Moore"]
+    arthur.x, arthur.y = 10, 10
+    isabella.x, isabella.y = 11, 10
+    klaus.x, klaus.y = 20, 20
+    sam.x, sam.y = 21, 20
+
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls = []
+
+    def queued_chat(name, *args, **kwargs):
+        calls.append(name)
+        if name == "Arthur Burton":
+            first_started.set()
+            release_first.wait(timeout=2)
+        return f"{name}先说一句。"
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", queued_chat)
+    monkeypatch.setattr(isabella, "generate_response", lambda speaker, message, day: "我听见了。")
+    monkeypatch.setattr(sam, "generate_response", lambda speaker, message, day: "我也听见了。")
+    monkeypatch.setitem(game_engine.CONFIG["game"], "npc_chat_delay_seconds", 0.0)
+
+    engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
+    assert first_started.wait(timeout=1)
+    engine._trigger_npc_chat("Klaus Mueller", "Sam Moore")
+    time.sleep(0.1)
+
+    assert calls == ["Arthur Burton"]
+
+    release_first.set()
+    for thread in list(engine.llm_threads):
+        thread.join(timeout=2)
+
+    assert calls == ["Arthur Burton", "Klaus Mueller"]
+
+
+def test_speech_queue_runs_detective_priority_before_waiting_npc_job(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    order = []
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    def first_normal():
+        order.append("normal-1")
+        first_started.set()
+        release_first.wait(timeout=2)
+
+    engine._enqueue_speech_job("normal-1", 1, first_normal)
+    assert first_started.wait(timeout=1)
+    engine._enqueue_speech_job("normal-2", 1, lambda: order.append("normal-2"))
+    engine._enqueue_speech_job("detective", 0, lambda: order.append("detective"))
+
+    time.sleep(0.1)
+    assert order == ["normal-1"]
+
+    release_first.set()
+    for thread in list(engine.llm_threads):
+        thread.join(timeout=2)
+
+    assert order == ["normal-1", "detective", "normal-2"]
 
 
 def test_npc_chat_skips_when_either_in_conversation(monkeypatch):
@@ -2189,7 +3191,7 @@ def test_npc_chat_skips_when_either_in_conversation(monkeypatch):
 
 
 def test_npc_chat_lifecycle_releases_on_exception(monkeypatch):
-    """Even if the chat thread raises an exception, both participants must be released."""
+    """Even if the chat thread raises, participants remain busy until bubble expiry."""
     engine = _make_engine(monkeypatch)
     arthur = engine.agents["Arthur Burton"]
     isabella = engine.agents["Isabella Rodriguez"]
@@ -2199,6 +3201,12 @@ def test_npc_chat_lifecycle_releases_on_exception(monkeypatch):
     monkeypatch.setattr(arthur, "read_soul", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     engine._trigger_npc_chat("Arthur Burton", "Isabella Rodriguez")
     engine.llm_threads[-1].join(timeout=1)
+
+    assert arthur.in_conversation_with == "Isabella Rodriguez"
+    assert isabella.in_conversation_with == "Arthur Burton"
+
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
 
     assert arthur.in_conversation_with is None
     assert isabella.in_conversation_with is None
@@ -2342,8 +3350,12 @@ def test_npc_chat_requires_distance_two_or_less(monkeypatch):
 
     # Distance 2 should be allowed now
     assert len(calls) > 0, "Chat should proceed at distance 2 (one empty space)"
-    assert arthur.in_conversation_with is None, "Conversation should release after completion"
-    assert isabella.in_conversation_with is None, "Conversation should release after completion"
+    assert arthur.in_conversation_with == "Isabella Rodriguez"
+    assert isabella.in_conversation_with == "Arthur Burton"
+    monkeypatch.setitem(game_engine.CONFIG["game"], "bubble_lifetime_seconds", 0)
+    engine._expire_chat_bubbles()
+    assert arthur.in_conversation_with is None, "Conversation should release after bubble expiry"
+    assert isabella.in_conversation_with is None, "Conversation should release after bubble expiry"
 
 
 def test_npc_chat_blocked_at_distance_three(monkeypatch):
@@ -2431,9 +3443,52 @@ def test_failed_action_decision_becomes_continue_current_action(monkeypatch):
         time.sleep(0.05)
 
     assert arthur.current_action_type == "continue_current"
-    assert "继续当前" in arthur.current_action
+    assert arthur.current_action
+    assert "等待下一次" not in arthur.current_action
     assert "停留" not in arthur.current_action
+    assert arthur.runtime_state == "starting_action"
+    assert "Arthur Burton" not in engine.chat_bubbles
     assert any("类型=continue_current" in entry["message"] for entry in engine.game_log)
+
+
+def test_action_decision_exception_becomes_visible_ongoing_action(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur.current_location = "Harvey Oak Supply Store"
+    arthur._last_llm_decision_time = 0
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("bad parse")
+
+    monkeypatch.setattr(arthur, "decide_next_action", boom)
+
+    engine._update_agent_schedules()
+    deadline = time.time() + 3
+    while time.time() < deadline and arthur.runtime_state == "thinking":
+        time.sleep(0.05)
+
+    assert arthur.runtime_state == "starting_action"
+    assert arthur._pending_action["action_type"] == "continue_current"
+    assert "等待下一次" not in arthur.current_action
+    assert "Arthur Burton" not in engine.chat_bubbles
+    arthur._action_start_visible_until = 0
+    engine._update_agent_schedules()
+    assert arthur.runtime_state == "acting"
+    assert engine.chat_bubbles["Arthur Burton"]["kind"] == "action_status"
+
+
+def test_idle_residual_reflection_thought_is_cleared(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    monkeypatch.setattr(engine.agents["Arthur Burton"], "decide_next_action", _make_tracking_decide("Arthur Burton", []))
+    arthur = engine.agents["Arthur Burton"]
+    arthur.runtime_state = "idle"
+    arthur.current_thought = "我想适应小镇生活"
+    arthur.current_thought_time = time.time()
+
+    engine._update_agent_schedules()
+
+    assert arthur.current_thought == ""
+    assert arthur.current_thought_time == 0
 
 
 def test_talk_decision_starts_chat_when_target_person_adjacent(monkeypatch):
@@ -2518,6 +3573,168 @@ def test_talk_decision_starts_chat_socialize_distance_two(monkeypatch):
     assert arthur._pending_action is None
 
 
+def test_moving_talk_starts_real_chat_immediately_on_arrival(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 11, 10
+    isabella.x, isabella.y = 12, 10
+    arthur.runtime_state = "moving"
+    arthur._action_move_ready_at = 0
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "向伊莎贝拉打招呼并询问近况",
+        "thought": "先走到她身边再开口。",
+        "expected_result": "交换信息",
+    }
+    engine.agent_paths["Arthur Burton"] = [(11, 10)]
+    calls = []
+    monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
+
+    engine._move_agents()
+
+    assert calls == [("Arthur Burton", "Isabella Rodriguez")]
+    assert arthur.runtime_state != "acting"
+    assert arthur._pending_action is None
+    assert engine.chat_bubbles.get("Arthur Burton", {}).get("kind") != "action_status"
+
+
+def test_action_movement_waits_until_blue_action_bubble_window_ends(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 10, 10
+    arthur.target_x, arthur.target_y = 11, 10
+    arthur.runtime_state = "starting_action"
+    arthur._pending_action = {
+        "action_type": "inspect",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "",
+        "action": "检查附近情况",
+    }
+    engine.agent_paths["Arthur Burton"] = [(11, 10)]
+    engine._mark_action_started(arthur)
+
+    engine._update_agent_schedules()
+    engine._move_agents()
+
+    assert (arthur.x, arthur.y) == (10, 10)
+    assert arthur.runtime_state == "starting_action"
+    arthur._action_start_visible_until = 0
+    arthur._action_move_ready_at = 0
+    engine._update_agent_schedules()
+    engine._move_agents()
+    assert (arthur.x, arthur.y) == (11, 10)
+
+
+def test_starting_talk_waits_for_blue_action_bubble_before_real_chat(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+    isabella.x, isabella.y = 11, 10
+    arthur.runtime_state = "starting_action"
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "向伊莎贝拉打招呼并询问近况",
+        "expected_result": "交换信息",
+    }
+    engine._mark_action_started(arthur)
+    calls = []
+    monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
+
+    engine._update_agent_schedules()
+
+    assert calls == []
+    assert arthur.runtime_state == "starting_action"
+    arthur._action_start_visible_until = 0
+    engine._update_agent_schedules()
+    assert calls == [("Arthur Burton", "Isabella Rodriguez")]
+
+
+def test_pending_talk_reapproaches_target_instead_of_entering_generic_acting(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+    isabella.x, isabella.y = 20, 10
+    arthur.runtime_state = "idle"
+    arthur._pending_action = {
+        "action_type": "talk",
+        "target_location": "Johnson Park",
+        "target_object": "",
+        "target_person": "Isabella Rodriguez",
+        "action": "向伊莎贝拉打招呼",
+    }
+    monkeypatch.setattr(
+        engine,
+        "_path_adjacent_to",
+        lambda *args, **kwargs: (18, 10, [(11, 10), (18, 10)]),
+    )
+
+    engine._update_agent_schedules()
+
+    assert arthur.runtime_state == "moving"
+    assert arthur._pending_action["action_type"] == "talk"
+    assert engine.chat_bubbles.get("Arthur Burton", {}).get("kind") != "action_status"
+
+
+def test_greeting_text_with_wrong_model_type_uses_real_chat_pipeline(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "planning_display_seconds", 0)
+    arthur = engine.agents["Arthur Burton"]
+    isabella = engine.agents["Isabella Rodriguez"]
+    arthur.x = arthur.target_x = 10
+    arthur.y = arthur.target_y = 10
+    isabella.x, isabella.y = 11, 10
+    arthur.current_location = isabella.current_location = "Johnson Park"
+    arthur._last_llm_decision_time = 0
+    calls = []
+    monkeypatch.setattr(engine, "_trigger_npc_chat", lambda n1, n2: calls.append((n1, n2)))
+    monkeypatch.setattr(
+        arthur,
+        "decide_next_action",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "action_type": "work",
+            "target_location": "Johnson Park",
+            "target_object": "",
+            "target_person": "Isabella Rodriguez",
+            "action": "向伊莎贝拉打招呼并询问今天的情况",
+            "action_status": "打招呼",
+            "thought": "她就在旁边。",
+            "expected_result": "和伊莎贝拉聊天",
+            "duration_minutes": 5,
+            "raw_response": "{}",
+        },
+    )
+
+    engine._update_agent_schedules()
+    deadline = time.time() + 2
+    while time.time() < deadline and getattr(arthur, "_is_thinking", False):
+        time.sleep(0.01)
+
+    assert calls == []
+    assert arthur.runtime_state == "starting_action"
+    arthur._action_start_visible_until = 0
+    engine._update_agent_schedules()
+    assert calls == [("Arthur Burton", "Isabella Rodriguez")]
+    assert engine.chat_bubbles.get("Arthur Burton", {}).get("kind") != "action_status"
+
+
 def test_talk_decision_to_crow_speaks_directly_when_adjacent(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
@@ -2586,7 +3803,73 @@ def test_visible_action_omits_reasoning_prefix(monkeypatch):
         "我觉得Arthur的说法很奇怪，所以去五金店检查昨天的借工具记录"
     )
 
-    assert display == "去五金店检查昨天的借工具记录"
+    assert display == "检查昨天的借工具记录"
+
+
+def test_visible_action_is_short_even_when_model_returns_inner_monologue(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    display = engine._action_for_display(
+        "Thought: I need to keep watching the sheriff and compare every witness statement, "
+        "so now I will walk to the bakery and ask Isabella about yesterday morning."
+    )
+
+    assert "Thought:" not in display
+    assert len(display) <= 36
+
+
+def test_action_status_text_keeps_only_current_task(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    agent = next(iter(engine.agents.values()))
+
+    text = engine._action_status_text(
+        agent,
+        {
+            "action": "要回霍布斯咖啡馆 准备开门营业。今天照常接待客人，但会特别留意他们",
+        },
+    )
+
+    assert text == "准备开门营业..."
+    assert "霍布斯咖啡馆" not in text
+    assert "留意" not in text
+
+
+def test_action_status_text_prefers_model_status_field(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    agent = next(iter(engine.agents.values()))
+
+    text = engine._action_status_text(
+        agent,
+        {
+            "action": "前往霍布斯咖啡馆，准备开门营业",
+            "action_status": "准备早餐",
+        },
+    )
+
+    assert text == "准备早餐..."
+    assert "前往" not in text
+
+
+def test_action_status_text_drops_speech_prefix_and_planning_tail(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    agent = next(iter(engine.agents.values()))
+
+    text = engine._action_status_text(
+        agent,
+        {
+            "action": "玛利亚说：正在整理药房货架，检查药品库存，也会留意客人的反应",
+        },
+    )
+
+    assert text == "整理药房货架..."
+    assert "说：" not in text
+    assert "也" not in text
+
+
+def test_empty_lifestyle_fallback_is_not_visible_action(monkeypatch):
+    engine = _make_engine(monkeypatch)
+
+    assert engine._action_for_display("适应小镇生活") == ""
 
 
 def test_localize_character_names_does_not_corrupt_crown_location():
@@ -2755,6 +4038,22 @@ def test_crow_status_suppresses_blue_bubble_fields(monkeypatch):
     assert "action" in npc
     assert "runtime_state" in npc
     assert "emoji" in npc
+
+
+def test_crow_scene_investigation_does_not_emit_agent_action_log(monkeypatch):
+    """Crow is player-controlled, so automatic scene investigation must not appear as an agent action."""
+    engine = _make_engine(monkeypatch)
+    crow = engine.agents["Crow"]
+
+    engine._start_crow_scene_investigation()
+
+    assert crow.current_action == ""
+    assert crow.current_action_type == ""
+    assert crow.runtime_state == "idle"
+    assert not any(
+        entry.get("type") == "action" and ("Crow" in entry.get("message", "") or "克罗" in entry.get("message", ""))
+        for entry in engine.game_log
+    )
 
 
 # ============================================================

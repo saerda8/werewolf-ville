@@ -118,6 +118,93 @@ def test_complete_action_blocks_when_crow_busy(monkeypatch):
     assert after is before or after is None
 
 
+def test_npc_one_way_report_to_crow_releases_state(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    agent_name = next(
+        name for name, agent in engine.agents.items()
+        if name != engine.detective_name and agent.is_alive
+    )
+    agent = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    agent.x = crow.x + 1
+    agent.y = crow.y
+    agent.current_thought = "我应该向警长说明情况"
+    agent.current_thought_time = 123.0
+    agent.current_action = "我要找警长汇报"
+    agent.current_action_type = "talk"
+    agent._pending_action = {
+        "action_type": "talk",
+        "target_location": crow.current_location or "Johnson Park",
+        "target_object": "",
+        "target_person": engine.detective_name,
+        "action": "我要向警长汇报昨晚咖啡馆后门的异常",
+        "thought": "这件事需要让警长知道",
+        "expected_result": "警长知道异常",
+    }
+
+    engine._complete_agent_action(agent_name, agent)
+
+    assert agent.in_conversation_with is None
+    assert crow.in_conversation_with is None
+    assert agent._pending_action is None
+    assert agent.current_thought == ""
+    assert agent.current_action == ""
+    assert agent.runtime_state == "idle"
+    assert engine.chat_bubbles[agent_name]["target"] == engine.detective_name
+    assert agent._report_busy_until > time.time()
+    assert any(item.get("action_type") == "report_to_detective" for item in agent.action_history)
+
+
+def test_npc_report_to_crow_skips_planning_until_bubble_expires(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    agent_name = next(
+        name for name, agent in engine.agents.items()
+        if name != engine.detective_name and agent.is_alive
+    )
+    agent = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    agent.x = crow.x + 1
+    agent.y = crow.y
+    engine._trigger_npc_to_detective_chat(agent_name, "我有情况要说", "警长知道情况")
+    assert agent.in_conversation_with is None
+    assert agent._pending_action is None
+    assert agent.runtime_state == "idle"
+    assert engine.chat_bubbles[agent_name]["target"] == engine.detective_name
+
+    monkeypatch.setattr(
+        agent,
+        "decide_next_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not plan while report bubble is visible")),
+    )
+
+    engine._update_agent_schedules()
+
+    assert agent.runtime_state == "idle"
+    assert agent._report_busy_until > time.time()
+
+
+def test_npc_report_bubble_uses_speech_not_raw_action(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    agent_name = next(
+        name for name, agent in engine.agents.items()
+        if name != engine.detective_name and agent.is_alive
+    )
+    agent = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    agent.x = crow.x + 1
+    agent.y = crow.y
+
+    engine._trigger_npc_to_detective_chat(
+        agent_name,
+        action="我要向警长汇报昨晚咖啡馆后门的异常",
+        expected_result="警长知道异常",
+    )
+
+    text = engine.chat_bubbles[agent_name]["text"]
+    assert text.startswith("警长")
+    assert "我要向警长汇报" not in text
+
+
 # ==================== Requirement 3 ====================
 
 def test_npc_path_to_crow_uses_crow_actual_location(monkeypatch):
@@ -243,6 +330,10 @@ def test_repeated_passive_action_is_redirected_to_daily_work(monkeypatch):
     engine = _make_engine(monkeypatch)
     name = "Sam Moore"
     agent = engine.agents[name]
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", [name])
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "planning_display_seconds", 0)
+    agent.target_x, agent.target_y = agent.x, agent.y
+    engine.agent_paths.pop(name, None)
     agent.current_location = "Johnson Park"
     agent.action_history = [{"action_type": "observe", "location": "Johnson Park", "action": "观察", "time": time.time()}]
     monkeypatch.setattr(
@@ -278,6 +369,174 @@ def test_repeated_passive_action_is_redirected_to_daily_work(monkeypatch):
     assert "正常生活" in pending["thought"]
 
 
+def test_pending_action_executes_before_next_thought(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    name = "Sam Moore"
+    agent = engine.agents[name]
+    agent.runtime_state = "idle"
+    agent._is_thinking = False
+    agent._last_llm_decision_time = 0
+    agent._pending_action = {
+        "action_type": "continue_current",
+        "target_location": agent.current_location or "Johnson Park",
+        "target_object": "",
+        "target_person": "",
+        "action": "继续擦拭酒馆柜台",
+        "thought": "继续当前事务",
+        "expected_result": "保持营业",
+        "duration_seconds": 0,
+    }
+    monkeypatch.setattr(
+        agent,
+        "decide_next_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not think before acting")),
+    )
+
+    engine._update_agent_schedules()
+
+    assert agent.runtime_state == "starting_action"
+    assert agent.current_action == "继续擦拭酒馆柜台"
+    assert agent.current_action_type == "continue_current"
+    assert agent._pending_action is not None
+    assert name not in engine.chat_bubbles
+    agent._action_start_visible_until = 0
+    engine._update_agent_schedules()
+    assert agent.runtime_state == "acting"
+    assert engine.chat_bubbles[name]["kind"] == "action_status"
+
+
+def test_existing_pending_action_duration_seconds_is_clamped(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    name = "Sam Moore"
+    agent = engine.agents[name]
+    agent.runtime_state = "acting"
+    agent._arrived_at_time = time.time() - 3
+    agent._pending_action = {
+        "action_type": "continue_current",
+        "target_location": agent.current_location or "Johnson Park",
+        "target_object": "",
+        "target_person": "",
+        "action": "continue counter work",
+        "thought": "continue current task",
+        "expected_result": "keep working",
+        "duration_seconds": 0,
+    }
+    monkeypatch.setattr(
+        agent,
+        "decide_next_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not think during clamped action")),
+    )
+
+    engine._update_agent_schedules()
+
+    assert agent.runtime_state == "acting"
+    assert agent._pending_action is not None
+
+
+def test_action_duration_counts_from_status_visible_time(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    name = "Sam Moore"
+    agent = engine.agents[name]
+    now = time.time()
+    agent.runtime_state = "acting"
+    agent._arrived_at_time = now - 3
+    agent._action_started_at = now - 3
+    agent._action_status_visible_at = now + 3
+    agent._pending_action = {
+        "action_type": "continue_current",
+        "target_location": agent.current_location or "Johnson Park",
+        "target_object": "",
+        "target_person": "",
+        "action": "continue counter work",
+        "thought": "continue current task",
+        "expected_result": "keep working",
+        "duration_seconds": 6,
+    }
+    monkeypatch.setattr(
+        agent,
+        "decide_next_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not think before visible action completes")),
+    )
+
+    engine._update_agent_schedules()
+
+    assert agent.runtime_state == "acting"
+    assert agent._pending_action is not None
+
+
+def test_same_coordinate_action_with_target_object_gets_neighbor_movement(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    name = "Arthur Burton"
+    agent = engine.agents[name]
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", [name])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "planning_display_seconds", 0)
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
+    monkeypatch.setattr(engine, "_resolve_concrete_target_object", lambda *args, **kwargs: "counter")
+    agent.x = agent.target_x = 10
+    agent.y = agent.target_y = 10
+    agent.current_location = "Johnson Park"
+    agent.runtime_state = "idle"
+    agent._last_llm_decision_time = 0
+    engine._last_llm_decision_time = 0
+    monkeypatch.setattr(
+        agent,
+        "decide_next_action",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "action_type": "inspect",
+            "target_location": "Johnson Park",
+            "target_object": "counter",
+            "target_person": "",
+            "action": "检查柜台",
+            "action_status": "检查柜台",
+            "thought": "检查手边物件",
+            "expected_result": "确认情况",
+            "duration_minutes": 5,
+            "raw_response": "{}",
+        },
+    )
+
+    engine._update_agent_schedules()
+    deadline = time.time() + 2
+    while time.time() < deadline and getattr(agent, "_is_thinking", False):
+        time.sleep(0.01)
+
+    assert agent.runtime_state == "starting_action"
+    assert (agent.target_x, agent.target_y) != (10, 10)
+    assert engine.agent_paths.get(name)
+    agent._action_start_visible_until = 0
+    agent._action_move_ready_at = 0
+    engine._update_agent_schedules()
+    assert agent.runtime_state == "moving"
+
+
+def test_pending_acting_action_can_complete(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    name = "Sam Moore"
+    agent = engine.agents[name]
+    agent.runtime_state = "acting"
+    agent._arrived_at_time = time.time() - 20
+    agent._pending_action = {
+        "action_type": "continue_current",
+        "target_location": agent.current_location or "Johnson Park",
+        "target_object": "",
+        "target_person": "",
+        "action": "继续擦拭酒馆柜台",
+        "thought": "继续当前事务",
+        "expected_result": "保持营业",
+        "duration_seconds": 0,
+    }
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "min_act_seconds", 0)
+    monkeypatch.setitem(game_engine.CONFIG["agent"], "max_act_seconds", 0)
+
+    engine._update_agent_schedules()
+
+    assert agent.runtime_state == "idle"
+    assert agent._pending_action is None
+    assert getattr(agent, "_action_completed", False) is True
+
+
 # ==================== Edge cases ====================
 
 def test_clear_conversation_pair_clears_both_sides(monkeypatch):
@@ -306,3 +565,213 @@ def test_npc_chat_does_not_involve_crow(monkeypatch):
             break
     engine._trigger_npc_chat(engine.detective_name, npc)
     engine._trigger_npc_chat(npc, engine.detective_name)
+
+
+# ==================== Requirement: NPC pro-active report lifecycle ====================
+
+
+def test_trigger_npc_to_detective_releases_in_conversation_with(monkeypatch):
+    """After a one-way report, source.in_conversation_with must be None."""
+    engine = _make_engine(monkeypatch)
+    agent_name = None
+    for name, agent in engine.agents.items():
+        if name != engine.detective_name and agent.is_alive:
+            agent_name = name
+            break
+    assert agent_name is not None
+    source = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    source.x = crow.x + 1
+    source.y = crow.y
+    source.in_conversation_with = "some_other"  # simulate stale state
+    engine._trigger_npc_to_detective_chat(agent_name, "test action", "test result")
+    assert source.in_conversation_with is None, (
+        "source.in_conversation_with should be released after one-way report"
+    )
+    assert crow.in_conversation_with is None, (
+        "detective.in_conversation_with should not be set for one-way report"
+    )
+
+
+def test_trigger_npc_to_detective_clears_thought_and_action_state(monkeypatch):
+    """After a one-way report, source state fields must be cleared."""
+    engine = _make_engine(monkeypatch)
+    agent_name = None
+    for name, agent in engine.agents.items():
+        if name != engine.detective_name and agent.is_alive:
+            agent_name = name
+            break
+    assert agent_name is not None
+    source = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    source.x = crow.x + 1
+    source.y = crow.y
+    source.current_thought = "lingering thought"
+    source.current_thought_time = 999.0
+    source.current_action = "lingering action"
+    source.current_action_type = "investigate"
+    source._pending_action = {"action_type": "talk", "target_person": engine.detective_name}
+    source._last_decision = {"ok": True, "action": "old"}
+    source._last_raw_response = "raw json"
+    source._is_thinking = True
+    source._is_reflecting = True
+
+    engine._trigger_npc_to_detective_chat(agent_name, "test action", "test result")
+
+    assert source.current_thought == ""
+    assert source.current_thought_time == 0
+    assert source.current_action == ""
+    assert source.current_action_type == ""
+    assert source._pending_action is None
+    assert source._last_decision == {}
+    assert source._last_raw_response == ""
+    assert source._is_thinking is False
+    assert source._is_reflecting is False
+
+
+def test_trigger_npc_to_detective_records_action_history(monkeypatch):
+    """After a one-way report, action_history should contain the report entry."""
+    engine = _make_engine(monkeypatch)
+    agent_name = None
+    for name, agent in engine.agents.items():
+        if name != engine.detective_name and agent.is_alive:
+            agent_name = name
+            break
+    assert agent_name is not None
+    source = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    source.x = crow.x + 1
+    source.y = crow.y
+    source.action_history = []
+
+    engine._trigger_npc_to_detective_chat(agent_name, "test action", "test result")
+
+    assert len(source.action_history) >= 1
+    last = source.action_history[-1]
+    assert last.get("action_type") == "report_to_detective"
+    assert last.get("action") == "test action"
+    assert last.get("expected_result") == "test result"
+    assert "message" in last
+    assert "time" in last
+
+
+def test_trigger_npc_to_detective_message_not_raw_action(monkeypatch):
+    """When no clues, the bubble message should be conversational, not raw action."""
+    engine = _make_engine(monkeypatch)
+    agent_name = None
+    for name, agent in engine.agents.items():
+        if name != engine.detective_name and agent.is_alive:
+            agent_name = name
+            break
+    assert agent_name is not None
+    source = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    source.x = crow.x + 1
+    source.y = crow.y
+
+    # Raw action that looks like inner monologue
+    raw_action = "我会去找警长说明我发现的可疑情况"
+    engine._trigger_npc_to_detective_chat(agent_name, raw_action, "")
+    bubble = engine.chat_bubbles.get(agent_name, {})
+    text = bubble.get("text", "")
+    # Should NOT contain the raw action markers
+    assert "我会" not in text, f"message still contains inner-monologue marker: {text}"
+    assert "行动：" not in text, f"message still contains action prefix: {text}"
+    # Should contain conversational framing
+    assert "警长" in text, f"message should address the detective: {text}"
+
+
+def test_npc_chat_shows_typing_bubble_before_model_returns(monkeypatch):
+    """NPC-to-NPC chat must be visibly underway while model speech is pending."""
+    engine = _make_engine(monkeypatch)
+    names = [name for name, agent in engine.agents.items() if name != engine.detective_name and agent.is_alive]
+    assert len(names) >= 2
+    name1, name2 = names[:2]
+    agent1 = engine.agents[name1]
+    agent2 = engine.agents[name2]
+    agent1.x, agent1.y = 10, 10
+    agent2.x, agent2.y = 12, 10
+    agent1._pending_action = {
+        "action_type": "talk",
+        "target_location": agent2.current_location or "Park",
+        "target_object": "",
+        "target_person": name2,
+        "action": "talk with neighbor",
+        "thought": "I should talk first",
+        "expected_result": "conversation starts",
+    }
+
+    class DummyThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(game_engine.threading, "Thread", DummyThread)
+
+    engine._trigger_npc_chat(name1, name2)
+
+    assert agent1.in_conversation_with == name2
+    assert agent2.in_conversation_with == name1
+    assert agent1._pending_action is None
+    assert engine.chat_bubbles[name1]["text"] == "..."
+    assert engine.chat_bubbles[name1]["target"] == name2
+
+
+def test_complete_agent_action_releases_conversation_after_report(monkeypatch):
+    """_complete_agent_action with detective target must release in_conversation_with."""
+    engine = _make_engine(monkeypatch)
+    agent_name = None
+    for name, agent in engine.agents.items():
+        if name != engine.detective_name and agent.is_alive:
+            agent_name = name
+            break
+    assert agent_name is not None
+    agent = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    agent.x = crow.x + 1
+    agent.y = crow.y
+    agent._pending_action = {
+        "action_type": "talk",
+        "target_location": crow.current_location or "Park",
+        "target_object": "",
+        "target_person": engine.detective_name,
+        "action": "report findings",
+        "thought": "I should tell Crow",
+        "expected_result": "Crow learns about the clue",
+    }
+    engine._complete_agent_action(agent_name, agent)
+    assert agent.in_conversation_with is None, (
+        "agent.in_conversation_with should be released after report"
+    )
+    assert agent._pending_action is None
+    assert agent.runtime_state == "idle"
+    assert agent._action_completed is True
+
+
+def test_trigger_npc_to_detective_does_not_block_when_crow_free(monkeypatch):
+    """When Crow is free, the one-way report should not block either party."""
+    engine = _make_engine(monkeypatch)
+    agent_name = None
+    for name, agent in engine.agents.items():
+        if name != engine.detective_name and agent.is_alive:
+            agent_name = name
+            break
+    assert agent_name is not None
+    source = engine.agents[agent_name]
+    crow = engine.agents[engine.detective_name]
+    source.x = crow.x + 1
+    source.y = crow.y
+    # Ensure Crow is free
+    crow.in_conversation_with = None
+
+    engine._trigger_npc_to_detective_chat(agent_name, "test", "test")
+
+    # After the report, neither side should be locked
+    assert source.in_conversation_with is None
+    assert crow.in_conversation_with is None
+    # A bubble should exist for the source
+    assert agent_name in engine.chat_bubbles
+    assert "text" in engine.chat_bubbles[agent_name]

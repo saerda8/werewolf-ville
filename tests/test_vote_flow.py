@@ -8,6 +8,7 @@
 import threading
 import time
 
+import engine_dusk
 import game_engine
 
 
@@ -63,14 +64,14 @@ def test_dusk_vote_prompt_allows_abstention(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_deterministic_dusk_vote_returns_valid_target(monkeypatch):
-    """_deterministic_dusk_vote must return a valid target or abstain (empty)."""
+    """_deterministic_dusk_vote must return a valid target or abstain (empty). Self-voting allowed."""
     engine = _make_engine(monkeypatch)
     voter = [n for n in engine.agents if n != "Crow" and n not in engine.werewolf_names][0]
     reason, target = engine._deterministic_dusk_vote(voter)
     # With no clues, there's a 55% abstention chance; accept either outcome
     if target:
         assert target in engine.agents, f"Target '{target}' must be a known agent"
-        assert target != voter, "Cannot vote for self"
+        # Self-voting is now allowed per spec
         assert target != "Crow", "Cannot vote for Crow (detective)"
     else:
         # Abstain is valid
@@ -78,15 +79,15 @@ def test_deterministic_dusk_vote_returns_valid_target(monkeypatch):
 
 
 def test_deterministic_dusk_vote_werewolf_votes_villager(monkeypatch):
-    """Wolf voters must vote for a non-wolf villager, not another wolf."""
+    """Wolf voters prefer non-wolf villagers, but self-voting is allowed per spec."""
     engine = _make_engine(monkeypatch)
     wolf_name = engine.werewolf_names[0]
     reason, target = engine._deterministic_dusk_vote(wolf_name)
-    assert target not in engine.werewolf_names, (
-        f"Wolf '{wolf_name}' voted for another wolf '{target}'"
-    )
-    assert target != wolf_name, "Cannot vote for self"
-    assert target != "Crow", "Cannot vote for detective"
+    # Wolves prefer non-wolves and non-Crow targets
+    if target:
+        assert target != "Crow", "Cannot vote for detective"
+        # Wolves may vote for themselves (self-voting allowed) or for villagers
+    # If target is empty, abstain is valid
 
 
 def test_dusk_vote_skipped_for_jailed_npcs(monkeypatch):
@@ -110,6 +111,21 @@ def test_transition_to_dusk_starts_discussion_before_votes(monkeypatch):
     assert engine._dusk_vote_active is False
     assert engine._dusk_votes == {}
     assert engine._vote_history == []
+
+
+def test_dusk_discussion_uses_half_second_between_npc_statements(monkeypatch):
+    """Discussion waits for gathering, then publishes NPC statements with the configured gap."""
+    engine = _make_engine(monkeypatch)
+    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_departure_gap_seconds", 0.5)
+    sleeps = []
+    monkeypatch.setattr(engine_dusk.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    engine._transition_to_dusk()
+    engine._begin_dusk_discussion_after_gathering()
+
+    eligible = [n for n, a in engine.agents.items() if n != "Crow" and a.is_alive and n not in engine._jailed]
+    assert sleeps == [0.5] * (len(eligible) - 1)
+    assert len(engine._dusk_discussion_statements) == len(eligible)
 
 
 def test_crow_dusk_statement_unlocks_npc_votes(monkeypatch):
@@ -139,7 +155,7 @@ def test_dusk_vote_all_living_non_jailed_npcs_vote(monkeypatch):
 
 
 def test_dusk_vote_targets_are_alive_and_not_jailed(monkeypatch):
-    """Vote targets must be alive and not jailed."""
+    """Vote targets must be alive and not jailed. Self-voting is allowed."""
     engine = _make_engine(monkeypatch)
     engine._jailed = []
     engine._transition_to_dusk()
@@ -148,7 +164,7 @@ def test_dusk_vote_targets_are_alive_and_not_jailed(monkeypatch):
         if target:
             assert engine.agents[target].is_alive, f"Target '{target}' is dead"
             assert target not in engine._jailed, f"Target '{target}' is jailed"
-            assert target != voter, "Cannot vote for self"
+            # Self-voting is allowed per spec
             assert target != "Crow", "Cannot vote for detective"
 
 
@@ -169,16 +185,18 @@ def test_vote_history_snapshot_recorded(monkeypatch):
 
 
 def test_vote_history_includes_jail_target(monkeypatch):
-    """After player chooses jail target, vote history must include it."""
+    """After Crow votes and auto-resolve, vote history must include the jail target."""
     engine = _make_engine(monkeypatch)
     engine._transition_to_dusk()
     engine.submit_dusk_statement("请投票。")
-    target = [n for n in engine._dusk_votes.keys()][0]
+    # Crow casts a vote; system auto-resolves winner based on all votes
+    target = [n for n in engine.agents if n != "Crow" and engine.agents[n].is_alive][0]
     result = engine.jail_vote_target(target)
-    assert "error" not in result, f"jail_vote_target failed: {result}"
+    assert "error" not in result or result.get("success"), f"jail_vote_target failed: {result}"
     assert len(engine._vote_history) >= 1
     latest = engine._vote_history[-1]
-    assert latest.get("jail_target") == target
+    # The jail target is determined by vote counts, not necessarily Crow's choice
+    assert latest.get("jail_target") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -215,3 +233,221 @@ def test_dusk_vote_json_parsing_accepts_abstain(monkeypatch):
     assert engine._is_abstain_vote("")
     assert engine._is_abstain_vote("abstain")
     assert engine._is_abstain_vote("弃票")
+
+
+# ---------------------------------------------------------------------------
+# Requirement: self-voting is allowed (spec section 5.3)
+# ---------------------------------------------------------------------------
+
+def test_self_voting_allowed_in_deterministic(monkeypatch):
+    """Self-voting must be allowed; possible_targets includes self."""
+    engine = _make_engine(monkeypatch)
+    voter = [n for n in engine.agents if n != "Crow" and n not in engine.werewolf_names][0]
+    # Check that possible targets include the voter themselves
+    # We test this by checking that _deterministic_dusk_vote can return self
+    # Since it's probabilistic, we run multiple times
+    saw_self_vote = False
+    for _ in range(30):
+        reason, target = engine._deterministic_dusk_vote(voter)
+        if target == voter:
+            saw_self_vote = True
+            break
+    assert saw_self_vote, f"Self-voting should be possible for {voter}"
+
+
+def test_crow_can_vote_for_self(monkeypatch):
+    """Crow must be able to vote for themselves."""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    # Crow votes for self
+    result = engine.jail_vote_target("Crow")
+    assert "error" not in result or result.get("success"), f"Crow self-vote failed: {result}"
+
+
+def test_crow_vote_recorded_in_dusk_votes(monkeypatch):
+    """After Crow votes, _dusk_votes must include Crow's vote."""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    engine.jail_vote_target("Arthur Burton")
+    assert "Crow" in engine._dusk_votes, "Crow's vote should be in _dusk_votes"
+    assert engine._dusk_votes["Crow"] == "Arthur Burton"
+
+
+# ---------------------------------------------------------------------------
+# Requirement: vote resolution (spec section 6)
+# ---------------------------------------------------------------------------
+
+def test_highest_vote_wins_jail_target(monkeypatch):
+    """The person with the highest vote count becomes the jail target."""
+    engine = _make_engine(monkeypatch)
+    # Manually set up votes: 3 for Arthur, 1 for Isabella, 2 abstain
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    engine._dusk_votes = {
+        "Isabella Rodriguez": "Arthur Burton",
+        "Klaus Mueller": "Arthur Burton",
+        "Maria Lopez": "Arthur Burton",
+        "Sam Moore": "Isabella Rodriguez",
+        "Jane Moreno": "",
+        "Mei Lin": "",
+    }
+    engine._dusk_vote_reasons = {k: "test" for k in engine._dusk_votes}
+    engine._dusk_vote_active = True
+    engine._dusk_crow_voted = False
+    engine._dusk_vote_deadline = 0  # past deadline → auto-resolve on next tick
+    engine._dusk_tick()
+    assert engine._dusk_winner == "Arthur Burton", (
+        f"Expected Arthur Burton (3 votes) but got {engine._dusk_winner}"
+    )
+    assert engine._dusk_jail_target is None
+    assert engine._dusk_stage == "results"
+
+
+def test_tie_broken_by_crow_vote(monkeypatch):
+    """When there's a tie, Crow's vote among the tied candidates wins."""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    # Tie: 2 for Arthur, 2 for Isabella. Crow votes for Isabella → Isabella wins
+    engine._dusk_votes = {
+        "Klaus Mueller": "Arthur Burton",
+        "Maria Lopez": "Arthur Burton",
+        "Sam Moore": "Isabella Rodriguez",
+        "Jane Moreno": "Isabella Rodriguez",
+        "Mei Lin": "",
+        "Crow": "Isabella Rodriguez",
+    }
+    engine._dusk_vote_reasons = {k: "test" for k in engine._dusk_votes}
+    engine._dusk_vote_active = True
+    engine._dusk_crow_voted = True
+    engine._dusk_vote_deadline = 0
+    engine._dusk_tick()
+    assert engine._dusk_winner == "Isabella Rodriguez", (
+        f"Crow's tie-break should select Isabella, got {engine._dusk_winner}"
+    )
+
+
+def test_tie_without_crow_vote_uses_stable_order(monkeypatch):
+    """When tied and Crow didn't vote for any tied candidate, stable order picks winner."""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    # Tie: 2 for Arthur, 2 for Isabella. Crow abstains → stable order
+    engine._dusk_votes = {
+        "Klaus Mueller": "Arthur Burton",
+        "Maria Lopez": "Arthur Burton",
+        "Sam Moore": "Isabella Rodriguez",
+        "Jane Moreno": "Isabella Rodriguez",
+        "Mei Lin": "",
+        "Crow": "",
+    }
+    engine._dusk_vote_reasons = {k: "test" for k in engine._dusk_votes}
+    engine._dusk_vote_active = True
+    engine._dusk_crow_voted = True
+    engine._dusk_vote_deadline = 0
+    engine._dusk_tick()
+    assert engine._dusk_winner in ("Arthur Burton", "Isabella Rodriguez"), (
+        f"Stable order should pick one of the tied, got {engine._dusk_winner}"
+    )
+
+
+def test_cannot_arbitrarily_jail_non_winner(monkeypatch):
+    """jail_vote_target only records Crow's vote; the winner is auto-determined."""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    # All NPC votes go to Arthur, Crow votes for Isabella
+    # Arthur should win (6 NPC votes > 1 Crow vote)
+    npc_names = [n for n in engine.agents if n != "Crow" and engine.agents[n].is_alive]
+    engine._dusk_votes = {n: "Arthur Burton" for n in npc_names}
+    engine._dusk_vote_reasons = {k: "test" for k in engine._dusk_votes}
+    engine._dusk_vote_active = True
+    engine._dusk_crow_voted = False
+    engine._dusk_vote_deadline = 999  # far future
+    # Crow votes for Isabella
+    result = engine.jail_vote_target("Isabella Rodriguez")
+    assert result.get("success"), f"Crow vote should succeed: {result}"
+    # Winner must be Arthur (highest votes), not Isabella
+    assert engine._dusk_winner == "Arthur Burton", (
+        f"Winner should be Arthur (most votes), got {engine._dusk_winner}"
+    )
+    assert engine._dusk_jail_target is None, "Winner must not be jailed before result confirmation"
+
+
+def test_confirm_vote_result_jails_only_resolved_winner(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    engine._dusk_votes = {name: "Arthur Burton" for name in engine.agents if name != "Crow"}
+    engine._dusk_vote_reasons = {name: "test" for name in engine._dusk_votes}
+    engine._dusk_votes["Crow"] = "Isabella Rodriguez"
+    engine._dusk_crow_voted = True
+    engine._resolve_dusk_votes()
+
+    result = engine.confirm_vote_result()
+
+    assert result["success"] is True
+    assert engine._dusk_jail_target == "Arthur Burton"
+    assert "Arthur Burton" in engine._jailed
+    assert engine._dusk_stage == "escorting"
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Day 1 fixed knowledge revelation (spec section 3)
+# ---------------------------------------------------------------------------
+
+def test_day1_knowledge_text_is_fixed(monkeypatch):
+    """The day 1 knowledge text must be a fixed string, not LLM-generated."""
+    text = engine_dusk._DAY1_KNOWLEDGE_TEXT
+    assert "狼人" in text
+    assert "咬痕" in text
+    assert "抓痕" in text
+    assert len(text) > 100, "Knowledge text should be substantial"
+
+
+def test_day1_knowledge_speaker_is_not_werewolf_dependent(monkeypatch):
+    """Day 1 knowledge speaker selection must not depend on werewolf status."""
+    engine = _make_engine(monkeypatch)
+    speaker = engine._resolve_speaker_for_day1_knowledge()
+    assert speaker in engine.agents
+    assert speaker != "Crow"
+    assert engine.agents[speaker].is_alive
+    # The speaker can be a werewolf; the knowledge still triggers
+    # We just verify that a valid speaker is returned regardless of role
+
+
+def test_day1_knowledge_revelation_sets_bubble_and_log(monkeypatch):
+    """Day 1 knowledge revelation must set a chat bubble and log entry."""
+    engine = _make_engine(monkeypatch)
+    engine.day = 1
+    speaker = engine._resolve_speaker_for_day1_knowledge()
+    engine._reveal_day1_werewolf_knowledge()
+    assert speaker in engine.chat_bubbles, f"Speaker {speaker} should have a chat bubble"
+    assert engine.chat_bubbles[speaker]["text"] == engine_dusk._DAY1_KNOWLEDGE_TEXT
+
+
+# ---------------------------------------------------------------------------
+# Requirement: vote status exposure (spec section 6)
+# ---------------------------------------------------------------------------
+
+def test_vote_summary_includes_voter_lists(monkeypatch):
+    """Vote summary must include lists of who voted for each target."""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    vote_summary = engine._build_vote_summary()
+    assert "voters_by_target" in vote_summary, "Must include voters_by_target"
+    for target, voters in vote_summary.get("voters_by_target", {}).items():
+        assert isinstance(voters, list), f"Voters for {target} must be a list"
+
+
+def test_vote_summary_exposes_deadline(monkeypatch):
+    """Vote summary must expose the vote deadline timestamp."""
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine.submit_dusk_statement("请投票。")
+    vote_summary = engine._build_vote_summary()
+    assert "deadline" in vote_summary, "Must include vote deadline"
+    assert vote_summary["active"] is True

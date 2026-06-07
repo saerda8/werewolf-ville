@@ -14,8 +14,8 @@ class EngineBubbleMixin:
         for participant in getattr(self, "_gathering_queue", []):
             self.chat_bubbles.pop(participant, None)
         now = time.time()
-        bubble_lifetime = float(CONFIG.get("game", {}).get("bubble_lifetime_seconds", 12))
-        expired = [k for k, v in self.chat_bubbles.items() if now - v["time"] > bubble_lifetime]
+        bubble_lifetime = float(CONFIG.get("game", {}).get("bubble_lifetime_seconds", 6))
+        expired = [k for k, v in self.chat_bubbles.items() if now - v["time"] >= bubble_lifetime]
         for k in expired:
             del self.chat_bubbles[k]
         self.chat_bubbles[name] = {"text": text, "time": time.time()}
@@ -31,24 +31,57 @@ class EngineBubbleMixin:
 
     @staticmethod
     def _gathering_departure_gap_seconds() -> float:
-        return float(CONFIG.get("game", {}).get("gathering_departure_gap_seconds", 1.0))
+        return float(CONFIG.get("game", {}).get("gathering_departure_gap_seconds", 0.5))
 
     @staticmethod
     def _departure_delay_seconds() -> float:
-        return float(CONFIG.get("game", {}).get("npc_chat_delay_seconds", 1.0))
+        return float(CONFIG.get("game", {}).get("npc_chat_delay_seconds", 0.5))
 
     def _expire_chat_bubbles(self) -> None:
         now = time.time()
-        bubble_lifetime = float(CONFIG.get("game", {}).get("bubble_lifetime_seconds", 12))
-        expired = [k for k, v in self.chat_bubbles.items() if now - v["time"] > bubble_lifetime]
+        bubble_lifetime = float(CONFIG.get("game", {}).get("bubble_lifetime_seconds", 6))
+        expired = []
+        active_detective_target = getattr(self, "_detective_chat_active_target", None)
+        detective_waiting_bubble = self.chat_bubbles.get(active_detective_target) if active_detective_target else None
+        for k, v in self.chat_bubbles.items():
+            if (
+                active_detective_target
+                and isinstance(detective_waiting_bubble, dict)
+                and detective_waiting_bubble.get("text") == "..."
+                and k in {getattr(self, "detective_name", None), active_detective_target}
+            ):
+                continue
+            if (
+                isinstance(v, dict)
+                and v.get("target") == getattr(self, "detective_name", None)
+                and v.get("text") == "..."
+                and getattr(self, "_detective_chat_active_target", None) == k
+            ):
+                continue
+            if (
+                isinstance(v, dict)
+                and v.get("kind") == "action_status"
+                and k in getattr(self, "agents", {})
+            ):
+                agent = self.agents.get(k)
+                if (
+                    agent
+                    and getattr(agent, "runtime_state", "") == "acting"
+                    and getattr(agent, "_pending_action", None)
+                ):
+                    continue
+            if now - v["time"] >= bubble_lifetime:
+                expired.append(k)
         for k in expired:
-            del self.chat_bubbles[k]
+            bubble = self.chat_bubbles.pop(k, None)
+            if bubble is not None and hasattr(self, "_release_conversation_for_expired_bubble"):
+                self._release_conversation_for_expired_bubble(k, bubble)
 
     @staticmethod
     def _summarize_thought_for_display(
         text: str,
         max_chars: int = 100,
-        fallback: str = "正在整理当前情况。",
+        fallback: str = "",
     ) -> str:
         """Keep private reasoning intact while exposing a compact complete-sentence summary."""
         thought = " ".join(str(text or "").strip().split())
@@ -71,4 +104,8 @@ class EngineBubbleMixin:
             if len(candidate) > max_chars:
                 break
             shortened = candidate
-        return shortened or fallback
+        if shortened:
+            return shortened
+        if not thought:
+            return fallback
+        return thought[:max(1, max_chars - 1)].rstrip() + "…"
