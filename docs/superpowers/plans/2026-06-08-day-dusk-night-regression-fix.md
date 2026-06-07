@@ -371,3 +371,14 @@ This task is not complete until all of these are true:
 - Tests and browser verification pass.
 - Final response reports the frontend version and commit status.
 
+---
+
+## Completion Record (2026-06-08)
+
+- [x] Deep-dive clue state resets across days and normal chat remains independent of deep-dive quota.
+- [x] Dusk statement, voting, results, and night transition controls render outside the right sidebar.
+- [x] Vote results show counts and abstainers; final words hold before escort.
+- [x] Night camera locks to Crow's home, controls are disabled, and wolf/knife progress rows are independent.
+- [x] Confirm dawn advances to Day 2 and refreshes the browser through socket response plus state-refresh fallback.
+- [x] Focused automated tests and an in-app browser Day 1 -> dusk -> vote -> night -> Day 2 run passed.
+- [x] Frontend version: `51`.

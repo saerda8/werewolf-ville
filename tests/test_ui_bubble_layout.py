@@ -449,7 +449,7 @@ def test_gathering_disables_chat_and_clickable_conn_indicator():
     # Clickable connection indicator to manually fetch state
     assert 'document.getElementById("conn-indicator").onclick =' in html
     assert "fetchCurrentState();" in html
-    
+
     # Disable chat and NPC action buttons during gathering
     assert 'isGathering = state.primary_cta === "gathering";' in html
     assert 'chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? "disabled" : "";' in html
@@ -457,7 +457,7 @@ def test_gathering_disables_chat_and_clickable_conn_indicator():
     assert 'chatInput.placeholder = isGathering' in html
     assert '"聚集讨论中，无法私聊..."' in html
     assert '"靠近后才能交谈..."' in html
-    
+
     # Reset/clear pending chats on start/restart
     assert "clearPendingChat();" in html
 
@@ -495,7 +495,7 @@ def test_delegated_bubble_patch_requirements():
 
 def test_crow_chinese_name_suppression_and_resize_listener():
     html = INDEX_HTML.read_text(encoding="utf-8")
-    
+
     # Check that "克罗" is explicitly checked alongside "Crow" for bubble suppression
     assert '[id*="thought-bubble-克罗" i]' in html
     assert '[id*="thought_bubble_克罗" i]' in html
@@ -1314,3 +1314,37 @@ def test_pending_detective_chat_does_not_suppress_real_reply_bubble():
     block = html[start:end]
     assert 'return !text || kind === "action_status";' in block
     assert "return !!pendingChatTarget && name === pendingChatTarget;" not in block
+
+
+def test_audited_frontend_additions():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Cross-day lightbulb reset
+    assert "let lastCheckedDay = null;" in html
+    assert "if (lastCheckedDay !== null && lastCheckedDay !== state.day) {" in html
+    assert "locallyClearedHintTargets.clear();" in html
+    assert "lastCheckedDay = state.day;" in html
+    assert "lastCheckedDay = null;" in html  # inside resetAgentLog
+
+    # 2. Night camera lock at Crow's home and controls disabled
+    assert "let nightCameraLocked = false;" in html
+    assert "nightCameraLocked = true;" in html
+    assert "nightCameraLocked = false;" in html  # reset in updateUI/resetAgentLog
+    assert "const homeX = 23 * TILE_W + TILE_W / 2;" in html
+    assert "const homeY = 65 * TILE_W + TILE_W / 2;" in html
+    assert "if (isNight) return;" in html  # in pointerdown/pointermove
+
+    # 3. Confirm dawn socket refresh and fallback
+    assert 'socket.on("confirm_night_transition_response"' in html
+    assert 'setTimeout(() => {\n      fetchCurrentState();\n    }, 1000);' in html or 'setTimeout(() => {\n      fetchCurrentState();\n    }, 1000);' in html.replace('\r\n', '\n')
+
+    # 4. Forbidden UI not inside side panel
+    side_panel_open = html.index('<div id="side-panel">')
+    announce_btn_open = html.index('id="announce-btn"')
+    side_panel_close = html.find('</div>', announce_btn_open)
+    side_panel_markup = html[side_panel_open:side_panel_close]
+
+    assert 'id="dusk-statement-panel"' not in side_panel_markup
+    assert 'id="voting-panel"' not in side_panel_markup
+    assert 'id="chat-panel"' not in side_panel_markup
+    assert 'id="night-transition-overlay"' not in side_panel_markup

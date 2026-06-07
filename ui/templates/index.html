@@ -995,6 +995,8 @@ let pendingChatPhase = ""; // "moving" | "waiting"
 let pendingChatWaitShownAt = 0;
 let pendingDeepDiveTarget = null;
 let locallyClearedHintTargets = new Set();
+let lastCheckedDay = null;
+let nightCameraLocked = false;
 let crowVoteSubmitting = false;
 let duskCameraPanKey = "";
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
@@ -1142,6 +1144,12 @@ function initSocket() {
     fetchCurrentState();
   });
   socket.on("silver_result", (resp) => {
+    if (resp && resp.error) {
+      addChatMsg("系统", resp.error, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("confirm_night_transition_response", (resp) => {
     if (resp && resp.error) {
       addChatMsg("系统", resp.error, true);
     }
@@ -1386,6 +1394,8 @@ function resetAgentLog() {
   // Reset local chat/pending variables to prevent carrying over from previous game
   clearPendingChat();
   locallyClearedHintTargets.clear();
+  lastCheckedDay = null;
+  nightCameraLocked = false;
   pendingDeepDiveTarget = null;
 
   // Clear old gameState and director summary to prevent carrying over old roles
@@ -1593,6 +1603,9 @@ function confirmVoteResult() {
 function confirmNightTransition() {
   if (socket && socket.connected) {
     socket.emit("confirm_night_transition");
+    setTimeout(() => {
+      fetchCurrentState();
+    }, 1000);
   } else {
     fetch("/api/confirm_night_transition", {method: "POST"}).then(() => fetchCurrentState());
   }
@@ -1796,10 +1809,27 @@ function renderVoteHistory(state) {
 function updateUI(state) {
   if (!state || state.error) return;
 
+  if (lastCheckedDay !== null && lastCheckedDay !== state.day) {
+    locallyClearedHintTargets.clear();
+  }
+  lastCheckedDay = state.day;
+
   document.getElementById("day-num").textContent = state.day;
   const phase = state.phase;
   const stage = duskStage(state);
   isNight = phase === "night";
+  if (isNight) {
+    if (!nightCameraLocked) {
+      nightCameraLocked = true;
+      if (sceneRef) {
+        const homeX = 23 * TILE_W + TILE_W / 2;
+        const homeY = 65 * TILE_W + TILE_W / 2;
+        sceneRef.cameras.main.centerOn(homeX, homeY);
+      }
+    }
+  } else {
+    nightCameraLocked = false;
+  }
   const newIsDusk = !isNight && (
     phase === "dusk_discussion" ||
     phase === "dusk" ||
@@ -3995,6 +4025,7 @@ function create() {
 
   // 鼠标拖拽移动相机
   this.input.on("pointerdown", (pointer) => {
+    if (isNight) return;
     // 如果点击的是 canvas 以外的 HTML 元素，直接忽略
     if (pointer.event && pointer.event.target && pointer.event.target.tagName !== "CANVAS") {
       return;
@@ -4030,6 +4061,7 @@ function create() {
   });
 
   this.input.on("pointermove", (pointer) => {
+    if (isNight) return;
     if (camDrag) {
       const dx = pointer.x - camDragStartX;
       const dy = pointer.y - camDragStartY;
@@ -4571,20 +4603,26 @@ function update(time, delta) {
   // 键盘移动相机 (WASD + 方向键)
   const camSpeed = 8;
   const cam = sceneRef.cameras.main;
-  const manualCameraMove = cursors.left.isDown || wasd.A.isDown ||
-    cursors.right.isDown || wasd.D.isDown ||
-    cursors.up.isDown || wasd.W.isDown ||
-    cursors.down.isDown || wasd.S.isDown;
-  if (manualCameraMove) {
-    focusedAgent = null;
-    if (cam.panEffect) {
-      cam.panEffect.reset();
+  if (isNight) {
+    const homeX = 23 * TILE_W + TILE_W / 2;
+    const homeY = 65 * TILE_W + TILE_W / 2;
+    cam.centerOn(homeX, homeY);
+  } else {
+    const manualCameraMove = cursors.left.isDown || wasd.A.isDown ||
+      cursors.right.isDown || wasd.D.isDown ||
+      cursors.up.isDown || wasd.W.isDown ||
+      cursors.down.isDown || wasd.S.isDown;
+    if (manualCameraMove) {
+      focusedAgent = null;
+      if (cam.panEffect) {
+        cam.panEffect.reset();
+      }
     }
+    if (cursors.left.isDown || wasd.A.isDown) cam.scrollX -= camSpeed;
+    if (cursors.right.isDown || wasd.D.isDown) cam.scrollX += camSpeed;
+    if (cursors.up.isDown || wasd.W.isDown) cam.scrollY -= camSpeed;
+    if (cursors.down.isDown || wasd.S.isDown) cam.scrollY += camSpeed;
   }
-  if (cursors.left.isDown || wasd.A.isDown) cam.scrollX -= camSpeed;
-  if (cursors.right.isDown || wasd.D.isDown) cam.scrollX += camSpeed;
-  if (cursors.up.isDown || wasd.W.isDown) cam.scrollY -= camSpeed;
-  if (cursors.down.isDown || wasd.S.isDown) cam.scrollY += camSpeed;
 
   if (!gameState || !gameState.personas) return;
 
