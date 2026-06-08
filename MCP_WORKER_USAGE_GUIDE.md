@@ -10,6 +10,7 @@
 
 - 非平凡 bug 修复和中等以上开发，先评估并尽量调用 DeepSeek / Antigravity。
 - DeepSeek 和 Antigravity 默认视为可用；不要因为“可能碰 personas”直接跳过。
+- DeepSeek V4 Pro 禁用；本来需要 V4 Pro 的复杂任务不要降级交给 V4 Flash 硬做，必须由主 agent 自己处理，或拆成小任务交给普通子 agent、Antigravity、或 DeepSeek Flash 简单预设。
 - 如果任务天然会写 `personas/` 运行态，要么换给本地主 agent / Antigravity 做，要么明确允许运行态写入并由主 agent 清理；不能一边让 worker 运行会写入的流程，一边把这些路径设为禁止后再判 worker 失败。
 
 ## 换频道后的恢复顺序
@@ -41,10 +42,10 @@
 Tool: mcp__deepseek_code_worker.deepseek_start_implementation
 
 cwd: G:\Trae-Project\werewolf-ville
-use_case: debug_loop 或 auto
-worker_profile: debug_loop 或 implementation
+use_case: auto / fast_patch / simple_agent_task / scaffold_or_tests
+worker_profile: implementation / scoped_patch / review
 verification_profile: standard
-model: deepseek-v4-pro[1m] 或 deepseek-v4-flash
+model: deepseek-v4-flash；不要传 deepseek-v4-pro[1m]
 permission_mode: dontAsk / acceptEdits
 safety_mode: permissive 或 safe
 allowed_dirs:
@@ -62,6 +63,8 @@ checks:
 ### DeepSeek 派工注意
 
 - 不要把“运行整局游戏、启动真实 NPC 行动循环、写 memory/cognition”的任务交给 DeepSeek 后又禁止 `personas/`。
+- 不要使用 `debug_loop`、`agentic_coding`、`complex_reasoning`、`long_context_codebase`、`docs_generation`；这些复杂预设已因 V4 Pro 禁用而关闭。
+- 如果任务本来适合 V4 Pro，主 agent 接管，或拆成可由 Flash 简单预设处理的小任务。
 - 如果只需要 DeepSeek 分析这类问题，改成只读任务：让它读源码、写根因报告或写不触发运行态的单元测试。
 - 如果必须让 DeepSeek 跑会写 `personas/` 的验证，就在任务说明中明确“允许运行态写入，主 agent 之后清理”，不要把 `personas/` 放进 forbidden_paths。
 - DeepSeek 失败时先看它的输出和 diff；失败不等于没价值，保留可用发现，再缩小任务重派。

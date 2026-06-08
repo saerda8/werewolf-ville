@@ -24,6 +24,7 @@
 - 不要为了省协调成本让 DeepSeek / Antigravity 闲着。
 - 如果任务太小、太危险、必须顺序执行，或不适合委派，可以不派 worker，但要说明原因。
 - DeepSeek 指 Claude Code CLI 驱动的 DeepSeek worker，不是游戏内 NPC 模型，也不是直接模型 API。
+- DeepSeek V4 Pro 禁用；本来需要 V4 Pro 的复杂任务不要降级交给 V4 Flash 硬做，必须由主 agent 自己处理，或拆成小任务交给普通子 agent、Antigravity、或 DeepSeek Flash 简单预设。
 - Antigravity 指 Antigravity CLI worker，不是桌面版语言服务器。
 - DeepSeek / Antigravity 的换频道恢复、调用参数、派工模板和 `personas/` 策略见 `MCP_WORKER_USAGE_GUIDE.md`。
 - Antigravity 不只是前端，也可以做低风险后端、文档和脚本。
@@ -64,6 +65,7 @@
 ## 4. Worker 前置检查与禁区
 
 - 派 DeepSeek 前，先确认任务能在允许文件范围内完成，不能把天然需要禁区文件的任务交给它。
+- 派 DeepSeek 前，确认不会触发 V4 Pro：只允许 `auto`、`fast_patch`、`simple_agent_task`、`scaffold_or_tests` 等 Flash 简单预设；遇到 `debug_loop`、`agentic_coding`、`complex_reasoning`、`long_context_codebase`、`docs_generation` 这类复杂预设时不要派 DeepSeek，主 agent 接管或拆小。
 - 如果 DeepSeek 因为碰禁区失败，立刻复盘它已有结果，保留可用发现，再派更窄任务，不能让这次 worker 工作白费。
 - 派 DeepSeek 前，先做 Claude Code CLI 预检。
 - Windows 上 DeepSeek 必须使用原生 `claude.exe`（通过 `CLAUDE_BIN` 配置），不要用 `claude.ps1`，因为 DeepSeek launcher 通过 Node.js `spawn()` 启动 Claude Code。
