@@ -1439,6 +1439,8 @@ def test_openrouter_override_assigns_one_runtime_model_without_exposing_key(monk
         "provider": "openrouter",
         "model": "openai/gpt-4o-mini",
         "api_base": "https://openrouter.ai/api/v1",
+        "wire_api": "chat_completions",
+        "reasoning_effort": "",
     }
     assert set(status["model_assignments"].values()) == {"openai/gpt-4o-mini"}
     assert "sk-test-secret" not in str(status)
@@ -1461,6 +1463,8 @@ def test_custom_provider_override_uses_custom_base_without_exposing_key(monkeypa
         "provider": "custom",
         "model": "my-model",
         "api_base": "http://127.0.0.1:9000/v1",
+        "wire_api": "chat_completions",
+        "reasoning_effort": "",
     }
     assert set(status["model_assignments"].values()) == {"my-model"}
     assert "sk-custom-secret" not in str(status)
@@ -1483,6 +1487,8 @@ def test_anthropic_provider_override_uses_one_model_without_exposing_key(monkeyp
         "provider": "anthropic",
         "model": "claude-3-5-sonnet-latest",
         "api_base": "https://api.anthropic.com/v1",
+        "wire_api": "chat_completions",
+        "reasoning_effort": "",
     }
     assert set(status["model_assignments"].values()) == {"claude-3-5-sonnet-latest"}
     assert "sk-anthropic-secret" not in str(status)

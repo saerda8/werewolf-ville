@@ -1,6 +1,9 @@
+import json
+
 from ui.app import (
     _classify_llm_test_error,
     _friendly_llm_test_error,
+    _test_openai_responses,
     _test_local_chat2api_agent,
     _local_chat2api_override,
     _runtime_llm_override_from_data,
@@ -9,6 +12,65 @@ from ui.app import (
 
 def test_chat2api_provider_uses_local_config():
     assert _runtime_llm_override_from_data({"provider": "chat2api"}) is None
+
+
+def test_chat2api_provider_can_override_wire_with_local_config(monkeypatch):
+    import ui.app as app_module
+
+    monkeypatch.setattr(app_module, "CONFIG", {
+        "llm": {
+            "api_key": "local-key",
+            "default_model": "local-model",
+            "api_base": "http://127.0.0.1:8000/v1",
+        }
+    })
+
+    override = _runtime_llm_override_from_data({
+        "provider": "chat2api",
+        "wire_api": "responses",
+        "reasoning_effort": "low",
+    })
+
+    assert override == {
+        "provider": "chat2api",
+        "api_key": "local-key",
+        "model": "local-model",
+        "api_base": "http://127.0.0.1:8000/v1",
+        "wire_api": "responses",
+        "reasoning_effort": "low",
+    }
+
+
+def test_chat2api_provider_can_override_local_config():
+    override = _runtime_llm_override_from_data({
+        "provider": "chat2api",
+        "api_key": "",
+        "model": "relay-model",
+        "api_base": "http://127.0.0.1:9000/v1",
+        "wire_api": "responses",
+        "reasoning_effort": "",
+    })
+
+    assert override == {
+        "provider": "chat2api",
+        "api_key": "EMPTY",
+        "model": "relay-model",
+        "api_base": "http://127.0.0.1:9000/v1",
+        "wire_api": "responses",
+        "reasoning_effort": "",
+    }
+
+
+def test_chat2api_provider_requires_model_and_base_when_overriding():
+    override = _runtime_llm_override_from_data({
+        "provider": "chat2api",
+        "api_key": "sk-local",
+        "model": "",
+        "api_base": "http://127.0.0.1:9000/v1",
+    })
+
+    assert "error" in override
+    assert "model" in override["error"]
 
 
 def test_local_chat2api_override_uses_config():
@@ -59,6 +121,8 @@ def test_preset_provider_uses_known_base_url():
         "api_key": "sk-test",
         "model": "deepseek-chat",
         "api_base": "https://api.deepseek.com/v1",
+        "wire_api": "chat_completions",
+        "reasoning_effort": "",
     }
 
 
@@ -75,6 +139,8 @@ def test_custom_provider_requires_custom_base_url():
         "api_key": "sk-test",
         "model": "custom-model",
         "api_base": "http://127.0.0.1:9000/v1",
+        "wire_api": "chat_completions",
+        "reasoning_effort": "",
     }
 
 
@@ -91,6 +157,8 @@ def test_anthropic_provider_uses_messages_base_url():
         "api_key": "sk-ant-test",
         "model": "claude-3-5-sonnet-latest",
         "api_base": "https://api.anthropic.com/v1",
+        "wire_api": "chat_completions",
+        "reasoning_effort": "",
     }
 
 
@@ -107,7 +175,123 @@ def test_custom_anthropic_provider_requires_custom_base_url():
         "api_key": "sk-ant-test",
         "model": "claude-compatible-model",
         "api_base": "http://127.0.0.1:9001/v1",
+        "wire_api": "chat_completions",
+        "reasoning_effort": "",
     }
+
+
+def test_openai_responses_test_omits_blank_reasoning(monkeypatch):
+    import ui.app as app_module
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"output_text":"OK"}'
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(app_module.urllib.request, "urlopen", fake_urlopen)
+
+    sample = _test_openai_responses({
+        "provider": "chat2api",
+        "api_key": "sk-test",
+        "model": "gpt-5.5",
+        "api_base": "http://localhost:8080",
+        "wire_api": "responses",
+        "reasoning_effort": "",
+    })
+
+    assert sample == "OK"
+    assert captured["url"] == "http://localhost:8080/responses"
+    assert captured["timeout"] == 30
+    assert captured["payload"]["store"] is False
+    assert captured["payload"]["max_output_tokens"] == 8
+    assert "reasoning" not in captured["payload"]
+
+
+def test_openai_responses_test_sends_selected_reasoning(monkeypatch):
+    import ui.app as app_module
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"output":[{"content":[{"text":"OK"}]}]}'
+
+    def fake_urlopen(req, timeout):
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(app_module.urllib.request, "urlopen", fake_urlopen)
+
+    sample = _test_openai_responses({
+        "provider": "chat2api",
+        "api_key": "sk-test",
+        "model": "gpt-5.5",
+        "api_base": "http://localhost:8080",
+        "wire_api": "responses",
+        "reasoning_effort": "low",
+    })
+
+    assert sample == "OK"
+    assert captured["payload"]["reasoning"] == {"effort": "low"}
+
+
+def test_runtime_llm_responses_wire_uses_responses_endpoint(monkeypatch):
+    import llm
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"output_text":"OK"}'
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+    llm.configure_runtime_llm({
+        "provider": "chat2api",
+        "api_key": "sk-test",
+        "model": "gpt-5.5",
+        "api_base": "http://localhost:8080",
+        "wire_api": "responses",
+        "reasoning_effort": "",
+    })
+    try:
+        sample = llm.chat("You are a test.", "Reply with OK.", temperature=0)
+    finally:
+        llm.configure_runtime_llm(None)
+
+    assert sample == "OK"
+    assert captured["url"] == "http://localhost:8080/responses"
+    assert captured["payload"]["model"] == "gpt-5.5"
+    assert "reasoning" not in captured["payload"]
 
 
 def test_remote_provider_requires_api_key():

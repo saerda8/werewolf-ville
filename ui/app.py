@@ -39,17 +39,56 @@ LLM_PROVIDER_BASE_URLS = {
     "anthropic": "https://api.anthropic.com/v1",
 }
 
+LLM_WIRE_APIS = {"chat_completions", "responses"}
+
 
 def _runtime_llm_override_from_data(data):
     provider = str(data.get("provider", "chat2api") or "chat2api").strip().lower()
-    if provider in ("", "chat2api"):
+    if provider == "":
         return None
-    if provider not in {"openrouter", "openai", "deepseek", "anthropic", "custom", "custom_anthropic"}:
+    if provider not in {"chat2api", "openrouter", "openai", "deepseek", "anthropic", "custom", "custom_anthropic"}:
         return {"error": f"Unsupported LLM provider: {provider}"}
+    wire_api = str(data.get("wire_api", "chat_completions") or "chat_completions").strip().lower()
+    if wire_api not in LLM_WIRE_APIS:
+        return {"error": f"Unsupported wire API: {wire_api}"}
+    reasoning_effort = str(data.get("reasoning_effort", "") or "").strip().lower()
 
     api_key = str(data.get("api_key", "") or "").strip()
     model = str(data.get("model", "") or "").strip()
     api_base = str(data.get("api_base", "") or "").strip()
+    if provider == "chat2api":
+        if not any([api_key, model, api_base]):
+            if wire_api == "chat_completions" and not reasoning_effort:
+                return None
+            local_override = _local_chat2api_override()
+            if not local_override.get("model"):
+                return {"error": "chat2api override requires model."}
+            if not local_override.get("api_base"):
+                return {"error": "chat2api override requires API base URL."}
+            return {
+                "provider": "chat2api",
+                "api_key": local_override.get("api_key") or "EMPTY",
+                "model": local_override["model"],
+                "api_base": local_override["api_base"],
+                "wire_api": wire_api,
+                "reasoning_effort": reasoning_effort,
+            }
+        missing = []
+        if not model:
+            missing.append("model")
+        if not api_base:
+            missing.append("API base URL")
+        if missing:
+            return {"error": f"chat2api override requires: {', '.join(missing)}."}
+        return {
+            "provider": "chat2api",
+            "api_key": api_key or "EMPTY",
+            "model": model,
+            "api_base": api_base,
+            "wire_api": wire_api,
+            "reasoning_effort": reasoning_effort,
+        }
+
     if provider not in {"custom", "custom_anthropic"}:
         api_base = LLM_PROVIDER_BASE_URLS[provider]
 
@@ -68,6 +107,8 @@ def _runtime_llm_override_from_data(data):
         "api_key": api_key,
         "model": model,
         "api_base": api_base,
+        "wire_api": wire_api,
+        "reasoning_effort": reasoning_effort,
     }
 
 
@@ -91,6 +132,8 @@ def _local_chat2api_override() -> dict:
         "api_key": str(llm_config.get("api_key", "") or ""),
         "model": model,
         "api_base": str(llm_config.get("api_base", "") or ""),
+        "wire_api": "chat_completions",
+        "reasoning_effort": str(llm_config.get("model_reasoning_effort", "") or ""),
     }
 
 
@@ -165,6 +208,8 @@ def _test_anthropic_messages(llm_override):
 
 
 def _test_openai_compatible_chat(llm_override: dict) -> str:
+    if llm_override.get("wire_api") == "responses":
+        return _test_openai_responses(llm_override)
     client_kwargs = {
         "api_key": llm_override["api_key"],
         "base_url": llm_override["api_base"],
@@ -186,6 +231,45 @@ def _test_openai_compatible_chat(llm_override: dict) -> str:
         timeout=30,
     )
     return (response.choices[0].message.content or "").strip()
+
+
+def _test_openai_responses(llm_override: dict) -> str:
+    payload = {
+        "model": llm_override["model"],
+        "input": "Reply with OK.",
+        "temperature": 0,
+        "max_output_tokens": 8,
+        "store": False,
+    }
+    reasoning_effort = str(llm_override.get("reasoning_effort", "") or "").strip()
+    if reasoning_effort:
+        payload["reasoning"] = {"effort": reasoning_effort}
+    req = urllib.request.Request(
+        llm_override["api_base"].rstrip("/") + "/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {llm_override['api_key']}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        raise RuntimeError(f"Responses HTTP {e.code}: {body}") from e
+
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"].strip()
+    parts = []
+    for item in data.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            if isinstance(content, dict):
+                text = content.get("text") or content.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+    return "".join(parts).strip()
 
 
 def _test_local_chat2api_agent() -> tuple[str, str]:
@@ -243,6 +327,7 @@ def test_llm_provider():
     llm_override = _runtime_llm_override_from_request()
     if isinstance(llm_override, dict) and llm_override.get("error"):
         return jsonify({"ok": False, "error": llm_override["error"]}), 400
+    using_local_default = llm_override is None
     if llm_override is None:
         llm_override = _local_chat2api_override()
 
@@ -250,7 +335,7 @@ def test_llm_provider():
     model = llm_override["model"]
     api_base = llm_override["api_base"]
     try:
-        if provider == "chat2api":
+        if using_local_default:
             model, sample = _test_local_chat2api_agent()
         elif provider in ("anthropic", "custom_anthropic"):
             sample = _test_anthropic_messages(llm_override)

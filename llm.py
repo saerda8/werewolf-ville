@@ -37,6 +37,8 @@ _DEFAULT_MODEL = _BASE_DEFAULT_MODEL
 _RUNTIME_PROTOCOL = "openai"
 _RUNTIME_API_KEY = ""
 _RUNTIME_API_BASE = ""
+_RUNTIME_WIRE_API = "chat_completions"
+_RUNTIME_REASONING_EFFORT = ""
 _REQUEST_TIMEOUT = _llm_config.get("request_timeout_seconds", 60)
 _RETRY_DELAY = _llm_config.get("retry_delay_seconds", 5)
 _MAX_RETRIES = _llm_config.get("max_retries", 3)
@@ -68,16 +70,21 @@ def normalize_llm_error(exc: Exception) -> str:
 def configure_runtime_llm(override: dict = None) -> dict:
     """Switch the chat client for this process without persisting API keys."""
     global _client, _DEFAULT_MODEL, _RUNTIME_PROTOCOL, _RUNTIME_API_KEY, _RUNTIME_API_BASE
+    global _RUNTIME_WIRE_API, _RUNTIME_REASONING_EFFORT
 
     provider = (override or {}).get("provider", "").strip().lower()
     api_key = (override or {}).get("api_key", "").strip()
     model = (override or {}).get("model", "").strip()
     api_base = (override or {}).get("api_base", "").strip()
+    wire_api = (override or {}).get("wire_api", "chat_completions").strip().lower()
+    reasoning_effort = (override or {}).get("reasoning_effort", "").strip().lower()
 
-    if provider and provider != "chat2api" and api_key and model and api_base:
+    if provider and api_key and model and api_base:
         _RUNTIME_PROTOCOL = "anthropic" if provider in ("anthropic", "custom_anthropic") else "openai"
         _RUNTIME_API_KEY = api_key
         _RUNTIME_API_BASE = api_base
+        _RUNTIME_WIRE_API = wire_api if wire_api in {"chat_completions", "responses"} else "chat_completions"
+        _RUNTIME_REASONING_EFFORT = reasoning_effort
         if _RUNTIME_PROTOCOL == "openai":
             _client = OpenAI(
                 api_key=api_key,
@@ -88,14 +95,22 @@ def configure_runtime_llm(override: dict = None) -> dict:
                 },
             )
         _DEFAULT_MODEL = model
-        return {"provider": provider, "model": model, "api_base": api_base}
+        return {
+            "provider": provider,
+            "model": model,
+            "api_base": api_base,
+            "wire_api": _RUNTIME_WIRE_API,
+            "reasoning_effort": _RUNTIME_REASONING_EFFORT,
+        }
 
     _client = _CHAT2API_CLIENT
     _DEFAULT_MODEL = _BASE_DEFAULT_MODEL
     _RUNTIME_PROTOCOL = "openai"
     _RUNTIME_API_KEY = ""
     _RUNTIME_API_BASE = ""
-    return {"provider": "chat2api", "model": _DEFAULT_MODEL}
+    _RUNTIME_WIRE_API = "chat_completions"
+    _RUNTIME_REASONING_EFFORT = ""
+    return {"provider": "chat2api", "model": _DEFAULT_MODEL, "wire_api": "chat_completions"}
 
 
 def _call_anthropic_messages(model: str, messages: list, temperature: float,
@@ -176,6 +191,14 @@ def _perform_chat_request(model: str, messages: list, temperature: float,
             max_tokens=max_tokens,
             timeout=timeout,
         )
+    if _RUNTIME_WIRE_API == "responses":
+        return _call_openai_responses(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
     response = _client.chat.completions.create(
         model=model,
         messages=messages,
@@ -185,6 +208,51 @@ def _perform_chat_request(model: str, messages: list, temperature: float,
     )
     content = response.choices[0].message.content
     return content.strip() if content else ""
+
+
+def _call_openai_responses(model: str, messages: list, temperature: float,
+                           max_tokens: int, timeout: int) -> str:
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": msg.get("role", "user"),
+                "content": msg.get("content", ""),
+            }
+            for msg in messages
+        ],
+        "temperature": temperature,
+        "max_output_tokens": max_tokens,
+        "store": False,
+    }
+    if _RUNTIME_REASONING_EFFORT:
+        payload["reasoning"] = {"effort": _RUNTIME_REASONING_EFFORT}
+    req = urllib.request.Request(
+        _RUNTIME_API_BASE.rstrip("/") + "/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_RUNTIME_API_KEY}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        raise RuntimeError(f"Responses HTTP {e.code}: {body}") from e
+
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"].strip()
+    parts = []
+    for item in data.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            if isinstance(content, dict):
+                text = content.get("text") or content.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+    return "".join(parts).strip()
 
 
 def _call_with_retry(model: str, messages: list, temperature: float,

@@ -736,6 +736,17 @@ body.phase-locked #game-container { pointer-events: none; }
     <input id="llm-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="API Key">
     <input id="llm-model" type="text" autocomplete="off" spellcheck="false" placeholder="模型名，例如 openai/gpt-4o-mini 或 gpt-4o-mini">
     <input id="llm-api-base" type="text" autocomplete="off" spellcheck="false" placeholder="API Base URL">
+    <select id="llm-wire-api" onchange="updateProviderFields()">
+      <option value="chat_completions">Chat Completions</option>
+      <option value="responses">Responses</option>
+    </select>
+    <select id="llm-reasoning-effort">
+      <option value="">Reasoning 默认</option>
+      <option value="low">Reasoning low</option>
+      <option value="medium">Reasoning medium</option>
+      <option value="high">Reasoning high</option>
+      <option value="xhigh">Reasoning xhigh</option>
+    </select>
     <div class="hint">BYOK = Bring Your Own Key，即使用你自己的厂商 API Key。选择厂商会自动填 URL；自定义模式可以改 URL。OpenRouter 的 BYOK 需先在 OpenRouter Integrations 里绑定上游 key，再在这里填 OpenRouter key。</div>
     <div id="llm-test-status"></div>
   </div>
@@ -1449,7 +1460,7 @@ function deepDiveRemaining(state) {
 }
 
 const LLM_PROVIDER_BASE_URLS = {
-  chat2api: "",
+  chat2api: "http://localhost:8080",
   openrouter: "https://openrouter.ai/api/v1",
   openai: "https://api.openai.com/v1",
   deepseek: "https://api.deepseek.com/v1",
@@ -1458,6 +1469,13 @@ const LLM_PROVIDER_BASE_URLS = {
   custom_anthropic: "",
 };
 const LLM_STORAGE_KEY = "werewolfVille.runtimeLlm";
+const DEFAULT_RUNTIME_LLM_OPTIONS = {
+  provider: "chat2api",
+  model: "gpt-5.5",
+  api_base: "http://localhost:8080",
+  wire_api: "responses",
+  reasoning_effort: "",
+};
 
 function setLlmTestStatus(message, kind) {
   const el = document.getElementById("llm-test-status");
@@ -1478,17 +1496,32 @@ function updateProviderFields() {
   const keyEl = document.getElementById("llm-api-key");
   const modelEl = document.getElementById("llm-model");
   const baseEl = document.getElementById("llm-api-base");
+  const wireEl = document.getElementById("llm-wire-api");
+  const reasoningEl = document.getElementById("llm-reasoning-effort");
   const provider = providerEl ? providerEl.value : "chat2api";
   const usesLocal = provider === "chat2api";
-  const isCustom = provider === "custom" || provider === "custom_anthropic";
+  const isCustom = provider === "custom" || provider === "custom_anthropic" || usesLocal;
+  const isAnthropicStyle = provider === "anthropic" || provider === "custom_anthropic";
 
   if (baseEl) {
     if (!isCustom) baseEl.value = LLM_PROVIDER_BASE_URLS[provider] || "";
     baseEl.readOnly = !isCustom;
-    baseEl.disabled = usesLocal;
+    baseEl.disabled = false;
   }
-  if (keyEl) keyEl.disabled = usesLocal;
-  if (modelEl) modelEl.disabled = usesLocal;
+  if (keyEl) {
+    keyEl.disabled = false;
+    keyEl.placeholder = usesLocal ? "API Key（本地服务可留空）" : "API Key";
+  }
+  if (modelEl) modelEl.disabled = false;
+  if (wireEl) {
+    wireEl.disabled = isAnthropicStyle;
+    if (isAnthropicStyle) wireEl.value = "chat_completions";
+  }
+  if (reasoningEl) {
+    const usesResponses = wireEl && wireEl.value === "responses" && !isAnthropicStyle;
+    reasoningEl.disabled = !usesResponses;
+    if (!usesResponses) reasoningEl.value = "";
+  }
   setLlmTestStatus("", "");
 }
 
@@ -1502,18 +1535,27 @@ function saveRuntimeLlmOptions(options) {
 
 function loadRuntimeLlmOptions() {
   try {
-    const saved = JSON.parse(localStorage.getItem(LLM_STORAGE_KEY) || "{}");
+    const saved = Object.assign(
+      {},
+      DEFAULT_RUNTIME_LLM_OPTIONS,
+      JSON.parse(localStorage.getItem(LLM_STORAGE_KEY) || "{}")
+    );
     const providerEl = document.getElementById("llm-provider");
     const keyEl = document.getElementById("llm-api-key");
     const modelEl = document.getElementById("llm-model");
     const baseEl = document.getElementById("llm-api-base");
-    if (providerEl && saved.provider) providerEl.value = saved.provider;
+    const wireEl = document.getElementById("llm-wire-api");
+    const reasoningEl = document.getElementById("llm-reasoning-effort");
+    if (providerEl) providerEl.value = saved.provider || DEFAULT_RUNTIME_LLM_OPTIONS.provider;
     updateProviderFields();
     if (keyEl && saved.api_key) keyEl.value = saved.api_key;
-    if (modelEl && saved.model) modelEl.value = saved.model;
-    if (baseEl && (saved.provider === "custom" || saved.provider === "custom_anthropic") && saved.api_base) {
+    if (modelEl) modelEl.value = saved.model || "";
+    if (baseEl && (saved.provider === "chat2api" || saved.provider === "custom" || saved.provider === "custom_anthropic") && saved.api_base) {
       baseEl.value = saved.api_base;
     }
+    if (wireEl) wireEl.value = saved.wire_api || DEFAULT_RUNTIME_LLM_OPTIONS.wire_api;
+    if (reasoningEl) reasoningEl.value = saved.reasoning_effort || "";
+    updateProviderFields();
   } catch (e) {
     updateProviderFields();
   }
@@ -1524,12 +1566,30 @@ function getRuntimeLlmOptions() {
   const keyEl = document.getElementById("llm-api-key");
   const modelEl = document.getElementById("llm-model");
   const baseEl = document.getElementById("llm-api-base");
+  const wireEl = document.getElementById("llm-wire-api");
+  const reasoningEl = document.getElementById("llm-reasoning-effort");
   const provider = providerEl ? providerEl.value : "chat2api";
-  if (provider === "chat2api") return { provider };
 
   const api_key = keyEl ? keyEl.value.trim() : "";
   const model = modelEl ? modelEl.value.trim() : "";
   const api_base = baseEl ? baseEl.value.trim() : "";
+  const wire_api = wireEl ? wireEl.value : "chat_completions";
+  const reasoning_effort = reasoningEl ? reasoningEl.value : "";
+  if (provider === "chat2api") {
+    if (!api_key && !model && !api_base) {
+      if (wire_api === "chat_completions" && !reasoning_effort) return { provider };
+      return { provider, wire_api, reasoning_effort };
+    }
+    const missingLocal = [];
+    if (!model) missingLocal.push("模型名");
+    if (!api_base) missingLocal.push("API Base URL");
+    if (missingLocal.length) {
+      alert("本地 API 自定义配置请填写：" + missingLocal.join("、") + "；如果要用 config.yaml 默认值，请三个输入框都留空。");
+      return null;
+    }
+    return { provider, api_key, model, api_base, wire_api, reasoning_effort };
+  }
+
   const missing = [];
   if (!api_key) missing.push("API Key");
   if (!model) missing.push("模型名");
@@ -1538,7 +1598,7 @@ function getRuntimeLlmOptions() {
     alert("请填写：" + missing.join("、"));
     return null;
   }
-  return { provider, api_key, model, api_base };
+  return { provider, api_key, model, api_base, wire_api, reasoning_effort };
 }
 
 function testRuntimeLlmOptions(options) {
