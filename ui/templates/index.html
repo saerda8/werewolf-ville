@@ -1166,7 +1166,10 @@ function initSocket() {
   socket.on("confirm_night_transition_response", (resp) => {
     const btn = document.getElementById("night-finish-confirm");
     if (resp && resp.error) {
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "确认天亮";
+      }
       nightTransitionConfirming = false;
       addChatMsg("系统", resp.error, true);
     } else {
@@ -1622,18 +1625,31 @@ function normalizeVoteCounts(voteSummary) {
   return result;
 }
 
-function submitCrowVote(name = "") {
+function submitCrowVote(name = "", clickedElement = null) {
   if (name === undefined || name === null || !gameState || crowVoteSubmitting) return;
   const voteSummary = gameState.vote_summary || {};
-  if (hasCrowVoted(voteSummary) || duskStage(gameState) !== "voting") return;
+  if (hasCrowVoted(voteSummary) || duskStage(gameState) !== "voting" || voteSummary.active !== true) return;
   crowVoteSubmitting = true;
   voteSummary.crow_vote_submitted = true;
   voteSummary.crow_vote = name || "";
+
+  if (clickedElement) {
+    clickedElement.disabled = true;
+    if (name) {
+      clickedElement.textContent = "投票中...";
+    } else {
+      clickedElement.textContent = clickedElement.id === "footer-abstain-btn" ? "放弃投票 (弃票中...)" : "弃票中...";
+    }
+    clickedElement.style.opacity = "0.9";
+  }
+
   const buttons = document.querySelectorAll(".dusk-vote-button");
   buttons.forEach(btn => {
-    btn.disabled = true;
-    btn.style.opacity = "0.5";
-    btn.style.pointerEvents = "none";
+    if (btn !== clickedElement) {
+      btn.disabled = true;
+      btn.style.opacity = "0.5";
+      btn.style.pointerEvents = "none";
+    }
   });
   renderDuskVotingFlow(gameState);
   fetch("/api/submit_crow_vote", {
@@ -1666,9 +1682,12 @@ function confirmVoteResult() {
   if (!["results", "result"].includes(duskStage(gameState || {}))) return;
   const btn = document.getElementById("confirm-vote-result");
   const panel = document.getElementById("voting-panel");
-  if (btn) btn.disabled = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "确认中...";
+  }
   voteResultConfirming = true;
-  if (panel) panel.style.display = "none";
+  renderDuskVotingFlow(gameState);
   if (socket && socket.connected) {
     socket.emit("confirm_vote_result");
   } else {
@@ -1678,15 +1697,14 @@ function confirmVoteResult() {
         if (resp && resp.error) {
           voteResultConfirming = false;
           addChatMsg("系统", resp.error, true);
-          if (btn) btn.disabled = false;
-          if (panel) panel.style.display = "flex";
+        } else {
+          voteResultConfirming = false;
+          if (panel) panel.style.display = "none";
         }
         fetchCurrentState();
       })
       .catch(err => {
         voteResultConfirming = false;
-        if (btn) btn.disabled = false;
-        if (panel) panel.style.display = "flex";
         fetchCurrentState();
       });
   }
@@ -1695,8 +1713,12 @@ function confirmVoteResult() {
 function confirmNightTransition() {
   if (nightTransitionConfirming) return;
   const btn = document.getElementById("night-finish-confirm");
-  if (btn) btn.disabled = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "确认中...";
+  }
   nightTransitionConfirming = true;
+  renderNightTransition(gameState);
   if (socket && socket.connected) {
     socket.emit("confirm_night_transition");
     setTimeout(() => {
@@ -1707,7 +1729,6 @@ function confirmNightTransition() {
           nightTransitionConfirming = false;
           if (resp && resp.error) {
             addChatMsg("系统", resp.error, true);
-            if (btn) btn.disabled = false;
           } else {
             const overlay = document.getElementById("night-transition-overlay");
             if (overlay) overlay.classList.remove("show");
@@ -1716,7 +1737,6 @@ function confirmNightTransition() {
         })
         .catch(err => {
           nightTransitionConfirming = false;
-          if (btn) btn.disabled = false;
           fetchCurrentState();
         });
     }, 2500);
@@ -1724,16 +1744,25 @@ function confirmNightTransition() {
     fetch("/api/confirm_night_transition", {method: "POST"})
       .then(r => r.json())
       .then(resp => {
+        nightTransitionConfirming = false;
         if (resp && resp.error) {
           addChatMsg("系统", resp.error, true);
-          if (btn) btn.disabled = false;
-          nightTransitionConfirming = false;
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "确认天亮";
+          }
+        } else {
+          const overlay = document.getElementById("night-transition-overlay");
+          if (overlay) overlay.classList.remove("show");
         }
         fetchCurrentState();
       })
       .catch(err => {
-        if (btn) btn.disabled = false;
         nightTransitionConfirming = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "确认天亮";
+        }
         fetchCurrentState();
       });
   }
@@ -1816,7 +1845,7 @@ function renderDuskVotingFlow(state) {
   const statementInput = document.getElementById("dusk-statement-input");
   const statementSubmit = document.getElementById("dusk-statement-submit");
   const crowInputStage = stage === "crow_statement" || stage === "crow_input";
-  const votingStages = ["voting", "results", "result", "escorting", "escort"];
+  const votingStages = ["voting", "results", "result"];
   const duskInteractionLocked = isDusk && stage !== "crow_statement" && stage !== "crow_input";
   document.body.classList.toggle("phase-locked", isDusk || isNight);
   const gameplayLocked = isDusk || isNight;
@@ -1861,15 +1890,15 @@ function renderDuskVotingFlow(state) {
   }
 
   if (!votingPanel) return;
-  const showVotingPanel = isDusk && votingStages.includes(stage) && !voteResultConfirming;
+  const showVotingPanel = isDusk && votingStages.includes(stage);
   votingPanel.style.display = showVotingPanel ? "flex" : "none";
-  if (!isDusk || !votingStages.includes(stage) || voteResultConfirming) return;
+  if (!isDusk || !votingStages.includes(stage)) return;
 
   const participants = eligibleDuskParticipants(state);
   const counts = normalizeVoteCounts(voteSummary);
   const winner = voteSummary.winner || voteSummary.jail_target || "";
   const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;
-  const showVoteButtons = stage === "voting" && !crowHasVoted;
+  const showVoteButtons = stage === "voting" && voteSummary.active && (!hasCrowVoted(voteSummary) || crowVoteSubmitting);
   const abstainers = [];
   Object.entries(voteSummary.votes || {}).forEach(([voter, vote]) => {
     const target = typeof vote === "string" ? vote : (vote && (vote.target || vote.target_name || vote.voted_for));
@@ -1892,13 +1921,14 @@ function renderDuskVotingFlow(state) {
     if (showVoteButtons) {
       const button = document.createElement("button");
       button.className = "dusk-vote-button";
-      button.textContent = "投票";
+      const isThisTarget = crowVoteSubmitting && voteSummary.crow_vote === name;
+      button.textContent = isThisTarget ? "投票中..." : "投票";
       if (crowHasVoted || crowVoteSubmitting) {
         button.disabled = true;
-        button.style.opacity = "0.5";
+        button.style.opacity = isThisTarget ? "0.9" : "0.5";
         button.style.pointerEvents = "none";
       }
-      button.addEventListener("click", () => submitCrowVote(name));
+      button.addEventListener("click", (e) => submitCrowVote(name, e.target));
       row.appendChild(button);
     }
     rows.appendChild(row);
@@ -1914,13 +1944,14 @@ function renderDuskVotingFlow(state) {
     const abstainBtn = document.createElement("button");
     abstainBtn.className = "dusk-vote-button";
     abstainBtn.id = "abstain-vote-button";
-    abstainBtn.textContent = "弃票";
+    const isAbstainTarget = crowVoteSubmitting && (voteSummary.crow_vote === "" || voteSummary.crow_vote === undefined);
+    abstainBtn.textContent = isAbstainTarget ? "弃票中..." : "弃票";
     if (crowHasVoted || crowVoteSubmitting) {
       abstainBtn.disabled = true;
-      abstainBtn.style.opacity = "0.5";
+      abstainBtn.style.opacity = isAbstainTarget ? "0.9" : "0.5";
       abstainBtn.style.pointerEvents = "none";
     }
-    abstainBtn.addEventListener("click", () => submitCrowVote(""));
+    abstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));
     abstainRow.appendChild(abstainBtn);
     rows.appendChild(abstainRow);
   }
@@ -1940,18 +1971,71 @@ function renderDuskVotingFlow(state) {
 
   const countsEl = document.getElementById("voting-counts");
   if (countsEl) {
-    countsEl.textContent = voteSummary.tie_broken_by_crow
+    const voteGenerationPending = stage === "voting" && !voteSummary.active;
+    countsEl.textContent = voteGenerationPending
+      ? "居民投票生成中，请稍候。"
+      : (voteSummary.tie_broken_by_crow
       ? "最高票平票，按警长裁决权，由警长所投对象胜出。"
-      : (crowHasVoted && stage === "voting" ? "克罗已投票，等待其他参与者完成投票。" : "");
+      : (crowHasVoted && stage === "voting" ? "克罗已投票，等待其他参与者完成投票。" : ""));
   }
   const actions = document.getElementById("jail-buttons");
   if (actions) {
     actions.innerHTML = "";
-    if (["results", "result"].includes(stage)) {
+    if (stage === "voting" && !voteSummary.active) {
+      actions.innerHTML = '<div style="color:#f7d98a;">居民投票生成中，请稍候。</div>';
+    } else if (["results", "result"].includes(stage)) {
       const winnerText = winner ? `并押送 ${escapeHtml(getDisplayName(winner, state))}` : "";
-      actions.innerHTML = `<button id="confirm-vote-result" onclick="confirmVoteResult()">确认结果${winnerText}</button>`;
-    } else if (["escorting", "escort"].includes(stage)) {
-      actions.innerHTML = '<div style="color:#f7d98a;">正在押送最高票者，请稍候。</div>';
+      actions.innerHTML = `<button id="confirm-vote-result" onclick="confirmVoteResult()">${voteResultConfirming ? "确认中..." : `确认结果${winnerText}`}</button>`;
+      const confirmBtn = document.getElementById("confirm-vote-result");
+      if (confirmBtn && voteResultConfirming) {
+        confirmBtn.disabled = true;
+        confirmBtn.style.opacity = "0.7";
+        confirmBtn.style.background = "#8b949e";
+      }
+    } else if (showVoteButtons) {
+      const footerAbstainBtn = document.createElement("button");
+      footerAbstainBtn.id = "footer-abstain-btn";
+      footerAbstainBtn.style.width = "100%";
+      footerAbstainBtn.style.padding = "10px 16px";
+      footerAbstainBtn.style.background = "linear-gradient(135deg, #3b4d75 0%, #27375a 100%)";
+      footerAbstainBtn.style.color = "#aebbd5";
+      footerAbstainBtn.style.border = "1px solid rgba(142, 160, 196, 0.3)";
+      footerAbstainBtn.style.borderRadius = "6px";
+      footerAbstainBtn.style.fontWeight = "800";
+      footerAbstainBtn.style.cursor = "pointer";
+      footerAbstainBtn.style.fontSize = "13px";
+      footerAbstainBtn.style.marginTop = "8px";
+      footerAbstainBtn.style.transition = "all 0.2s ease";
+
+      const isAbstainTarget = crowVoteSubmitting && (voteSummary.crow_vote === "" || voteSummary.crow_vote === undefined);
+      footerAbstainBtn.textContent = isAbstainTarget ? "放弃投票 (弃票中...)" : "放弃投票 (弃票)";
+
+      footerAbstainBtn.addEventListener("mouseover", () => {
+        if (!footerAbstainBtn.disabled) {
+          footerAbstainBtn.style.background = "linear-gradient(135deg, #475d8c 0%, #2f426b 100%)";
+          footerAbstainBtn.style.color = "#fff";
+          footerAbstainBtn.style.borderColor = "rgba(142, 160, 196, 0.6)";
+        }
+      });
+      footerAbstainBtn.addEventListener("mouseout", () => {
+        if (!footerAbstainBtn.disabled) {
+          footerAbstainBtn.style.background = "linear-gradient(135deg, #3b4d75 0%, #27375a 100%)";
+          footerAbstainBtn.style.color = "#aebbd5";
+          footerAbstainBtn.style.borderColor = "rgba(142, 160, 196, 0.3)";
+        }
+      });
+
+      if (crowHasVoted || crowVoteSubmitting) {
+        footerAbstainBtn.disabled = true;
+        footerAbstainBtn.style.opacity = isAbstainTarget ? "0.9" : "0.5";
+        footerAbstainBtn.style.pointerEvents = "none";
+        if (isAbstainTarget) {
+          footerAbstainBtn.style.background = "linear-gradient(135deg, #d95743 0%, #a83d2e 100%)";
+          footerAbstainBtn.style.color = "#fff";
+        }
+      }
+      footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));
+      actions.appendChild(footerAbstainBtn);
     }
   }
 }

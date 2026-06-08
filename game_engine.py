@@ -5105,15 +5105,27 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         # 记忆压缩
 
-        for name, agent in self.agents.items():
+        alive_names = [name for name, agent in self.agents.items() if agent.is_alive]
 
-            if agent.is_alive:
+        def _compress_memory_async(names: list[str], day: int):
+            for name in names:
+                agent = self.agents.get(name)
+                if not agent or not agent.is_alive:
+                    continue
+                try:
+                    agent.compress_memory(day)
+                except Exception as exc:
+                    print(f"[compress_memory_async] {name}: {exc}", file=sys.stderr, flush=True)
+            try:
+                self._broadcast_state()
+            except Exception:
+                pass
 
-                agent.compress_memory(self.day)
-
-
-
-
+        threading.Thread(
+            target=_compress_memory_async,
+            args=(alive_names, self.day),
+            daemon=True,
+        ).start()
 
         # 生成每日计划（异步，不阻塞）
 

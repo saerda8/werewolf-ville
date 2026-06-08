@@ -545,24 +545,38 @@ class EngineDuskMixin:
                 "time": time.time(),
             }
             self._log(f"💬 克罗黄昏发言: {text}", "chat")
-            self._broadcast_state()
-            self._generate_dusk_votes()
-            self._dusk_vote_active = True
             self._dusk_stage = "voting"
-            self._dusk_vote_deadline = time.time() + _VOTE_COUNTDOWN_SECONDS
+            self._dusk_vote_active = False
+            self._dusk_vote_deadline = None
             self._dusk_crow_voted = False
-            self._log("🗳️ 黄昏发言结束，投票开始（30秒）。请克罗投票。", "system")
+            self._log("🗳️ 黄昏发言结束，正在生成居民投票。", "system")
             self.chat_bubbles[self.detective_name] = {
                 "text": _CROW_START_VOTE_TEXT,
                 "target": "",
                 "time": time.time(),
             }
             self._broadcast_state()
+            threading.Thread(target=self._generate_dusk_votes_async, daemon=True).start()
             return {
                 "success": True,
                 "statement": text,
                 "vote_summary": self._build_vote_summary(),
             }
+
+
+    def _generate_dusk_votes_async(self):
+        try:
+            self._generate_dusk_votes()
+        except Exception as exc:
+            self._log(f"⚠️ 黄昏投票生成失败：{exc}", "error")
+        finally:
+            with self._lock:
+                if self.phase == type(self.phase).DUSK_DISCUSSION and getattr(self, "_dusk_stage", "") == "voting" and self._dusk_jail_target is None:
+                    self._dusk_vote_active = True
+                    if not getattr(self, "_dusk_vote_deadline", None):
+                        self._dusk_vote_deadline = time.time() + _VOTE_COUNTDOWN_SECONDS
+                    self._log("🗳️ 居民投票生成完成，投票开始（30秒）。请克罗投票。", "system")
+                    self._broadcast_state()
 
 
     def _generate_dusk_votes(self):
