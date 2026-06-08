@@ -110,7 +110,7 @@ Stable implementation rules:
 
 ## 2026-06-07 Observation, Memory, And Cognition Upgrade
 
-Implementation status: in progress. These are stable target rules for the current development round, not a completion claim.
+Implementation status: completed and verified. Observation packets now separate 10-tile visible objects from near-hand reachable objects; only reachable objects may ground the current white action-status bubble.
 
 Lifecycle target:
 

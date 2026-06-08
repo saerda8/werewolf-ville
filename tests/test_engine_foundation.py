@@ -316,6 +316,31 @@ def test_decision_packet_includes_nearby_people_objects_and_events(monkeypatch):
     assert "亚瑟" in packet["nearby_people_text"]
 
 
+def test_decision_packet_separates_visible_and_reachable_objects(monkeypatch):
+    engine = _make_two_npc_planning_engine(monkeypatch)
+    arthur = engine.agents["Arthur Burton"]
+    arthur.x, arthur.y = 5, 5
+
+    def fake_nearby_objects(x, y, radius, *args):
+        if radius == 3:
+            return ["手边柜台"]
+        if radius == 10:
+            return ["远处书架", "手边柜台"]
+        return []
+
+    monkeypatch.setattr(game_engine, "get_nearby_objects", fake_nearby_objects)
+
+    packet = engine._build_observation_packet("Arthur Burton", arthur)
+    nearby_info, scene_info = engine._format_observation_for_decision(packet)
+
+    assert "手边柜台" in packet["reachable_objects_text"]
+    assert "远处书架" not in packet["reachable_objects_text"]
+    assert "远处书架" in packet["visible_objects_text"]
+    assert "10格内可见物件" in scene_info
+    assert "近身可操作物件" in scene_info
+    assert "远处书架" not in nearby_info
+
+
 def test_discovering_body_records_public_observation_event(monkeypatch):
     engine = _make_engine(monkeypatch, seed=11)
     body = engine.bodies[0]

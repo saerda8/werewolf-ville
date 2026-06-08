@@ -1,12 +1,26 @@
 # NPC Observation Memory Cognition Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]` / `- [x]`) syntax for tracking.
 
 **Goal:** Upgrade NPC behavior from "visible action text plus simple action memory" to a Stanford Smallville-style loop where observation, thought, plan, action, conversation, and memory all feed future decisions.
 
 **Architecture:** Keep the current three model lanes: decision lane, conversation lane, and memory lane. Add a backend observation buffer with radius-based per-NPC filtering, then use asynchronous memory consolidation to turn observations, thoughts, plans, actions, and conversations into durable event/chat/thought memories.
 
 **Tech Stack:** Python engine and agent modules, existing LLM provider wrapper, pytest, Flask/Socket.IO status payload, existing HTML/JS frontend logs and bubbles.
+
+---
+
+## Implementation Closure
+
+Status: completed. The NPC cognition loop now uses a decision observation packet, a separate speech queue for real conversations, and an asynchronous memory queue for event/chat/thought/plan consolidation.
+
+Verification summary:
+
+- `python -m py_compile agent.py game_engine.py llm.py ui/app.py engine_observation.py engine_memory_queue.py`
+- `python -m pytest tests/test_engine_observation.py tests/test_memory_queue.py tests/test_agent_typed_memory.py tests/test_agent_memory_consolidation.py tests/test_prompt_boundaries.py -q -p no:cacheprovider`
+- `python -m pytest tests/test_engine_foundation.py -q -p no:cacheprovider -k "observation or decision_packet or memory_lane or action_status or visible_and_reachable"`
+
+Latest closure note: observation packets separate `visible_objects_text` for objects visible within the 10-tile perception radius from `reachable_objects_text` for near-hand objects that can ground the current `action_status`.
 
 ---
 
@@ -95,7 +109,7 @@ Each NPC decision packet should include:
 - Current self-state: position, location, runtime state, current action, previous action result.
 - World state: day, hour, phase, dead list, public clues, public tasks.
 - Spatial perception: nearby people, distance, location, runtime state, visible action/speech.
-- Object perception: nearby objects, reachable target objects, visible clue objects.
+- Object perception: visible objects within the 10-tile radius, reachable near-hand target objects, visible clue objects.
 - Event perception: recent observable events from the global observation buffer.
 - Memory retrieval: relevant long-term memories, thoughts, conversations.
 - Short-term state: `scratch.currently` and current concern.
@@ -254,7 +268,7 @@ Do not modify:
 - Create: `engine_observation.py`
 - Test: `tests/test_engine_observation.py`
 
-- [ ] **Step 1: Write failing tests for radius and permissions**
+- [x] **Step 1: Write failing tests for radius and permissions**
 
 Add tests:
 
@@ -374,7 +388,7 @@ def test_hidden_event_requires_explicit_witness():
     assert visible_for_sam == []
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run:
 
@@ -388,7 +402,7 @@ Expected:
 ModuleNotFoundError: No module named 'engine_observation'
 ```
 
-- [ ] **Step 3: Implement observation model**
+- [x] **Step 3: Implement observation model**
 
 Create `engine_observation.py` with:
 
@@ -444,7 +458,7 @@ def filter_observable_events(
     return visible
 ```
 
-- [ ] **Step 4: Verify tests pass**
+- [x] **Step 4: Verify tests pass**
 
 Run:
 
@@ -465,7 +479,7 @@ Expected:
 - Modify: `game_engine.py`
 - Test: `tests/test_engine_foundation.py`
 
-- [ ] **Step 1: Write failing tests for buffer append and decision packet**
+- [x] **Step 1: Write failing tests for buffer append and decision packet**
 
 Add tests:
 
@@ -506,7 +520,7 @@ def test_decision_packet_includes_nearby_observed_event(monkeypatch):
     assert "亚瑟开始检查库存" in packet["observable_events_text"]
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run:
 
@@ -520,7 +534,7 @@ Expected:
 AttributeError: 'WerewolfGameEngine' object has no attribute '_record_observation_event'
 ```
 
-- [ ] **Step 3: Implement buffer helpers**
+- [x] **Step 3: Implement buffer helpers**
 
 In `game_engine.py`:
 
@@ -542,7 +556,7 @@ Required packet keys:
 }
 ```
 
-- [ ] **Step 4: Verify focused tests pass**
+- [x] **Step 4: Verify focused tests pass**
 
 Run:
 
@@ -565,7 +579,7 @@ Expected:
 - Test: `tests/test_prompt_boundaries.py`
 - Test: `tests/test_engine_foundation.py`
 
-- [ ] **Step 1: Write failing prompt test for no fictional customers**
+- [x] **Step 1: Write failing prompt test for no fictional customers**
 
 Add a test that inspects `Agent.decide_next_action` prompt construction by monkeypatching `chat_for_agent`:
 
@@ -593,7 +607,7 @@ def test_action_status_prompt_forbids_fictional_customers(monkeypatch):
     assert "周围10格内没有顾客或其他镇民" in captured["prompt"]
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -607,7 +621,7 @@ Expected:
 AssertionError: assert '不得虚构客人' in ...
 ```
 
-- [ ] **Step 3: Update prompt contract**
+- [x] **Step 3: Update prompt contract**
 
 In `agent.py`, add explicit instructions:
 
@@ -619,7 +633,7 @@ In `agent.py`, add explicit instructions:
 action_status 必须只描述当前真实存在的人、物或事务。不得虚构客人、顾客、镇民、对方或不存在的目标。若周围没有可互动的人，只能写物件/职业相关的短任务。
 ```
 
-- [ ] **Step 4: Pass observation packet into `decide_next_action`**
+- [x] **Step 4: Pass observation packet into `decide_next_action`**
 
 In the planning thread in `game_engine.py`, replace ad-hoc nearby strings with the new packet text while preserving existing `nearby_info` and `scene_info` compatibility.
 
@@ -629,7 +643,7 @@ Required behavior:
 - `scene_info` includes nearby objects and location facts.
 - No hidden facts are included unless the NPC is an allowed witness.
 
-- [ ] **Step 5: Verify prompt tests**
+- [x] **Step 5: Verify prompt tests**
 
 Run:
 
@@ -650,7 +664,7 @@ all tests pass
 - Modify: `game_engine.py`
 - Test: `tests/test_engine_foundation.py`
 
-- [ ] **Step 1: Write failing tests for generic-person status fallback**
+- [x] **Step 1: Write failing tests for generic-person status fallback**
 
 Add:
 
@@ -674,7 +688,7 @@ def test_action_status_drops_customer_when_no_visible_person(monkeypatch):
     assert text == "整理杯盘"
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -688,7 +702,7 @@ Expected:
 AssertionError: assert '招呼客人' == '整理杯盘'
 ```
 
-- [ ] **Step 3: Implement grounding helper**
+- [x] **Step 3: Implement grounding helper**
 
 Add helper:
 
@@ -712,7 +726,7 @@ Behavior:
 - If visible people exist, allow the text.
 - Keep existing cleanup rules that remove planning tails and speech prefixes.
 
-- [ ] **Step 4: Verify focused tests pass**
+- [x] **Step 4: Verify focused tests pass**
 
 Run:
 
@@ -733,7 +747,7 @@ Expected:
 - Modify: `agent.py`
 - Test: `tests/test_memory_consolidation.py`
 
-- [ ] **Step 1: Write failing typed memory tests**
+- [x] **Step 1: Write failing typed memory tests**
 
 Add:
 
@@ -761,7 +775,7 @@ def test_add_typed_memory_updates_index(tmp_path):
     assert npc.memory_index[-1]["type"] == "thought"
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -775,7 +789,7 @@ Expected:
 AttributeError: 'Agent' object has no attribute 'add_typed_memory'
 ```
 
-- [ ] **Step 3: Implement typed memory helper**
+- [x] **Step 3: Implement typed memory helper**
 
 In `agent.py`, add:
 
@@ -805,7 +819,7 @@ Compatibility requirement:
 - Clamp importance to `1..10`.
 - Do not break existing `add_memory`.
 
-- [ ] **Step 4: Verify tests pass**
+- [x] **Step 4: Verify tests pass**
 
 Run:
 
@@ -827,7 +841,7 @@ Expected:
 - Modify: `game_engine.py`
 - Test: `tests/test_memory_consolidation.py`
 
-- [ ] **Step 1: Write failing queue tests**
+- [x] **Step 1: Write failing queue tests**
 
 Add:
 
@@ -845,7 +859,7 @@ def test_memory_queue_fifo_by_created_order():
     assert queue.pop_next() is None
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -859,7 +873,7 @@ Expected:
 ModuleNotFoundError: No module named 'engine_memory_queue'
 ```
 
-- [ ] **Step 3: Implement memory queue primitives**
+- [x] **Step 3: Implement memory queue primitives**
 
 Create `engine_memory_queue.py`:
 
@@ -895,7 +909,7 @@ class MemoryQueue:
         return len(self._items)
 ```
 
-- [ ] **Step 4: Verify queue tests pass**
+- [x] **Step 4: Verify queue tests pass**
 
 Run:
 
@@ -917,7 +931,7 @@ Expected:
 - Modify: `engine_memory_queue.py`
 - Test: `tests/test_memory_consolidation.py`
 
-- [ ] **Step 1: Write failing parser test**
+- [x] **Step 1: Write failing parser test**
 
 Add:
 
@@ -947,7 +961,7 @@ def test_parse_memory_consolidation_result():
     assert parsed["memories"][0]["importance"] == 8
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -961,7 +975,7 @@ Expected:
 AttributeError: type object 'Agent' has no attribute 'parse_memory_consolidation_result'
 ```
 
-- [ ] **Step 3: Add consolidation contract**
+- [x] **Step 3: Add consolidation contract**
 
 Add parser and prompt helper in `agent.py`.
 
@@ -994,7 +1008,7 @@ Rules:
 - For werewolf-related facts, write them only if this NPC actually knows or witnessed them.
 - Routine actions can be low importance or omitted.
 
-- [ ] **Step 4: Verify parser tests pass**
+- [x] **Step 4: Verify parser tests pass**
 
 Run:
 
@@ -1015,7 +1029,7 @@ Expected:
 - Modify: `game_engine.py`
 - Test: `tests/test_engine_foundation.py`
 
-- [ ] **Step 1: Write failing action-memory enqueue test**
+- [x] **Step 1: Write failing action-memory enqueue test**
 
 Add:
 
@@ -1044,7 +1058,7 @@ def test_complete_action_enqueues_memory_task(monkeypatch):
     assert "掌握库存情况" in task.payload["expected_result"]
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -1058,7 +1072,7 @@ Expected:
 AttributeError: 'WerewolfGameEngine' object has no attribute '_memory_queue'
 ```
 
-- [ ] **Step 3: Enqueue memory task**
+- [x] **Step 3: Enqueue memory task**
 
 In `game_engine.py`:
 
@@ -1082,7 +1096,7 @@ Payload must include:
 }
 ```
 
-- [ ] **Step 4: Verify action enqueue test**
+- [x] **Step 4: Verify action enqueue test**
 
 Run:
 
@@ -1103,7 +1117,7 @@ Expected:
 - Modify: `game_engine.py`
 - Test: `tests/test_engine_foundation.py`
 
-- [ ] **Step 1: Write failing conversation-memory test**
+- [x] **Step 1: Write failing conversation-memory test**
 
 Add:
 
@@ -1127,7 +1141,7 @@ def test_npc_chat_completion_enqueues_memory_for_both_participants(monkeypatch):
     assert all("五金店门口有人徘徊" in str(task.payload["transcript"]) for task in tasks)
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -1141,7 +1155,7 @@ Expected:
 AttributeError: 'WerewolfGameEngine' object has no attribute '_enqueue_conversation_memory'
 ```
 
-- [ ] **Step 3: Implement conversation memory enqueue**
+- [x] **Step 3: Implement conversation memory enqueue**
 
 Add `_enqueue_conversation_memory(...)` and call it when model-backed conversation finishes and transcript is available.
 
@@ -1151,7 +1165,7 @@ Memory lane should generate:
 - `thought` memory: what this NPC should remember for future planning.
 - Optional `current_goal`: if the conversation changes intent.
 
-- [ ] **Step 4: Verify conversation enqueue test**
+- [x] **Step 4: Verify conversation enqueue test**
 
 Run:
 
@@ -1173,7 +1187,7 @@ Expected:
 - Modify: `agent.py`
 - Test: `tests/test_memory_consolidation.py`
 
-- [ ] **Step 1: Write failing integration test with fake model**
+- [x] **Step 1: Write failing integration test with fake model**
 
 Add:
 
@@ -1210,7 +1224,7 @@ def test_memory_lane_writes_thought_memory(monkeypatch):
     assert arthur.scratch["currently"] == "避免伊莎贝拉继续怀疑自己。"
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -1224,7 +1238,7 @@ Expected:
 AttributeError: 'WerewolfGameEngine' object has no attribute '_process_next_memory_task'
 ```
 
-- [ ] **Step 3: Implement non-blocking memory worker**
+- [x] **Step 3: Implement non-blocking memory worker**
 
 Requirements:
 
@@ -1234,7 +1248,7 @@ Requirements:
 - Do not create blue bubbles from memory lane.
 - Do not change NPC runtime_state to thinking/planning/acting.
 
-- [ ] **Step 4: Verify integration test**
+- [x] **Step 4: Verify integration test**
 
 Run:
 
@@ -1256,7 +1270,7 @@ Expected:
 - Modify: `agent.py`
 - Test: `tests/test_memory_consolidation.py`
 
-- [ ] **Step 1: Write failing test that decision thought enters memory task**
+- [x] **Step 1: Write failing test that decision thought enters memory task**
 
 Add:
 
@@ -1281,7 +1295,7 @@ def test_decision_thought_and_plan_are_in_memory_payload(monkeypatch):
     assert task.payload["expected_result"] == "确保营业前工具齐全"
 ```
 
-- [ ] **Step 2: Implement payload preservation**
+- [x] **Step 2: Implement payload preservation**
 
 Ensure pending action keeps:
 
@@ -1296,7 +1310,7 @@ Ensure pending action keeps:
 
 until memory task payload is created.
 
-- [ ] **Step 3: Verify tests pass**
+- [x] **Step 3: Verify tests pass**
 
 Run:
 
@@ -1319,7 +1333,7 @@ Expected:
 - Test: `tests/test_game_engine_night_loop.py`
 - Test: `tests/test_vote_flow.py`
 
-- [ ] **Step 1: Add event emission tests for public events**
+- [x] **Step 1: Add event emission tests for public events**
 
 Add tests that public announcements are recorded:
 
@@ -1332,7 +1346,7 @@ Expected:
 - Eligible NPCs receive public event in observation packet.
 - Hidden killer identity is not included.
 
-- [ ] **Step 2: Add witnessed hidden fact test**
+- [x] **Step 2: Add witnessed hidden fact test**
 
 Add a test where an NPC directly observes a hidden fact within radius and is added as witness.
 
@@ -1341,7 +1355,7 @@ Expected:
 - The witness can retrieve it.
 - Non-witnesses cannot retrieve it, even within radius.
 
-- [ ] **Step 3: Implement event emissions**
+- [x] **Step 3: Implement event emissions**
 
 Record observation events at these backend moments:
 
@@ -1356,7 +1370,7 @@ Record observation events at these backend moments:
 - Dusk vote result is announced.
 - Night death is publicly announced.
 
-- [ ] **Step 4: Verify public/hidden tests**
+- [x] **Step 4: Verify public/hidden tests**
 
 Run:
 
@@ -1377,7 +1391,7 @@ all tests pass
 - Modify: `ui/templates/index.html`
 - Test: `tests/test_ui_bubble_layout.py`
 
-- [ ] **Step 1: Keep waiting-state separate from real thought**
+- [x] **Step 1: Keep waiting-state separate from real thought**
 
 Add or preserve UI test:
 
@@ -1394,7 +1408,7 @@ Expected:
 - Waiting text can exist only as transient pending display.
 - Logs and memory must use real model `thought`, not waiting text.
 
-- [ ] **Step 2: Ensure logs use the agreed color taxonomy**
+- [x] **Step 2: Ensure logs use the agreed color taxonomy**
 
 Keep current taxonomy:
 
@@ -1403,7 +1417,7 @@ Keep current taxonomy:
 - Gold: system.
 - Red: error, kill, raw/debug model output.
 
-- [ ] **Step 3: Verify UI tests**
+- [x] **Step 3: Verify UI tests**
 
 Run:
 
@@ -1426,7 +1440,7 @@ all tests pass
 - Modify: `CURRENT_SPRINT.md`
 - Modify: `BUG_BACKLOG.md` if this work is started from a bug report.
 
-- [ ] **Step 1: Add stable requirements**
+- [x] **Step 1: Add stable requirements**
 
 Record:
 
@@ -1436,7 +1450,7 @@ Record:
 - Memory lane is the third model lane and must not block action/conversation.
 - Action-status text must be grounded in visible/known people and objects.
 
-- [ ] **Step 2: Update lifecycle doc**
+- [x] **Step 2: Update lifecycle doc**
 
 Add lifecycle:
 
@@ -1447,7 +1461,7 @@ real chat action -> conversation model -> speech bubble -> memory queue
 memory queue -> event/chat/thought/plan memory -> future retrieval
 ```
 
-- [ ] **Step 3: Update sprint status**
+- [x] **Step 3: Update sprint status**
 
 Add this plan path and implementation state.
 
@@ -1457,7 +1471,7 @@ Add this plan path and implementation state.
 
 - No new files.
 
-- [ ] **Step 1: Syntax check**
+- [x] **Step 1: Syntax check**
 
 Run:
 
@@ -1471,7 +1485,7 @@ Expected:
 no output and exit code 0
 ```
 
-- [ ] **Step 2: Focused tests**
+- [x] **Step 2: Focused tests**
 
 Run:
 
@@ -1485,7 +1499,7 @@ Expected:
 all tests pass
 ```
 
-- [ ] **Step 3: Full tests**
+- [x] **Step 3: Full tests**
 
 Run:
 
@@ -1499,7 +1513,7 @@ Expected:
 all tests pass
 ```
 
-- [ ] **Step 4: Browser verification**
+- [x] **Step 4: Browser verification**
 
 Restart service and verify:
 

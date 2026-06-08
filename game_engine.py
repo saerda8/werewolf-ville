@@ -901,6 +901,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self.arena_dict,
             self.go_dict,
         )
+        visible_objects = get_nearby_objects(
+            agent.x,
+            agent.y,
+            radius,
+            self.sector_maze,
+            self.arena_maze,
+            self.go_maze,
+            self.sector_dict,
+            self.arena_dict,
+            self.go_dict,
+        )
         scene = get_tile_scene(
             agent.x,
             agent.y,
@@ -941,6 +952,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             ),
             "nearby_people_text": "\n".join(nearby_people) if nearby_people else "附近没有人",
             "nearby_objects_text": "、".join(nearby_objects) if nearby_objects else "附近没有可互动物件",
+            "reachable_objects_text": "、".join(nearby_objects) if nearby_objects else "附近没有可互动物件",
+            "visible_objects_text": "、".join(visible_objects) if visible_objects else "10格内没有可见物件",
             "scene_text": f"{scene.get('sector', '')} {scene.get('arena', '')}".strip(),
             "observable_events_text": "\n".join(f"- {event.text}" for event in visible_events) if visible_events else "暂时没有新的可见事件",
             "relevant_memory_text": memory_text or "暂时没有检索到相关记忆",
@@ -979,14 +992,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         scene = "\n".join(
             [
                 packet.get("scene_text", ""),
-                f"可见物件：{packet.get('nearby_objects_text', '')}",
+                f"10格内可见物件：{packet.get('visible_objects_text', packet.get('nearby_objects_text', ''))}",
+                f"近身可操作物件：{packet.get('reachable_objects_text', packet.get('nearby_objects_text', ''))}",
                 packet.get("public_world_text", ""),
             ]
         )
         return nearby, scene
 
     def _default_grounded_action_status(self, name: str, agent, packet: dict) -> str:
-        objects = str(packet.get("nearby_objects_text", "") or "")
+        objects = str(packet.get("reachable_objects_text", packet.get("nearby_objects_text", "")) or "")
         current = str(agent.current_action or "").strip()
         if objects and objects != "附近没有可互动物件":
             first_object = objects.split("、")[0].strip()
