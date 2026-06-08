@@ -42,6 +42,15 @@ LLM_PROVIDER_BASE_URLS = {
 LLM_WIRE_APIS = {"chat_completions", "responses"}
 
 
+def _normalize_api_base_url(api_base: str) -> str:
+    return (
+        str(api_base or "")
+        .strip()
+        .replace("http://0.0.0.0", "http://localhost", 1)
+        .replace("https://0.0.0.0", "https://localhost", 1)
+    )
+
+
 def _runtime_llm_override_from_data(data):
     provider = str(data.get("provider", "chat2api") or "chat2api").strip().lower()
     if provider == "":
@@ -55,7 +64,7 @@ def _runtime_llm_override_from_data(data):
 
     api_key = str(data.get("api_key", "") or "").strip()
     model = str(data.get("model", "") or "").strip()
-    api_base = str(data.get("api_base", "") or "").strip()
+    api_base = _normalize_api_base_url(data.get("api_base", ""))
     if provider == "chat2api":
         if not any([api_key, model, api_base]):
             if wire_api == "chat_completions" and not reasoning_effort:

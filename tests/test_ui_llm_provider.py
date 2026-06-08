@@ -61,6 +61,18 @@ def test_chat2api_provider_can_override_local_config():
     }
 
 
+def test_local_api_base_normalizes_unspecified_host():
+    override = _runtime_llm_override_from_data({
+        "provider": "chat2api",
+        "api_key": "sk-local",
+        "model": "relay-model",
+        "api_base": "http://0.0.0.0:8080",
+        "wire_api": "responses",
+    })
+
+    assert override["api_base"] == "http://localhost:8080"
+
+
 def test_chat2api_provider_requires_model_and_base_when_overriding():
     override = _runtime_llm_override_from_data({
         "provider": "chat2api",
