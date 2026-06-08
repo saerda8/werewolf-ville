@@ -969,7 +969,8 @@ def test_vote_rows_support_self_vote_then_hide_all_vote_buttons():
     assert "submitCrowVote(name)" in html
     assert 'socket.emit("submit_crow_vote", {target_name: name});' in html
     assert 'fetch("/api/submit_crow_vote"' in html
-    assert "const crowHasVoted = hasCrowVoted(voteSummary);" in html
+    assert "const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;" in html
+    assert "crowVoteSubmitting = true;" in html
     assert "voteSummary.crow_voted === true" in html
     assert "const showVoteButtons = stage === \"voting\" && !crowHasVoted;" in html
 
@@ -1012,8 +1013,9 @@ def test_night_transition_is_anonymous_fullscreen_and_confirm_only():
 def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # 1) Night transitions check for werewolf and anonymous silver knife stage (fixed 60s)
-    assert "const silverKnifeDuration = 60;" in html
+    # 1) Night transitions follow backend real-action progress for wolf and knife stages
+    assert "sequence.wolf_progress" in html
+    assert "sequence.knife_progress" in html
     assert "sequence.stage_elapsed" in html
     assert "sequence.stage_duration" in html
     assert "displayStageLabel = \"银质小刀阶段\"" in html

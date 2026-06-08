@@ -76,30 +76,31 @@ def test_werewolf_phase_transitions_to_silver_knife_after_kill(monkeypatch):
     assert engine._night_progress["complete"] is False
 
 
-def test_silver_knife_phase_last_full_duration(monkeypatch):
-    """Silver knife phase must run for its full configured duration (60s)."""
+def test_silver_knife_phase_waits_for_real_action(monkeypatch):
+    """Silver knife phase completes only after the holder's real action resolves."""
     engine = _start_night(monkeypatch)
     target_name = engine._eligible_night_targets()[0]
     wolf = engine.agents[engine.werewolf_name]
     victim = engine.agents[target_name]
     wolf.x, wolf.y = victim.x, victim.y
     engine._advance_night_hunt(now=engine.night_hunt.started_at + 1)
+
+    calls = []
+    monkeypatch.setattr(engine, "_advance_silver_knife_action", lambda: calls.append("knife"))
     engine._night_tick()
 
-    assert engine._night_progress["stage"] == "silver_knife"
-
-    engine._night_tick()
     assert engine._night_progress["stage"] == "silver_knife"
     assert engine._night_progress["complete"] is False
+    assert calls == ["knife"]
 
-    engine._silver_knife_phase_started_at -= engine._silver_knife_phase_duration + 1
+    engine._night_progress["knife_complete"] = True
     engine._night_tick()
     assert engine._night_progress["stage"] == "complete"
     assert engine._night_progress["complete"] is True
 
 
-def test_silver_knife_phase_runs_even_when_used(monkeypatch):
-    """Silver knife phase must always run 60s even if knife already used."""
+def test_silver_knife_phase_completes_quickly_when_used(monkeypatch):
+    """If the one-use knife was already spent, the public phase still appears and resolves."""
     engine = _start_night(monkeypatch)
     engine._silver_knife_used = True
     target_name = engine._eligible_night_targets()[0]
@@ -109,11 +110,7 @@ def test_silver_knife_phase_runs_even_when_used(monkeypatch):
     engine._advance_night_hunt(now=engine.night_hunt.started_at + 1)
     engine._night_tick()
 
-    assert engine._night_progress["stage"] == "silver_knife"
     assert engine._silver_knife_night_checked is True
-
-    engine._silver_knife_phase_started_at -= engine._silver_knife_phase_duration + 1
-    engine._night_tick()
     assert engine._night_progress["complete"] is True
 
 
@@ -147,10 +144,8 @@ def test_silver_knife_scrapped_when_holder_killed_first(monkeypatch):
     assert holder_name in engine.dead_list
 
     engine._night_tick()
-    assert engine._night_progress["stage"] == "silver_knife"
     assert engine._silver_knife_scrapped_tonight is True
-
-    engine._maybe_use_silver_knife_at_night()
+    assert engine._night_progress["complete"] is True
     assert engine._silver_knife_target_tonight == ""
 
 
@@ -166,6 +161,7 @@ def test_silver_knife_holder_not_killed_can_use_knife(monkeypatch):
     wolf.x, wolf.y = victim.x, victim.y
 
     engine._kill_night_target(victim_name)
+    monkeypatch.setattr(engine, "_choose_silver_knife_target", lambda holder, candidates: "")
     engine._night_tick()
 
     assert engine._silver_knife_scrapped_tonight is False
@@ -178,7 +174,7 @@ def test_silver_knife_holder_not_killed_can_use_knife(monkeypatch):
 
 
 def test_two_corpses_in_one_night_wolf_and_knife(monkeypatch):
-    """Same night can produce two corpses: wolf kill + silver knife kill."""
+    """Same night can produce two corpses through real wolf and knife actions."""
     engine = _start_night(monkeypatch)
 
     wolf = engine.agents[engine.werewolf_name]
@@ -195,13 +191,18 @@ def test_two_corpses_in_one_night_wolf_and_knife(monkeypatch):
     knife_targets = [n for n, a in engine.agents.items()
                      if a.is_alive and n != holder_name and n != "Crow"]
     knife_victim = knife_targets[0]
+    holder = engine.agents[holder_name]
+    target = engine.agents[knife_victim]
+    holder.x, holder.y = target.x, target.y
 
-    result = engine.use_silver_knife(holder_name, knife_victim)
-    assert result.get("success") is True
+    monkeypatch.setattr(engine, "_choose_silver_knife_target", lambda holder, candidates: knife_victim)
+    engine._night_progress.update({"wolf_complete": True, "stage": "silver_knife"})
+    engine._night_tick()
 
     assert len(engine.bodies) > body_count_before
     assert not engine.agents[villager_name].is_alive
     assert not engine.agents[knife_victim].is_alive
+    assert engine._night_progress["knife_complete"] is True
 
 
 # ============================================================================

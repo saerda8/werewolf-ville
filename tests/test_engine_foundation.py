@@ -3,6 +3,7 @@ import threading
 import time
 
 import game_engine
+from simulation_events import BodyRecord
 from world_config import (
     ACTIVE_CHARACTERS,
     AMBIENT_RESIDENT_DISPLAY_NAMES,
@@ -4347,6 +4348,33 @@ def test_gathering_end_buries_opening_body_before_crow_investigates(monkeypatch)
         if called:
             break
 
+    assert called == ["investigate"]
+
+
+def test_bury_multiple_bodies_before_crow_investigates(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    first = engine.bodies[0]
+    second = BodyRecord(
+        body_id="body_extra",
+        victim_name="Arthur Burton",
+        location="Town Square",
+        x=45,
+        y=36,
+        created_day=engine.day,
+        discovered=True,
+    )
+    engine.bodies.append(second)
+    called = []
+    monkeypatch.setattr(engine, "_start_crow_scene_investigation", lambda: called.append("investigate"))
+
+    engine._bury_bodies_after_gathering()
+    for _ in range(500):
+        engine._move_agents()
+        if first.buried and second.buried and called:
+            break
+
+    assert first.buried is True
+    assert second.buried is True
     assert called == ["investigate"]
 
 

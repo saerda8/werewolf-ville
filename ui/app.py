@@ -570,8 +570,16 @@ def on_test_complete_daily_interviews():
 @socketio.on("submit_dusk_statement")
 def on_submit_dusk_statement(data):
     if game:
-        result = game.submit_dusk_statement(data.get("statement", ""))
-        emit("dusk_statement_result", result)
+        sid = request.sid
+
+        def _do_submit():
+            try:
+                result = game.submit_dusk_statement(data.get("statement", ""))
+                socketio.emit("dusk_statement_result", result, room=sid)
+            except Exception as exc:
+                socketio.emit("dusk_statement_result", {"error": str(exc)}, room=sid)
+
+        threading.Thread(target=_do_submit, daemon=True).start()
 
 
 @socketio.on("enter_night")
@@ -596,7 +604,16 @@ def on_submit_crow_vote(data):
 @socketio.on("confirm_vote_result")
 def on_confirm_vote_result():
     if game:
-        emit("confirm_vote_result_response", game.confirm_vote_result())
+        sid = request.sid
+
+        def _do_confirm():
+            try:
+                result = game.confirm_vote_result()
+                socketio.emit("confirm_vote_result_response", result, room=sid)
+            except Exception as exc:
+                socketio.emit("confirm_vote_result_response", {"error": str(exc)}, room=sid)
+
+        threading.Thread(target=_do_confirm, daemon=True).start()
 
 
 @socketio.on("confirm_night_transition")

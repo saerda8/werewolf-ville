@@ -23,7 +23,7 @@ body.phase-locked #game-container { pointer-events: none; }
 }
 #phase-atmosphere.night {
   opacity: 1;
-  background: rgba(2, 7, 22, 0.76);
+  background: rgba(6, 17, 48, 0.36);
 }
 
 #dusk-stage-label {
@@ -58,14 +58,15 @@ body.phase-locked #game-container { pointer-events: none; }
 #night-transition-overlay {
   display: none; position: fixed; inset: 0; z-index: 1200;
   align-items: center; justify-content: center; pointer-events: all;
-  background: radial-gradient(circle at 50% 30%, rgba(25, 44, 87, 0.92), rgba(1, 5, 18, 0.98) 68%);
+  background: radial-gradient(circle at 50% 50%, rgba(12, 28, 65, 0.6) 0%, rgba(3, 8, 22, 0.8) 85%);
 }
 #night-transition-overlay.show { display: flex; }
 .night-transition-card {
   width: min(520px, calc(100vw - 32px)); padding: 30px;
-  border: 1px solid rgba(150, 180, 230, 0.4); border-radius: 18px;
-  background: rgba(5, 13, 31, 0.9); text-align: center;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(150, 180, 230, 0.25); border-radius: 18px;
+  background: rgba(10, 22, 50, 0.65); text-align: center;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.1);
 }
 .night-actors { display: flex; justify-content: center; gap: 20px; margin: 24px 0; }
 .night-actor {
@@ -998,6 +999,8 @@ let locallyClearedHintTargets = new Set();
 let lastCheckedDay = null;
 let nightCameraLocked = false;
 let crowVoteSubmitting = false;
+let duskStatementSubmitting = false;
+let nightTransitionConfirming = false;
 let duskCameraPanKey = "";
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
 const BUBBLE_LIFETIME_SECONDS = 6;
@@ -1122,8 +1125,13 @@ function initSocket() {
   });
   socket.on("dusk_statement_result", (resp) => {
     const submit = document.getElementById("dusk-statement-submit");
-    if (submit) submit.disabled = false;
+    const input = document.getElementById("dusk-statement-input");
+    const panel = document.getElementById("dusk-statement-panel");
     if (resp && resp.error) {
+      if (submit) submit.disabled = false;
+      if (input) input.disabled = false;
+      if (panel) panel.style.display = "flex";
+      duskStatementSubmitting = false;
       addChatMsg("系统", resp.error, true);
     }
     fetchCurrentState();
@@ -1137,8 +1145,11 @@ function initSocket() {
     fetchCurrentState();
   });
   socket.on("crow_vote_result", (resp) => {
-    if (resp && resp.error && gameState && gameState.vote_summary) {
-      gameState.vote_summary.crow_vote_submitted = false;
+    if (resp && resp.error) {
+      crowVoteSubmitting = false;
+      if (gameState && gameState.vote_summary) {
+        gameState.vote_summary.crow_vote_submitted = false;
+      }
       addChatMsg("系统", resp.error, true);
     }
     fetchCurrentState();
@@ -1150,7 +1161,20 @@ function initSocket() {
     fetchCurrentState();
   });
   socket.on("confirm_night_transition_response", (resp) => {
+    const btn = document.getElementById("night-finish-confirm");
     if (resp && resp.error) {
+      if (btn) btn.disabled = false;
+      nightTransitionConfirming = false;
+      addChatMsg("系统", resp.error, true);
+    }
+    fetchCurrentState();
+  });
+  socket.on("confirm_vote_result_response", (resp) => {
+    const btn = document.getElementById("confirm-vote-result");
+    const panel = document.getElementById("voting-panel");
+    if (resp && resp.error) {
+      if (btn) btn.disabled = false;
+      if (panel) panel.style.display = "flex";
       addChatMsg("系统", resp.error, true);
     }
     fetchCurrentState();
@@ -1487,11 +1511,16 @@ function completeDailyInterviewsForTest() {
 }
 
 function submitDuskStatement() {
+  if (duskStatementSubmitting) return;
   const input = document.getElementById("dusk-statement-input");
   const submit = document.getElementById("dusk-statement-submit");
+  const panel = document.getElementById("dusk-statement-panel");
   const statement = (input && input.value ? input.value : "").trim();
   if (!statement) return;
+  duskStatementSubmitting = true;
   if (submit) submit.disabled = true;
+  if (input) input.disabled = true;
+  if (panel) panel.style.display = "none";
   if (socket && socket.connected) {
     socket.emit("submit_dusk_statement", { statement });
   } else {
@@ -1499,8 +1528,24 @@ function submitDuskStatement() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ statement })
-    }).then(() => fetchCurrentState()).finally(() => {
+    })
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.error) {
+        addChatMsg("系统", resp.error, true);
+        if (submit) submit.disabled = false;
+        if (input) input.disabled = false;
+        if (panel) panel.style.display = "flex";
+        duskStatementSubmitting = false;
+      }
+      fetchCurrentState();
+    })
+    .catch(err => {
       if (submit) submit.disabled = false;
+      if (input) input.disabled = false;
+      if (panel) panel.style.display = "flex";
+      duskStatementSubmitting = false;
+      fetchCurrentState();
     });
   }
 }
@@ -1587,27 +1632,81 @@ function submitCrowVote(name) {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({target_name: name})
-    }).then(() => fetchCurrentState());
+    })
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.error) {
+        crowVoteSubmitting = false;
+        if (gameState && gameState.vote_summary) {
+          gameState.vote_summary.crow_vote_submitted = false;
+        }
+        addChatMsg("系统", resp.error, true);
+      }
+      fetchCurrentState();
+    })
+    .catch(err => {
+      crowVoteSubmitting = false;
+      if (gameState && gameState.vote_summary) {
+        gameState.vote_summary.crow_vote_submitted = false;
+      }
+      fetchCurrentState();
+    });
   }
 }
 
 function confirmVoteResult() {
   if (!["results", "result"].includes(duskStage(gameState || {}))) return;
+  const btn = document.getElementById("confirm-vote-result");
+  const panel = document.getElementById("voting-panel");
+  if (btn) btn.disabled = true;
+  if (panel) panel.style.display = "none";
   if (socket && socket.connected) {
     socket.emit("confirm_vote_result");
   } else {
-    fetch("/api/confirm_vote_result", {method: "POST"}).then(() => fetchCurrentState());
+    fetch("/api/confirm_vote_result", {method: "POST"})
+      .then(r => r.json())
+      .then(resp => {
+        if (resp && resp.error) {
+          addChatMsg("系统", resp.error, true);
+          if (btn) btn.disabled = false;
+          if (panel) panel.style.display = "flex";
+        }
+        fetchCurrentState();
+      })
+      .catch(err => {
+        if (btn) btn.disabled = false;
+        if (panel) panel.style.display = "flex";
+        fetchCurrentState();
+      });
   }
 }
 
 function confirmNightTransition() {
+  if (nightTransitionConfirming) return;
+  const btn = document.getElementById("night-finish-confirm");
+  if (btn) btn.disabled = true;
+  nightTransitionConfirming = true;
   if (socket && socket.connected) {
     socket.emit("confirm_night_transition");
     setTimeout(() => {
       fetchCurrentState();
     }, 1000);
   } else {
-    fetch("/api/confirm_night_transition", {method: "POST"}).then(() => fetchCurrentState());
+    fetch("/api/confirm_night_transition", {method: "POST"})
+      .then(r => r.json())
+      .then(resp => {
+        if (resp && resp.error) {
+          addChatMsg("系统", resp.error, true);
+          if (btn) btn.disabled = false;
+          nightTransitionConfirming = false;
+        }
+        fetchCurrentState();
+      })
+      .catch(err => {
+        if (btn) btn.disabled = false;
+        nightTransitionConfirming = false;
+        fetchCurrentState();
+      });
   }
 }
 
@@ -1616,19 +1715,21 @@ function renderNightTransition(state) {
   if (!overlay) return;
   const sequence = state.night_transition || state.night_sequence || state.night_progress || {};
   const stage = String(sequence.stage || sequence.current_stage || sequence.status || "").toLowerCase();
-  const finished = sequence.complete === true || sequence.completed === true || ["complete", "completed", "finished", "night_end"].includes(stage) || state.phase !== "night";
-  const active = state.phase === "night" || !!sequence.active || (!!stage && !finished);
+  const finished = sequence.complete === true || sequence.can_confirm === true || sequence.completed === true || ["complete", "completed", "finished", "night_end"].includes(stage);
+  const active = state.phase === "night";
   overlay.classList.toggle("show", active);
-  if (!active) return;
+  if (!active) {
+    nightTransitionConfirming = false;
+    return;
+  }
 
-  const silverKnifeDuration = 60;
   const elapsed = Number(sequence.stage_elapsed ?? sequence.elapsed ?? state.night_elapsed ?? 0);
   const duration = Math.max(1, Number(sequence.stage_duration ?? sequence.duration ?? state.night_duration ?? 120));
 
   let displayStageLabel = "夜间行动进行中";
   let progress = Math.min(100, (elapsed / duration) * 100);
-  let wolfProgress = progress;
-  let knifeProgress = 0;
+  let wolfProgress = Number.isFinite(Number(sequence.wolf_progress)) ? Number(sequence.wolf_progress) : progress;
+  let knifeProgress = Number.isFinite(Number(sequence.knife_progress)) ? Number(sequence.knife_progress) : 0;
   const wolfActors = document.querySelectorAll("#night-transition-overlay .night-actor.wolf");
   const knifeActor = document.querySelector("#night-transition-overlay .night-actor.knife");
 
@@ -1641,8 +1742,7 @@ function renderNightTransition(state) {
     if (knifeActor) knifeActor.classList.remove("active");
   } else if (stage === "silver_knife" || stage === "knife") {
     displayStageLabel = "银质小刀阶段";
-    wolfProgress = 100;
-    knifeProgress = progress;
+    wolfProgress = Math.max(100, wolfProgress);
     wolfActors.forEach(el => el.classList.remove("active"));
     if (knifeActor) knifeActor.classList.add("active");
   } else {
@@ -1661,14 +1761,26 @@ function renderNightTransition(state) {
   if (knifeFill) knifeFill.style.width = `${Math.max(0, Math.min(100, knifeProgress))}%`;
   document.getElementById("night-stage-text").textContent = finished ? "夜晚结束" : displayStageLabel;
   document.getElementById("night-progress-text").textContent = finished ? "所有匿名行动已结束" : "只显示匿名进度，不展示目标与行动者";
-  document.getElementById("night-finish-confirm").style.display = finished ? "block" : "none";
+
+  const btn = document.getElementById("night-finish-confirm");
+  if (btn) {
+    btn.style.display = finished ? "block" : "none";
+    if (finished) {
+      btn.disabled = nightTransitionConfirming;
+    } else {
+      btn.disabled = false;
+    }
+  }
 }
 
 function renderDuskVotingFlow(state) {
   const voteSummary = state.vote_summary || {};
   const stage = duskStage(state);
-  if (stage !== "voting" || hasCrowVoted(voteSummary)) {
+  if (stage !== "voting") {
     crowVoteSubmitting = false;
+  }
+  if (stage !== "crow_statement" && stage !== "crow_input") {
+    duskStatementSubmitting = false;
   }
   const discussionPanel = document.getElementById("dusk-statement-panel");
   const votingPanel = document.getElementById("voting-panel");
@@ -1684,9 +1796,16 @@ function renderDuskVotingFlow(state) {
     if (control && gameplayLocked) control.disabled = true;
   });
 
-  if (discussionPanel) discussionPanel.style.display = isDusk && crowInputStage ? "block" : "none";
-  if (statementInput) statementInput.style.display = crowInputStage ? "block" : "none";
-  if (statementSubmit) statementSubmit.style.display = crowInputStage ? "block" : "none";
+  const showDuskPanel = isDusk && crowInputStage && !duskStatementSubmitting;
+  if (discussionPanel) discussionPanel.style.display = showDuskPanel ? "flex" : "none";
+  if (statementInput) {
+    statementInput.style.display = crowInputStage ? "block" : "none";
+    statementInput.disabled = duskStatementSubmitting;
+  }
+  if (statementSubmit) {
+    statementSubmit.style.display = crowInputStage ? "block" : "none";
+    statementSubmit.disabled = duskStatementSubmitting;
+  }
   const stageLabel = document.getElementById("dusk-stage-label");
   const labels = {
     gathering: "全员正在前往广场集合",
@@ -1709,13 +1828,13 @@ function renderDuskVotingFlow(state) {
   }
 
   if (!votingPanel) return;
-  votingPanel.style.display = isDusk && votingStages.includes(stage) ? "block" : "none";
+  votingPanel.style.display = isDusk && votingStages.includes(stage) ? "flex" : "none";
   if (!isDusk || !votingStages.includes(stage)) return;
 
   const participants = eligibleDuskParticipants(state);
   const counts = normalizeVoteCounts(voteSummary);
   const winner = voteSummary.winner || voteSummary.jail_target || "";
-  const crowHasVoted = hasCrowVoted(voteSummary);
+  const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;
   const showVoteButtons = stage === "voting" && !crowHasVoted;
   const abstainers = [];
   Object.entries(voteSummary.votes || {}).forEach(([voter, vote]) => {
@@ -4810,7 +4929,7 @@ function update(time, delta) {
   if (isNight) {
     nightOverlay.setVisible(true);
     nightOverlay.clear();
-    nightOverlay.fillStyle(0x000033, 0.55);
+    nightOverlay.fillStyle(0x061330, 0.28);
     nightOverlay.fillRect(
       cam.scrollX, cam.scrollY,
       cam.width, cam.height

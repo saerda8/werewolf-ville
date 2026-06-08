@@ -612,12 +612,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._silver_knife_used = False        # hidden good-side knife is one-use
 
         self._silver_knife_night_checked = False
-        # Silver knife phase always records 60s regardless of outcome
+        # Silver knife is resolved by a real in-scene action during night.
         self._silver_knife_phase_started_at = 0.0
-        self._silver_knife_phase_duration = 60.0  # fixed 60s display
+        self._silver_knife_phase_duration = 60.0  # legacy display fallback only
         self._silver_knife_scrapped_tonight = False  # True if holder killed by wolf first
         self._silver_knife_target_tonight = ""       # who the knife was used on tonight
         self._silver_knife_killed_werewolf_tonight = False  # True if knife killed a werewolf
+        self._silver_knife_action = {}
 
         # Track which silver objectives are completed today
 
@@ -1853,6 +1854,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
     def _bury_bodies_after_gathering(self) -> None:
 
         """散会后，警长 Crow 把前置尸体拖到左边公园埋葬，并说一句说明"""
+        if getattr(self, "_body_burial", None):
+            return
 
         crow = self.agents.get(self.detective_name)
 
@@ -2131,6 +2134,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 crow.runtime_state = "idle"
 
                 self._body_burial = None
+
+                remaining = [
+                    b for b in self.bodies
+                    if not getattr(b, "buried", False) and not getattr(b, "burying", False)
+                ]
+                if remaining:
+                    self._bury_bodies_after_gathering()
+                    return
 
                 self._start_crow_scene_investigation()
 
@@ -3674,6 +3685,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._silver_knife_scrapped_tonight = False
         self._silver_knife_target_tonight = ""
         self._silver_knife_killed_werewolf_tonight = False
+        self._silver_knife_action = {}
 
         self._day4_no_free_activity = False
         self._pending_silver_wolf = ""
@@ -3930,52 +3942,49 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
     def _night_tick(self):
-        """Night phase machine: werewolf hunt → silver knife (60s) → complete.
+        """Night phase machine driven by real in-scene actions.
 
-        Stage 1 (werewolf): Wolf selects targets and kills. Advances until hunt completes.
-        Stage 2 (silver_knife): Always runs for exactly _silver_knife_phase_duration seconds,
-        regardless of whether the silver knife holder is dead, knife already used,
-        or holder chooses not to kill. The UI must not leak secret info by skipping this phase.
-        Stage 3 (complete): Night done, waiting for player confirmation.
+        The night is complete only after the werewolf kill action finishes and
+        the hidden silver-knife action either finishes, is skipped, or is invalid.
         """
-        progress = getattr(self, "_night_progress", {})
-        current_stage = progress.get("stage", "werewolf")
+        progress = getattr(self, "_night_progress", {}) or {}
+        progress.setdefault("active", True)
+        progress.setdefault("stage", "werewolf")
+        progress.setdefault("complete", False)
+        progress.setdefault("wolf_complete", False)
+        progress.setdefault("knife_complete", False)
 
-        if current_stage == "werewolf":
+        if progress.get("complete"):
+            self._night_progress = progress
+            return
+
+        if not progress.get("wolf_complete"):
             self._advance_night_hunt()
             hunt = getattr(self, "night_hunt", None)
-            # Transition to silver_knife stage when hunt completes (killed or deadline reached)
             if hunt and hunt.killed_name:
-                # Wolf has killed. Check if the victim was the silver knife holder.
+                progress["wolf_complete"] = True
+                progress["wolf_victim"] = hunt.killed_name
+                progress["stage"] = "silver_knife"
                 if hunt.killed_name == self._silver_knife_holder and not self._silver_knife_used:
                     self._silver_knife_scrapped_tonight = True
-                    self._log("⚠️ 银质小刀阶段仍会照常记录。", "system")
-                # Move to silver knife stage
+                    self._log("⚠️ 银质小刀持有者已在狼人行动中死亡，小刀失效。", "system")
                 self._silver_knife_phase_started_at = time.time()
-                progress.update({"active": True, "stage": "silver_knife", "complete": False})
-                self._night_progress = progress
-                self._log("🔪 银质小刀阶段开始（无论持刀者是否存活或是否使用，此阶段都会记录60秒）")
-                self._maybe_use_silver_knife_at_night()
+                self._log("🔪 银质小刀行动开始。", "system")
             else:
-                # Check if overall night_duration time has passed (wolf phase timeout fallback)
-                elapsed = time.time() - self.night_start_time
-                if elapsed >= self.night_duration:
-                    # Timeout: force the wolf kill
-                    self._advance_night_hunt(now=self.night_hunt.deadline_at if self.night_hunt else time.time())
-                    self._silver_knife_phase_started_at = time.time()
-                    progress.update({"active": True, "stage": "silver_knife", "complete": False})
-                    self._night_progress = progress
-                    self._maybe_use_silver_knife_at_night()
-
-        elif current_stage == "silver_knife":
-            # Silver knife phase: always runs for _silver_knife_phase_duration seconds
-            knife_elapsed = time.time() - self._silver_knife_phase_started_at
-            # Execute the knife logic at the start of this phase (one-shot)
-            self._maybe_use_silver_knife_at_night()
-            if knife_elapsed >= self._silver_knife_phase_duration:
-                progress.update({"active": False, "stage": "complete", "complete": True})
                 self._night_progress = progress
-                self._log("🌙 夜晚结束（所有阶段已完成）")
+                return
+            self._night_progress = progress
+
+        if not progress.get("knife_complete"):
+            progress["stage"] = "silver_knife"
+            self._night_progress = progress
+            self._advance_silver_knife_action()
+            progress = getattr(self, "_night_progress", {}) or progress
+
+        if progress.get("wolf_complete") and progress.get("knife_complete"):
+            progress.update({"active": False, "stage": "complete", "complete": True})
+            self._night_progress = progress
+            self._log("🌙 夜晚结束（真实夜间行动已完成）")
 
     def confirm_night_transition(self) -> dict:
         with self._lock:
@@ -4612,31 +4621,62 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-    def _maybe_use_silver_knife_at_night(self) -> None:
-        """Attempt to use silver knife at night. Runs exactly once per night.
+    def _complete_silver_knife_action(self, reason: str = "") -> None:
+        action = dict(getattr(self, "_silver_knife_action", {}) or {})
+        action["status"] = "complete"
+        action["complete"] = True
+        if reason:
+            action["reason"] = reason
+        self._silver_knife_action = action
+        progress = getattr(self, "_night_progress", {}) or {}
+        progress["knife_complete"] = True
+        progress["knife_progress"] = 100
+        self._night_progress = progress
+        self._log("🗡️ 银质小刀行动完成。", "system")
 
-        If the holder was killed by the werewolf earlier this same night, the knife
-        is scrapped (cannot be used) but the phase still displays for 60s.
-        If the knife was already used in a previous night, it cannot be used again.
-        """
+    def _choose_silver_knife_target(self, holder_name: str, candidates: list[str]) -> str:
+        clue_targets = [
+            clue.related_person for clue in getattr(self, "clues", [])
+            if clue.related_person in candidates
+        ]
+        fallback = clue_targets[-1] if clue_targets else self._rng.choice(candidates)
+        target_names = {name: name for name in candidates}
+        target_names.update({display_name_for_person(name): name for name in candidates})
+        try:
+            target_list = "、".join(display_name_for_person(name) for name in candidates)
+            system_prompt = (
+                f"你是{display_name_for_person(holder_name)}。你秘密持有一次性的银质小刀。"
+                "现在是夜晚，你可以选择杀死一名可疑村民，也可以选择不用。"
+                "只输出一个可选名字，或输出“不用”。不要解释。"
+            )
+            user_prompt = f"可选目标：{target_list}\n如果你没有把握，可以输出“不用”。"
+            raw = chat_for_agent(holder_name, system_prompt, user_prompt, temperature=0.4, max_retries=0, priority=True)
+            compact = str(raw or "").strip()
+            if any(word in compact for word in ("不用", "放弃", "不杀", "跳过")):
+                return ""
+            for visible, internal in target_names.items():
+                if visible and visible in compact:
+                    return internal
+        except Exception as exc:
+            self._log(f"[silver knife target fallback] {exc}", "system")
+        return fallback
+
+    def _prepare_silver_knife_action(self) -> None:
         if self._silver_knife_night_checked:
             return
         self._silver_knife_night_checked = True
+        progress = getattr(self, "_night_progress", {}) or {}
 
         if self._silver_knife_used:
-            self._log("🗡️ 银质小刀阶段完成。", "system")
+            self._silver_knife_action = {"status": "skipped", "complete": True, "reason": "used"}
+            self._complete_silver_knife_action("used")
             return
 
         holder_name = self._silver_knife_holder
         holder = self.agents.get(holder_name) if holder_name else None
-
-        # Check if holder was killed by wolf earlier tonight
-        if self._silver_knife_scrapped_tonight:
-            self._log("🗡️ 银质小刀阶段完成。", "system")
-            return
-
-        if not holder or not holder.is_alive or holder_name in self._jailed:
-            self._log("🗡️ 银质小刀阶段完成。", "system")
+        if self._silver_knife_scrapped_tonight or not holder or not holder.is_alive or holder_name in self._jailed:
+            self._silver_knife_action = {"status": "skipped", "complete": True, "reason": "unavailable"}
+            self._complete_silver_knife_action("unavailable")
             return
 
         candidates = [
@@ -4647,31 +4687,102 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             and name not in self._jailed
         ]
         if not candidates:
-            self._log("🗡️ 银质小刀阶段完成。", "system")
+            self._silver_knife_action = {"status": "skipped", "complete": True, "reason": "no_target"}
+            self._complete_silver_knife_action("no_target")
             return
 
-        clue_targets = [
-            clue.related_person for clue in getattr(self, "clues", [])
-            if clue.related_person in candidates
-        ]
-        if clue_targets:
-            target_name = clue_targets[-1]
-        else:
-            target_name = self._rng.choice(candidates)
+        target_name = self._choose_silver_knife_target(holder_name, candidates)
+        if not target_name:
+            self._silver_knife_action = {"status": "skipped", "complete": True, "reason": "declined"}
+            self._complete_silver_knife_action("declined")
+            return
 
-        result = self.use_silver_knife(holder_name, target_name)
-        if result.get("success"):
-            self._silver_knife_target_tonight = target_name
-            if target_name in self.werewolf_names:
-                self._silver_knife_killed_werewolf_tonight = True
-                # Mark the body as a werewolf corpse
-                for body in reversed(self.bodies):
-                    if body.victim_name == target_name:
-                        body.is_werewolf_corpse = True
-                        break
-            self._log("🗡️ 银质小刀阶段完成。", "system")
-        else:
-            self._log("🗡️ 银质小刀阶段完成。", "system")
+        target = self.agents.get(target_name)
+        if not target or not target.is_alive:
+            self._silver_knife_action = {"status": "skipped", "complete": True, "reason": "target_unavailable"}
+            self._complete_silver_knife_action("target_unavailable")
+            return
+
+        approach = self._path_adjacent_to(
+            (holder.x, holder.y),
+            (target.x, target.y),
+            blocked=self._occupied_tiles({holder_name, target_name}),
+        )
+        if not approach:
+            self._silver_knife_action = {"status": "skipped", "complete": True, "reason": "unreachable"}
+            self._complete_silver_knife_action("unreachable")
+            return
+
+        adj_x, adj_y, path = approach
+        holder.target_x, holder.target_y = adj_x, adj_y
+        self.agent_paths[holder_name] = path
+        holder.current_action = "夜间持银质小刀行动"
+        holder.current_emoji = "🗡️"
+        holder.runtime_state = "moving" if path else "acting"
+        initial_path_len = max(1, len(path))
+        self._silver_knife_action = {
+            "status": "moving",
+            "complete": False,
+            "holder": holder_name,
+            "target": target_name,
+            "initial_path_len": initial_path_len,
+        }
+        progress["knife_complete"] = False
+        progress["knife_progress"] = 0
+        self._night_progress = progress
+
+    def _advance_silver_knife_action(self) -> None:
+        self._prepare_silver_knife_action()
+        action = getattr(self, "_silver_knife_action", {}) or {}
+        if action.get("complete"):
+            return
+
+        holder_name = action.get("holder", "")
+        target_name = action.get("target", "")
+        holder = self.agents.get(holder_name)
+        target = self.agents.get(target_name)
+        if not holder or not holder.is_alive or not target or not target.is_alive:
+            self._complete_silver_knife_action("actor_or_target_unavailable")
+            return
+
+        if abs(holder.x - target.x) + abs(holder.y - target.y) <= 1:
+            result = self.use_silver_knife(holder_name, target_name)
+            if result.get("success"):
+                self._silver_knife_target_tonight = target_name
+                if target_name in self.werewolf_names:
+                    self._silver_knife_killed_werewolf_tonight = True
+                    for body in reversed(self.bodies):
+                        if body.victim_name == target_name:
+                            body.is_werewolf_corpse = True
+                            break
+            self._complete_silver_knife_action("arrived")
+            return
+
+        move_steps = CONFIG.get("night_behavior", {}).get("night_move_steps_per_tick", 3)
+        for _ in range(move_steps):
+            self._move_agents()
+
+        remaining = len(self.agent_paths.get(holder_name, []))
+        initial = max(1, int(action.get("initial_path_len") or remaining or 1))
+        progress = getattr(self, "_night_progress", {}) or {}
+        progress["knife_progress"] = max(0, min(99, round((initial - remaining) * 100 / initial)))
+        self._night_progress = progress
+
+        if abs(holder.x - target.x) + abs(holder.y - target.y) <= 1:
+            result = self.use_silver_knife(holder_name, target_name)
+            if result.get("success"):
+                self._silver_knife_target_tonight = target_name
+                if target_name in self.werewolf_names:
+                    self._silver_knife_killed_werewolf_tonight = True
+                    for body in reversed(self.bodies):
+                        if body.victim_name == target_name:
+                            body.is_werewolf_corpse = True
+                            break
+            self._complete_silver_knife_action("arrived")
+
+    def _maybe_use_silver_knife_at_night(self) -> None:
+        """Compatibility wrapper for tests and older callers."""
+        self._advance_silver_knife_action()
 
 
 
@@ -4718,8 +4829,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._silver_knife_scrapped_tonight = False
         self._silver_knife_target_tonight = ""
         self._silver_knife_killed_werewolf_tonight = False
+        self._silver_knife_action = {}
 
-        self._night_progress = {"active": True, "stage": "werewolf", "complete": False}
+        self._night_progress = {
+            "active": True,
+            "stage": "werewolf",
+            "complete": False,
+            "wolf_complete": False,
+            "knife_complete": False,
+        }
 
         self._log("夜幕降临...")
         if (
@@ -10423,18 +10541,36 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         progress = dict(getattr(self, "_night_progress", {}) or {})
         stage = str(progress.get("stage") or "werewolf")
         now = time.time()
+        hunt = getattr(self, "night_hunt", None)
+        wolf_progress = 100 if progress.get("wolf_complete") else 0
+        if hunt and not progress.get("wolf_complete"):
+            wolf = self.agents.get(self.werewolf_name)
+            target = self.agents.get(getattr(hunt, "target_name", ""))
+            if wolf and target:
+                remaining = abs(wolf.x - target.x) + abs(wolf.y - target.y)
+                path_remaining = len(self.agent_paths.get(self.werewolf_name, []))
+                if path_remaining:
+                    remaining = path_remaining
+                initial = max(1, int(progress.get("wolf_initial_distance") or remaining or 1))
+                if remaining > initial:
+                    initial = remaining
+                    progress["wolf_initial_distance"] = initial
+                    self._night_progress = progress
+                wolf_progress = max(0, min(99, round((initial - remaining) * 100 / initial)))
+        knife_progress = 100 if progress.get("knife_complete") else int(progress.get("knife_progress", 0) or 0)
         if stage == "silver_knife":
             started_at = getattr(self, "_silver_knife_phase_started_at", 0.0) or now
             stage_elapsed = max(0, now - started_at)
-            stage_duration = getattr(self, "_silver_knife_phase_duration", 60.0)
+            action = getattr(self, "_silver_knife_action", {}) or {}
+            stage_duration = max(1.0, float(action.get("initial_path_len") or 1))
         elif stage == "complete" or progress.get("complete"):
-            stage_elapsed = getattr(self, "_silver_knife_phase_duration", 60.0)
-            stage_duration = getattr(self, "_silver_knife_phase_duration", 60.0)
+            stage_elapsed = 1.0
+            stage_duration = 1.0
             stage = "complete"
         else:
             night_started_at = getattr(self, "night_start_time", None) or now
             stage_elapsed = max(0, now - night_started_at)
-            stage_duration = max(1.0, getattr(self, "night_duration", 300) - getattr(self, "_silver_knife_phase_duration", 60.0))
+            stage_duration = max(1.0, getattr(self, "night_duration", 300))
             stage = "werewolf"
         return {
             "active": bool(progress.get("active", self.phase == GamePhase.NIGHT)),
@@ -10442,6 +10578,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             "stage_elapsed": round(stage_elapsed),
             "stage_duration": round(max(1.0, stage_duration)),
             "complete": bool(progress.get("complete")),
+            "can_confirm": bool(progress.get("complete")),
+            "wolf_complete": bool(progress.get("wolf_complete")),
+            "knife_complete": bool(progress.get("knife_complete")),
+            "wolf_progress": wolf_progress,
+            "knife_progress": knife_progress,
         }
 
 

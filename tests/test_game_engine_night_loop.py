@@ -98,17 +98,12 @@ def test_night_waits_for_player_confirmation_before_dawn(monkeypatch):
     engine = _start_hunt(monkeypatch)
     monkeypatch.setattr(engine, "_generate_daily_plans", lambda: None)
     monkeypatch.setattr(game_engine.Agent, "compress_memory", lambda self, day: None)
-    engine.night_start_time -= engine.night_duration + 1
+    engine._silver_knife_used = True
 
+    engine._advance_night_hunt(now=engine.night_hunt.deadline_at)
     engine._night_tick()
 
     assert engine.phase == game_engine.GamePhase.NIGHT
-    assert engine._night_progress["stage"] == "silver_knife"
-    assert engine._night_progress["complete"] is False
-
-    engine._silver_knife_phase_started_at -= engine._silver_knife_phase_duration + 1
-    engine._night_tick()
-
     assert engine._night_progress["complete"] is True
     assert engine.confirm_night_transition()["success"] is True
     assert engine.phase == game_engine.GamePhase.DAY
@@ -117,11 +112,39 @@ def test_night_waits_for_player_confirmation_before_dawn(monkeypatch):
 def test_silver_knife_phase_does_not_run_before_wolf_phase(monkeypatch):
     engine = _start_hunt(monkeypatch)
     calls = []
-    monkeypatch.setattr(engine, "_maybe_use_silver_knife_at_night", lambda: calls.append("knife"))
+    monkeypatch.setattr(engine, "_advance_silver_knife_action", lambda: calls.append("knife"))
 
     engine._night_tick()
     assert calls == []
 
-    engine.night_start_time -= engine.night_duration + 1
+    engine._advance_night_hunt(now=engine.night_hunt.deadline_at)
     engine._night_tick()
     assert calls == ["knife"]
+
+
+def test_silver_knife_kills_after_reaching_target(monkeypatch):
+    engine = _start_hunt(monkeypatch)
+    holder_name = engine._silver_knife_holder
+    assert holder_name
+    holder = engine.agents[holder_name]
+    target_name = next(
+        name for name, agent in engine.agents.items()
+        if name not in {holder_name, "Crow"} and agent.is_alive
+    )
+    target = engine.agents[target_name]
+    holder.x, holder.y = target.x, target.y
+
+    engine._night_progress = {
+        "active": True,
+        "stage": "silver_knife",
+        "complete": False,
+        "wolf_complete": True,
+        "knife_complete": False,
+    }
+    monkeypatch.setattr(engine, "_choose_silver_knife_target", lambda holder, candidates: target_name)
+
+    engine._advance_silver_knife_action()
+
+    assert target_name in engine.dead_list
+    assert engine.bodies[-1].victim_name == target_name
+    assert engine._night_progress["knife_complete"] is True
