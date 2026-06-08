@@ -731,7 +731,7 @@ body.phase-locked #game-container { pointer-events: none; }
   <h1>狼人小镇</h1>
   <p>弗洛尼西斯小镇的秘密</p>
   <div class="start-options">
-    <select id="llm-provider" onchange="updateProviderFields()">
+    <select id="llm-provider" onchange="switchLlmProvider()">
       <option value="chat2api">本地 Chat2API（默认）</option>
       <option value="openrouter">OpenRouter</option>
       <option value="openai">OpenAI Cloud</option>
@@ -1483,6 +1483,21 @@ const DEFAULT_RUNTIME_LLM_OPTIONS = {
   wire_api: "responses",
   reasoning_effort: "",
 };
+const LLM_PROVIDER_DEFAULT_OPTIONS = Object.fromEntries(
+  Object.keys(LLM_PROVIDER_BASE_URLS).map((provider) => [
+    provider,
+    {
+      provider,
+      api_key: "",
+      model: provider === "chat2api" ? DEFAULT_RUNTIME_LLM_OPTIONS.model : "",
+      api_base: LLM_PROVIDER_BASE_URLS[provider] || "",
+      wire_api: provider === "chat2api" ? DEFAULT_RUNTIME_LLM_OPTIONS.wire_api : "chat_completions",
+      reasoning_effort: "",
+    },
+  ])
+);
+const llmProviderDrafts = {};
+let activeLlmProvider = DEFAULT_RUNTIME_LLM_OPTIONS.provider;
 
 function setLlmTestStatus(message, kind) {
   const el = document.getElementById("llm-test-status");
@@ -1532,6 +1547,45 @@ function updateProviderFields() {
   setLlmTestStatus("", "");
 }
 
+function readLlmFieldDraft(provider) {
+  const keyEl = document.getElementById("llm-api-key");
+  const modelEl = document.getElementById("llm-model");
+  const baseEl = document.getElementById("llm-api-base");
+  const wireEl = document.getElementById("llm-wire-api");
+  const reasoningEl = document.getElementById("llm-reasoning-effort");
+  return {
+    provider,
+    api_key: keyEl ? keyEl.value : "",
+    model: modelEl ? modelEl.value : "",
+    api_base: baseEl ? normalizeApiBaseUrl(baseEl.value) : "",
+    wire_api: wireEl ? wireEl.value : "chat_completions",
+    reasoning_effort: reasoningEl ? reasoningEl.value : "",
+  };
+}
+
+function applyLlmFieldDraft(options) {
+  const keyEl = document.getElementById("llm-api-key");
+  const modelEl = document.getElementById("llm-model");
+  const baseEl = document.getElementById("llm-api-base");
+  const wireEl = document.getElementById("llm-wire-api");
+  const reasoningEl = document.getElementById("llm-reasoning-effort");
+  if (keyEl) keyEl.value = options.api_key || "";
+  if (modelEl) modelEl.value = options.model || "";
+  if (baseEl) baseEl.value = normalizeApiBaseUrl(options.api_base || "");
+  if (wireEl) wireEl.value = options.wire_api || "chat_completions";
+  if (reasoningEl) reasoningEl.value = options.reasoning_effort || "";
+}
+
+function switchLlmProvider() {
+  const providerEl = document.getElementById("llm-provider");
+  if (!providerEl) return;
+  llmProviderDrafts[activeLlmProvider] = readLlmFieldDraft(activeLlmProvider);
+  activeLlmProvider = providerEl.value || DEFAULT_RUNTIME_LLM_OPTIONS.provider;
+  const draft = llmProviderDrafts[activeLlmProvider] || LLM_PROVIDER_DEFAULT_OPTIONS[activeLlmProvider];
+  applyLlmFieldDraft(draft || {provider: activeLlmProvider});
+  updateProviderFields();
+}
+
 function normalizeApiBaseUrl(apiBase) {
   return (apiBase || "")
     .trim()
@@ -1541,6 +1595,7 @@ function normalizeApiBaseUrl(apiBase) {
 
 function saveRuntimeLlmOptions(options) {
   try {
+    llmProviderDrafts[options.provider] = Object.assign({}, options);
     localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify(options));
   } catch (e) {
     console.warn("Could not save LLM settings locally:", e);
@@ -1555,6 +1610,15 @@ function loadRuntimeLlmOptions() {
       JSON.parse(localStorage.getItem(LLM_STORAGE_KEY) || "{}")
     );
     saved.api_base = normalizeApiBaseUrl(saved.api_base);
+    const knownRemoteBases = new Set(
+      ["openrouter", "openai", "deepseek", "anthropic"].map((provider) => LLM_PROVIDER_BASE_URLS[provider])
+    );
+    if (saved.provider === "chat2api" && knownRemoteBases.has(saved.api_base)) {
+      saved.model = DEFAULT_RUNTIME_LLM_OPTIONS.model;
+      saved.api_base = DEFAULT_RUNTIME_LLM_OPTIONS.api_base;
+      saved.wire_api = DEFAULT_RUNTIME_LLM_OPTIONS.wire_api;
+      saved.reasoning_effort = DEFAULT_RUNTIME_LLM_OPTIONS.reasoning_effort;
+    }
     if (
       saved.provider === "custom" &&
       saved.api_base === DEFAULT_RUNTIME_LLM_OPTIONS.api_base &&
@@ -1563,20 +1627,10 @@ function loadRuntimeLlmOptions() {
       saved.provider = DEFAULT_RUNTIME_LLM_OPTIONS.provider;
     }
     const providerEl = document.getElementById("llm-provider");
-    const keyEl = document.getElementById("llm-api-key");
-    const modelEl = document.getElementById("llm-model");
-    const baseEl = document.getElementById("llm-api-base");
-    const wireEl = document.getElementById("llm-wire-api");
-    const reasoningEl = document.getElementById("llm-reasoning-effort");
     if (providerEl) providerEl.value = saved.provider || DEFAULT_RUNTIME_LLM_OPTIONS.provider;
-    updateProviderFields();
-    if (keyEl) keyEl.value = saved.api_key || "";
-    if (modelEl) modelEl.value = saved.model || "";
-    if (baseEl && (saved.provider === "chat2api" || saved.provider === "custom" || saved.provider === "custom_anthropic") && saved.api_base) {
-      baseEl.value = normalizeApiBaseUrl(saved.api_base);
-    }
-    if (wireEl) wireEl.value = saved.wire_api || DEFAULT_RUNTIME_LLM_OPTIONS.wire_api;
-    if (reasoningEl) reasoningEl.value = saved.reasoning_effort || "";
+    activeLlmProvider = saved.provider || DEFAULT_RUNTIME_LLM_OPTIONS.provider;
+    llmProviderDrafts[activeLlmProvider] = Object.assign({}, saved);
+    applyLlmFieldDraft(saved);
     updateProviderFields();
   } catch (e) {
     updateProviderFields();
