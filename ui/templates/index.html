@@ -52,9 +52,9 @@ body.phase-locked #game-container { pointer-events: none; }
 .dusk-vote-name { font-weight: 800; color: #fff; }
 .dusk-vote-meta { margin-top: 3px; color: #aebbd5; font-size: 10px; }
 .dusk-vote-button, #confirm-vote-result {
-  border: 0; border-radius: 6px; padding: 8px 14px; min-width: 64px; min-height: 38px; cursor: pointer;
+  border: 0; border-radius: 6px; padding: 10px 16px; min-width: 74px; min-height: 44px; cursor: pointer;
   background: #d95743; color: #fff; font-weight: 800;
-  touch-action: manipulation;
+  touch-action: manipulation; user-select: none; position: relative; z-index: 2;
 }
 .dusk-vote-button:hover, #confirm-vote-result:hover { background: #f06b55; }
 
@@ -2107,6 +2107,7 @@ function renderDuskVotingFlow(state) {
     discussion: "居民按顺序讨论中",
     crow_statement: "轮到克罗最后发言",
     crow_input: "轮到克罗最后发言",
+    crow_speaking: "克罗正在总结发言",
     vote_opening: "克罗正在宣布投票",
     voting: "投票进行中",
     results: "投票结果",
@@ -2181,7 +2182,7 @@ function renderDuskVotingFlow(state) {
   const abstainersEl = document.getElementById("voting-abstainers");
   const abstainersListEl = document.getElementById("voting-abstainers-list");
   if (abstainersEl && abstainersListEl) {
-    if ((stage === "voting" || showVoteResults) && abstainers.length) {
+    if (showVoteResults && abstainers.length) {
       abstainersEl.style.display = "block";
       abstainersListEl.innerHTML = abstainers
         .map(voter => `<span class="dusk-voter-icon" title="${escapeHtml(getDisplayName(voter, state))}" style="background-image:url('${duskPortraitUrl(voter)}')"></span>`)
@@ -2199,7 +2200,7 @@ function renderDuskVotingFlow(state) {
       : (crowVoteSubmitting
         ? "已选择，投票提交中，请稍候。"
         : (stage === "voting"
-          ? `投票倒计时 ${secondsLeft} 秒。居民票会实时显示头像，未投者到时按弃票。`
+          ? `投票倒计时 ${secondsLeft} 秒。已投票头像会实时显示，弃票名单在结果里展示。`
           : (showVoteButtons ? "请选择一名候选人，或使用底部按钮弃票。" : "")));
   }
   const actions = document.getElementById("jail-buttons");

@@ -71,18 +71,13 @@ def test_dusk_vote_prompt_allows_abstention(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_deterministic_dusk_vote_returns_valid_target(monkeypatch):
-    """_deterministic_dusk_vote must return a valid target or abstain (empty). Self-voting allowed."""
+    """_deterministic_dusk_vote must return a concrete valid target when any target exists."""
     engine = _make_engine(monkeypatch)
     voter = [n for n in engine.agents if n != "Crow" and n not in engine.werewolf_names][0]
     reason, target = engine._deterministic_dusk_vote(voter)
-    # With no clues, there's a 55% abstention chance; accept either outcome
-    if target:
-        assert target in engine.agents, f"Target '{target}' must be a known agent"
-        # Self-voting is now allowed per spec
-        assert target != "Crow", "Cannot vote for Crow (detective)"
-    else:
-        # Abstain is valid
-        assert "弃票" in reason or "没有足够把握" in reason or "没有可指控" in reason
+    assert target, f"Fallback vote must not abstain when targets exist: {reason}"
+    assert target in engine.agents, f"Target '{target}' must be a known agent"
+    assert target != "Crow", "Cannot vote for Crow (detective)"
 
 
 def test_deterministic_dusk_vote_werewolf_votes_villager(monkeypatch):
@@ -186,6 +181,33 @@ def test_crow_dusk_statement_unlocks_npc_votes(monkeypatch):
     assert engine._dusk_vote_active is True
     assert engine._dusk_votes
     assert engine._vote_history
+
+
+def test_live_crow_statement_then_vote_opening_are_separate_bubbles(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._running = True
+    engine._transition_to_dusk()
+    engine._dusk_stage = "crow_speaking"
+    engine._dusk_jail_target = None
+    engine.chat_bubbles["Crow"] = {"text": "我的总结", "time": time.time()}
+    snapshots = []
+
+    def fake_sleep(seconds):
+        snapshots.append((
+            seconds,
+            engine._dusk_stage,
+            engine.chat_bubbles.get("Crow", {}).get("text"),
+        ))
+
+    monkeypatch.setattr(engine_dusk.time, "sleep", fake_sleep)
+    monkeypatch.setattr(engine, "_generate_dusk_votes_async", lambda: None)
+
+    engine._open_dusk_vote_after_crow_bubble()
+
+    assert snapshots[0] == (3.0, "crow_speaking", "我的总结")
+    assert snapshots[1] == (3.0, "vote_opening", engine_dusk._CROW_START_VOTE_TEXT)
+    assert engine._dusk_stage == "voting"
+    assert engine._dusk_vote_active is True
 
 
 def test_transition_to_dusk_clears_old_daytime_action_state(monkeypatch):
@@ -414,16 +436,11 @@ def test_self_voting_allowed_in_deterministic(monkeypatch):
     """Self-voting must be allowed; possible_targets includes self."""
     engine = _make_engine(monkeypatch)
     voter = [n for n in engine.agents if n != "Crow" and n not in engine.werewolf_names][0]
-    # Check that possible targets include the voter themselves
-    # We test this by checking that _deterministic_dusk_vote can return self
-    # Since it's probabilistic, we run multiple times
-    saw_self_vote = False
-    for _ in range(30):
-        reason, target = engine._deterministic_dusk_vote(voter)
-        if target == voter:
-            saw_self_vote = True
-            break
-    assert saw_self_vote, f"Self-voting should be possible for {voter}"
+    for name, agent in engine.agents.items():
+        if name not in {"Crow", voter}:
+            agent.is_alive = False
+    reason, target = engine._deterministic_dusk_vote(voter)
+    assert target == voter, f"Self-voting should be possible for {voter}: {reason}"
 
 
 def test_crow_can_vote_for_self(monkeypatch):
@@ -459,6 +476,27 @@ def test_crow_can_abstain_vote(monkeypatch):
     assert result.get("success")
     assert engine._dusk_votes["Crow"] == ""
     assert engine._dusk_crow_voted is True
+
+
+def test_dusk_phase_timeout_finalizes_missing_votes_before_resolving(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    engine._dusk_stage = "voting"
+    engine._dusk_vote_active = True
+    engine._dusk_vote_resolved = False
+    engine._dusk_vote_deadline = time.time() + 60
+    engine.dusk_start_time = time.time() - 999
+    engine.dusk_duration = 1
+    engine._dusk_votes = {"Crow": "Arthur Burton"}
+    engine._dusk_vote_reasons = {"Crow": "test"}
+
+    engine._dusk_tick()
+
+    assert engine._dusk_stage == "results"
+    assert engine._dusk_vote_resolved is True
+    missing = set(engine._eligible_dusk_voters()) - {"Crow"}
+    assert missing
+    assert all(engine._dusk_votes.get(name) == "" for name in missing)
 
 
 # ---------------------------------------------------------------------------

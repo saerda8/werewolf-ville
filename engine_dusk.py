@@ -104,6 +104,7 @@ class EngineDuskMixin:
         if elapsed >= self.dusk_duration:
             self._log("⏰ 黄昏讨论时间到，自动进入夜晚...", "system")
             if not getattr(self, "_dusk_vote_resolved", False) and self._dusk_vote_active:
+                self._finalize_missing_dusk_votes_as_abstain()
                 self._resolve_dusk_votes()
             elif getattr(self, "_dusk_stage", "") == "results":
                 self.confirm_vote_result()
@@ -361,6 +362,9 @@ class EngineDuskMixin:
                 return
             if getattr(self, "_dusk_stage", "") not in {"npc_discussion", "discussion"}:
                 return
+            for name in list(self.chat_bubbles.keys()):
+                if name != self.detective_name:
+                    self.chat_bubbles.pop(name, None)
             self._dusk_stage = "crow_statement"
             self._log("请克罗总结发言。克罗发言后，居民再进入投票。", "system")
             self._broadcast_state()
@@ -577,16 +581,10 @@ class EngineDuskMixin:
                 "time": time.time(),
             }
             self._log(f"💬 克罗黄昏发言: {text}", "chat")
-            self._dusk_stage = "vote_opening"
+            self._dusk_stage = "crow_speaking"
             self._dusk_vote_active = False
             self._dusk_vote_deadline = None
             self._dusk_crow_voted = False
-            self.chat_bubbles[self.detective_name] = {
-                "text": _CROW_START_VOTE_TEXT,
-                "target": "",
-                "time": time.time(),
-            }
-            self._log(f"💬 克罗（投票开始）: {_CROW_START_VOTE_TEXT}", "chat")
             self._broadcast_state()
             if getattr(self, "_running", False):
                 threading.Thread(target=self._open_dusk_vote_after_crow_bubble, daemon=True).start()
@@ -600,6 +598,23 @@ class EngineDuskMixin:
 
 
     def _open_dusk_vote_after_crow_bubble(self):
+        if getattr(self, "_running", False):
+            time.sleep(_DUSK_SPEAKER_HOLD_SECONDS)
+        with self._lock:
+            if (
+                self.phase != type(self.phase).DUSK_DISCUSSION
+                or getattr(self, "_dusk_stage", "") != "crow_speaking"
+                or self._dusk_jail_target is not None
+            ):
+                return
+            self._dusk_stage = "vote_opening"
+            self.chat_bubbles[self.detective_name] = {
+                "text": _CROW_START_VOTE_TEXT,
+                "target": "",
+                "time": time.time(),
+            }
+            self._log(f"💬 克罗（投票开始）: {_CROW_START_VOTE_TEXT}", "chat")
+            self._broadcast_state()
         if getattr(self, "_running", False):
             time.sleep(_DUSK_VOTE_OPENING_HOLD_SECONDS)
         with self._lock:
@@ -714,10 +729,10 @@ class EngineDuskMixin:
 可选指控对象：{target_list}
 
 
-⚠️ 你有完全独立的判断权：你必须尽量投给一个具体嫌疑人（包括自己也可以）。只有完全找不到任何可疑对象时才弃票。
-如果你是狼人，你更应该主动把票投给一个具体非狼人对象，制造压力和怀疑。不要划水，不要轻易弃票。
+⚠️ 你有完全独立的判断权：你必须投给一个具体嫌疑人（包括自己也可以），不要弃票，不要空票，不要说“无法判断”。
+如果你是狼人，你更应该主动把票投给一个具体非狼人对象，制造压力和怀疑。不要划水，不要保守。
 请分析并投票。输出JSON格式：
-{{"reason": "你的推理（简短）", "vote": "指控对象名（可选对象之一，包括自己，或空置票）"}}"""
+{{"reason": "你的推理（简短）", "vote": "指控对象名（必须是可选对象之一）"}}"""
 
 
             raw = ""
@@ -747,7 +762,12 @@ class EngineDuskMixin:
 
 
         # Deterministic fallback: vote for someone based on simple heuristics
-        return self._deterministic_dusk_vote(voter_name)
+        reason, target = self._deterministic_dusk_vote(voter_name)
+        if not target and possible_targets:
+            fallback_targets = [t for t in possible_targets if t != voter_name] or possible_targets
+            target = self._rng.choice(fallback_targets)
+            reason = f"我怀疑{display_name_for_person(target)}，他的行踪最需要解释。"
+        return reason, target
 
 
     def _resolve_display_name_to_internal(self, display_or_name: str) -> str:
@@ -804,10 +824,6 @@ class EngineDuskMixin:
             target = self._rng.choice(list(clues_about))
             return (f"根据线索，{display_name_for_person(target)}很可疑", target)
 
-
-        # Small chance of self-vote for villagers as a defensive strategy.
-        if self._rng.random() < 0.10 and voter_name in possible_targets:
-            return ("我确信自己不是狼人，投自己一票。", voter_name)
 
         suspicion_targets = [t for t in possible_targets if t != voter_name] or possible_targets
         target = self._rng.choice(suspicion_targets)
