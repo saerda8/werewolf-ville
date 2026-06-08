@@ -24,6 +24,7 @@ personas/*/notebook.md
 personas/*/scratch.json
 personas/*/spatial_memory.json
 personas/*/memory_index.json
+personas/*/typed_memory_index.json
 
 # Server process state and logs
 server.pid
