@@ -3994,6 +3994,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if not progress.get("complete"):
                 return {"success": False, "error": "夜晚尚未结束"}
             self._transition_to_day()
+            self._broadcast_state()
             return {"success": True, "phase": self.phase.value, "day": self.day}
 
 

@@ -19,6 +19,8 @@ def find_free():
     targets = {
         "The Rose and Crown Pub / Crow Home": (57, 22),
         "Harvey Oak Supply": (63, 47),
+        "Hobbs Cafe": (77, 21),
+        "Isabella Home": (77, 14),
     }
     
     print("=== Finding closest free tiles ===")

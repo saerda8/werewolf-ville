@@ -9,6 +9,9 @@ PUBLIC_PLAZA_COLLISION_FREE_TILES = {
     # The Tiled collision layer has an invisible vertical seam here. Visually this
     # is open plaza/road, so treating it as blocked splits the morning circle.
     (51, y) for y in range(40, 51)
+} | {
+    # Hobbs Cafe has a visually open passage here; keep NPCs from getting pinned at the counter.
+    (76, 20), (77, 20)
 }
 
 

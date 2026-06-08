@@ -224,6 +224,20 @@ def test_transition_to_dusk_clears_old_daytime_action_state(monkeypatch):
     assert arthur.runtime_state in {"moving", "idle"}
 
 
+def test_dusk_gathering_assigns_reachable_path_from_cafe(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    isabella = engine.agents["Isabella Rodriguez"]
+    isabella.x, isabella.y = 76, 19
+    isabella.target_x, isabella.target_y = isabella.x, isabella.y
+
+    engine._transition_to_dusk()
+
+    assert (isabella.target_x, isabella.target_y) != (76, 19)
+    assert engine.agent_paths.get("Isabella Rodriguez"), (
+        "Isabella must receive a real path from the cafe to the dusk plaza"
+    )
+
+
 def test_dusk_plaza_targets_are_unique_and_spread_for_participants(monkeypatch):
     """Dusk gathering assigns unique spread-out plaza targets by participant list."""
     engine = _make_engine(monkeypatch)

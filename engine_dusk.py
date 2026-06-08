@@ -259,12 +259,31 @@ class EngineDuskMixin:
             ) or desired
             reserved_targets.add(target)
             agent = self.agents[name]
-            agent.target_x, agent.target_y = target
+            blocked_tiles = (blocked_base | reserved_targets) - {target}
+            path_result = self._nearest_reachable_path(
+                (agent.x, agent.y),
+                target,
+                radius=10,
+                blocked=blocked_tiles,
+            )
+            if path_result:
+                target_x, target_y, path = path_result
+                agent.target_x, agent.target_y = target_x, target_y
+                if path:
+                    self.agent_paths[name] = path
+                else:
+                    self.agent_paths.pop(name, None)
+                reserved_targets.discard(target)
+                reserved_targets.add((target_x, target_y))
+            else:
+                agent.target_x, agent.target_y = target
+                self.agent_paths.pop(name, None)
             agent.current_location = INITIAL_BODY_SITE["location"]
             agent.current_action = "前往广场参加黄昏讨论"
             agent.current_emoji = "🚶"
-            agent.runtime_state = "moving" if (agent.x, agent.y) != target else "idle"
-            self.agent_paths.pop(name, None)
+            agent.runtime_state = "moving" if (agent.x, agent.y) != (agent.target_x, agent.target_y) else "idle"
+            if self.agent_paths.get(name):
+                agent.runtime_state = "moving"
 
     def _all_dusk_participants_arrived(self, participants: list[str] | None = None) -> bool:
         participants = participants or self._eligible_dusk_participants()
@@ -343,7 +362,7 @@ class EngineDuskMixin:
     def _pause_for_dusk_bubble(self) -> None:
         """Keep fixed sequence bubbles readable in the live game without slowing unit tests."""
         if getattr(self, "_running", False):
-            time.sleep(max(3.0, float(self._gathering_speech_visible_seconds())))
+            time.sleep(6.0)
 
     def _pause_for_dusk_final_words(self) -> None:
         """Keep the jailed target's final words readable before escorting."""

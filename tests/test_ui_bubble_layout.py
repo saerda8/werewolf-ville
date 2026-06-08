@@ -943,6 +943,8 @@ def test_dusk_and_night_have_explicit_scene_dimming_layers():
 
     assert 'id="phase-atmosphere"' in html
     assert "#phase-atmosphere.dusk" in html
+    assert "rgba(255, 190, 92" in html
+    assert "rgba(255, 169, 77" in html
     assert "#phase-atmosphere.night" in html
     assert 'atmosphere.className = isNight ? "night" : (isDusk ? "dusk" : "");' in html
 
@@ -1250,6 +1252,8 @@ def test_daybreak_socket_handler_or_fallback():
     assert "confirmNightTransition" in html
     assert 'socket.emit("confirm_night_transition")' in html
     assert 'fetch("/api/confirm_night_transition"' in html
+    assert 'overlay.classList.remove("show")' in html
+    assert "nightTransitionConfirming = false;" in html
     assert 'fetchCurrentState()' in html
 
 
@@ -1287,6 +1291,17 @@ def test_vote_submission_disables_buttons_immediately():
     assert 'crowVoteSubmitting = true;' in html
     assert 'btn.disabled = true' in html
     assert 'id="voting-abstainers"' in html
+
+
+def test_confirm_vote_result_success_hides_voting_panel():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    start = html.index('socket.on("confirm_vote_result_response"')
+    end = html.index('socket.on("connect"', start)
+    block = html[start:end]
+
+    assert 'const panel = document.getElementById("voting-panel");' in block
+    assert "voteResultConfirming = false;" in block
+    assert 'if (panel) panel.style.display = "none";' in block
 
 
 def test_normal_chat_button_is_independent_from_deep_dive_quota():
@@ -1338,7 +1353,8 @@ def test_audited_frontend_additions():
 
     # 3. Confirm dawn socket refresh and fallback
     assert 'socket.on("confirm_night_transition_response"' in html
-    assert 'setTimeout(() => {\n      fetchCurrentState();\n    }, 1000);' in html or 'setTimeout(() => {\n      fetchCurrentState();\n    }, 1000);' in html.replace('\r\n', '\n')
+    assert 'setTimeout(() => {\n      fetchCurrentState();\n    }, 1000);' not in html.replace('\r\n', '\n')
+    assert 'overlay.classList.remove("show")' in html
 
     # 4. Forbidden UI not inside side panel
     side_panel_open = html.index('<div id="side-panel">')

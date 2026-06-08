@@ -619,7 +619,9 @@ def on_confirm_vote_result():
 @socketio.on("confirm_night_transition")
 def on_confirm_night_transition():
     if game:
-        emit("confirm_night_transition_response", game.confirm_night_transition())
+        result = game.confirm_night_transition()
+        emit("confirm_night_transition_response", result)
+        socketio.emit("game_state", game.get_status())
 
 
 @socketio.on("acquire_silver_bullet")

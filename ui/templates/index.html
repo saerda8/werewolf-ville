@@ -19,7 +19,9 @@ body.phase-locked #game-container { pointer-events: none; }
 }
 #phase-atmosphere.dusk {
   opacity: 1;
-  background: linear-gradient(180deg, rgba(31, 24, 54, 0.38), rgba(8, 13, 31, 0.58));
+  background:
+    radial-gradient(circle at 45% 18%, rgba(255, 190, 92, 0.32), rgba(255, 145, 74, 0.22) 34%, rgba(73, 37, 58, 0.18) 72%),
+    linear-gradient(180deg, rgba(255, 169, 77, 0.26), rgba(91, 42, 64, 0.28));
 }
 #phase-atmosphere.night {
   opacity: 1;
@@ -1001,6 +1003,7 @@ let nightCameraLocked = false;
 let crowVoteSubmitting = false;
 let duskStatementSubmitting = false;
 let nightTransitionConfirming = false;
+let voteResultConfirming = false;
 let duskCameraPanKey = "";
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
 const BUBBLE_LIFETIME_SECONDS = 6;
@@ -1166,6 +1169,10 @@ function initSocket() {
       if (btn) btn.disabled = false;
       nightTransitionConfirming = false;
       addChatMsg("系统", resp.error, true);
+    } else {
+      nightTransitionConfirming = false;
+      const overlay = document.getElementById("night-transition-overlay");
+      if (overlay) overlay.classList.remove("show");
     }
     fetchCurrentState();
   });
@@ -1173,9 +1180,13 @@ function initSocket() {
     const btn = document.getElementById("confirm-vote-result");
     const panel = document.getElementById("voting-panel");
     if (resp && resp.error) {
+      voteResultConfirming = false;
       if (btn) btn.disabled = false;
       if (panel) panel.style.display = "flex";
       addChatMsg("系统", resp.error, true);
+    } else {
+      voteResultConfirming = false;
+      if (panel) panel.style.display = "none";
     }
     fetchCurrentState();
   });
@@ -1655,10 +1666,12 @@ function submitCrowVote(name) {
 }
 
 function confirmVoteResult() {
+  if (voteResultConfirming) return;
   if (!["results", "result"].includes(duskStage(gameState || {}))) return;
   const btn = document.getElementById("confirm-vote-result");
   const panel = document.getElementById("voting-panel");
   if (btn) btn.disabled = true;
+  voteResultConfirming = true;
   if (panel) panel.style.display = "none";
   if (socket && socket.connected) {
     socket.emit("confirm_vote_result");
@@ -1667,6 +1680,7 @@ function confirmVoteResult() {
       .then(r => r.json())
       .then(resp => {
         if (resp && resp.error) {
+          voteResultConfirming = false;
           addChatMsg("系统", resp.error, true);
           if (btn) btn.disabled = false;
           if (panel) panel.style.display = "flex";
@@ -1674,6 +1688,7 @@ function confirmVoteResult() {
         fetchCurrentState();
       })
       .catch(err => {
+        voteResultConfirming = false;
         if (btn) btn.disabled = false;
         if (panel) panel.style.display = "flex";
         fetchCurrentState();
@@ -1688,9 +1703,6 @@ function confirmNightTransition() {
   nightTransitionConfirming = true;
   if (socket && socket.connected) {
     socket.emit("confirm_night_transition");
-    setTimeout(() => {
-      fetchCurrentState();
-    }, 1000);
   } else {
     fetch("/api/confirm_night_transition", {method: "POST"})
       .then(r => r.json())
@@ -1827,9 +1839,14 @@ function renderDuskVotingFlow(state) {
     discussionList.innerHTML = "";
   }
 
+  if (stage !== "results" && stage !== "result") {
+    voteResultConfirming = false;
+  }
+
   if (!votingPanel) return;
-  votingPanel.style.display = isDusk && votingStages.includes(stage) ? "flex" : "none";
-  if (!isDusk || !votingStages.includes(stage)) return;
+  const showVotingPanel = isDusk && votingStages.includes(stage) && !voteResultConfirming;
+  votingPanel.style.display = showVotingPanel ? "flex" : "none";
+  if (!isDusk || !votingStages.includes(stage) || voteResultConfirming) return;
 
   const participants = eligibleDuskParticipants(state);
   const counts = normalizeVoteCounts(voteSummary);
@@ -4925,11 +4942,19 @@ function update(time, delta) {
   // Call global bubble resolver to position and resolve overlaps
   resolveBubbleLayout();
 
-  // Night overlay
+  // Night overlay / Dusk overlay
   if (isNight) {
     nightOverlay.setVisible(true);
     nightOverlay.clear();
     nightOverlay.fillStyle(0x061330, 0.28);
+    nightOverlay.fillRect(
+      cam.scrollX, cam.scrollY,
+      cam.width, cam.height
+    );
+  } else if (isDusk) {
+    nightOverlay.setVisible(true);
+    nightOverlay.clear();
+    nightOverlay.fillStyle(0xff8c00, 0.18);
     nightOverlay.fillRect(
       cam.scrollX, cam.scrollY,
       cam.width, cam.height
