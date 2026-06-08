@@ -12,6 +12,10 @@ PUBLIC_PLAZA_COLLISION_FREE_TILES = {
 } | {
     # Hobbs Cafe has a visually open passage here; keep NPCs from getting pinned at the counter.
     (76, 20), (77, 20)
+} | {
+    # The sheriff office's right prison cell has an invisible wall seam across
+    # its doorway. Open only the door tiles so prison escort uses real walking.
+    (25, 68), (25, 69)
 }
 
 
