@@ -381,21 +381,19 @@ class EngineDuskMixin:
             return []
         center_x = INITIAL_BODY_SITE["x"]
         center_y = INITIAL_BODY_SITE["y"]
-        # Calculate angle from plaza center for each agent
-        def angle_from_center(name):
+        import math
+
+        crow = self.agents.get(self.detective_name)
+        if not crow:
+            return eligible
+        crow_angle = math.atan2(crow.y - center_y, crow.x - center_x)
+
+        def clockwise_delta_from_crow_left(name):
             agent = self.agents[name]
-            dx = agent.x - center_x
-            dy = agent.y - center_y
-            # atan2 returns angle where 0 is east, positive is CCW
-            # Convert to clockwise starting from left (west = π)
-            import math
-            a = math.atan2(dy, dx)
-            # Shift so 0 is west (left of center), clockwise increasing
-            a = math.pi - a
-            if a < 0:
-                a += 2 * math.pi
-            return a
-        return sorted(eligible, key=angle_from_center)
+            angle = math.atan2(agent.y - center_y, agent.x - center_x)
+            return (angle - crow_angle + 2 * math.pi) % (2 * math.pi)
+
+        return sorted(eligible, key=clockwise_delta_from_crow_left)
 
     def _resolve_speaker_for_day1_knowledge(self) -> str:
         """Select speaker for day 1 knowledge: prefer Mei Lin, then Klaus, then any other."""
@@ -548,7 +546,6 @@ class EngineDuskMixin:
             }
             self._log(f"💬 克罗黄昏发言: {text}", "chat")
             self._broadcast_state()
-            self._pause_for_dusk_bubble()
             self._generate_dusk_votes()
             self._dusk_vote_active = True
             self._dusk_stage = "voting"
@@ -887,6 +884,7 @@ class EngineDuskMixin:
                 }
                 self._log(f"💬 克罗（宣布投票结果）: {warning}", "chat")
                 self._broadcast_state()
+                self._pause_for_dusk_bubble()
                 final_words = self._jailed_final_words(winner)
                 self.chat_bubbles[winner] = {
                     "text": final_words,
@@ -898,6 +896,16 @@ class EngineDuskMixin:
                 self._pause_for_dusk_final_words()
                 self._jailed.add(winner)
                 self._place_in_prison(winner)
+            else:
+                dismissal = "今晚无人被关押。大家先回去吧，晚上注意小心，尽量不要出去。"
+                self.chat_bubbles[self.detective_name] = {
+                    "text": dismissal,
+                    "target": "",
+                    "time": time.time(),
+                }
+                self._log(f"💬 克罗（投票结束）: {dismissal}", "chat")
+                self._broadcast_state()
+                self._pause_for_dusk_bubble()
             crow = self.agents.get(self.detective_name)
             office = SHERIFF_AREA["sheriff_office"]["anchor_points"][0]
             target = self._nearest_walkable_tile(

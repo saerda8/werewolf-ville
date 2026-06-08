@@ -1622,13 +1622,13 @@ function normalizeVoteCounts(voteSummary) {
   return result;
 }
 
-function submitCrowVote(name) {
-  if (!name || !gameState || crowVoteSubmitting) return;
+function submitCrowVote(name = "") {
+  if (name === undefined || name === null || !gameState || crowVoteSubmitting) return;
   const voteSummary = gameState.vote_summary || {};
   if (hasCrowVoted(voteSummary) || duskStage(gameState) !== "voting") return;
   crowVoteSubmitting = true;
   voteSummary.crow_vote_submitted = true;
-  voteSummary.crow_vote = name;
+  voteSummary.crow_vote = name || "";
   const buttons = document.querySelectorAll(".dusk-vote-button");
   buttons.forEach(btn => {
     btn.disabled = true;
@@ -1636,14 +1636,11 @@ function submitCrowVote(name) {
     btn.style.pointerEvents = "none";
   });
   renderDuskVotingFlow(gameState);
-  if (socket && socket.connected) {
-    socket.emit("submit_crow_vote", {target_name: name});
-  } else {
-    fetch("/api/submit_crow_vote", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({target_name: name})
-    })
+  fetch("/api/submit_crow_vote", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({target_name: name || ""})
+  })
     .then(r => r.json())
     .then(resp => {
       if (resp && resp.error) {
@@ -1662,7 +1659,6 @@ function submitCrowVote(name) {
       }
       fetchCurrentState();
     });
-  }
 }
 
 function confirmVoteResult() {
@@ -1703,6 +1699,27 @@ function confirmNightTransition() {
   nightTransitionConfirming = true;
   if (socket && socket.connected) {
     socket.emit("confirm_night_transition");
+    setTimeout(() => {
+      if (!nightTransitionConfirming) return;
+      fetch("/api/confirm_night_transition", {method: "POST"})
+        .then(r => r.json())
+        .then(resp => {
+          nightTransitionConfirming = false;
+          if (resp && resp.error) {
+            addChatMsg("系统", resp.error, true);
+            if (btn) btn.disabled = false;
+          } else {
+            const overlay = document.getElementById("night-transition-overlay");
+            if (overlay) overlay.classList.remove("show");
+          }
+          fetchCurrentState();
+        })
+        .catch(err => {
+          nightTransitionConfirming = false;
+          if (btn) btn.disabled = false;
+          fetchCurrentState();
+        });
+    }, 2500);
   } else {
     fetch("/api/confirm_night_transition", {method: "POST"})
       .then(r => r.json())
@@ -1886,6 +1903,27 @@ function renderDuskVotingFlow(state) {
     }
     rows.appendChild(row);
   });
+  if (showVoteButtons) {
+    const abstainRow = document.createElement("div");
+    abstainRow.className = "dusk-vote-row";
+    abstainRow.innerHTML = `
+      <span class="dusk-portrait" title="弃票" style="background-color: #29436a; color: #fff; font-weight: 800; border: 2px solid rgba(255, 255, 255, 0.55); font-size: 16px; display: inline-flex; align-items: center; justify-content: center;">⚪</span>
+      <span><span class="dusk-vote-name" style="color: #aebbd5;">放弃投票</span>
+      <span class="dusk-vote-meta">本轮不投票（弃票）</span></span>
+    `;
+    const abstainBtn = document.createElement("button");
+    abstainBtn.className = "dusk-vote-button";
+    abstainBtn.id = "abstain-vote-button";
+    abstainBtn.textContent = "弃票";
+    if (crowHasVoted || crowVoteSubmitting) {
+      abstainBtn.disabled = true;
+      abstainBtn.style.opacity = "0.5";
+      abstainBtn.style.pointerEvents = "none";
+    }
+    abstainBtn.addEventListener("click", () => submitCrowVote(""));
+    abstainRow.appendChild(abstainBtn);
+    rows.appendChild(abstainRow);
+  }
   const abstainersEl = document.getElementById("voting-abstainers");
   const abstainersListEl = document.getElementById("voting-abstainers-list");
   if (abstainersEl && abstainersListEl) {
@@ -4900,8 +4938,17 @@ function update(time, delta) {
         sprite.setPosition(targetPx, targetPy);
         sprite.anims.stop();
 
-        // 稳定朝向站姿逻辑：如果上一帧有水平或垂直移动方向，不能在中间帧强切回正面
-        if (sprite.lastDir === "left") {
+        // 稳定朝向站姿逻辑：如果在讨论/投票阶段，强制正面朝向玩家；否则如果上一帧有水平或垂直移动方向，不能在中间帧强切回正面
+        const liveDuskStage = gameState ? duskStage(gameState) : "";
+        const isDuskDiscussionOrVoting = gameState && (
+          gameState.phase === "dusk_discussion" ||
+          gameState.phase === "dusk" ||
+          ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(liveDuskStage)
+        );
+        if (isDuskDiscussionOrVoting) {
+          sprite.lastDir = "down";
+          sprite.setTexture(key, "down-walk.000");
+        } else if (sprite.lastDir === "left") {
           sprite.setTexture(key, "left-walk.000");
         } else if (sprite.lastDir === "right") {
           sprite.setTexture(key, "right-walk.000");

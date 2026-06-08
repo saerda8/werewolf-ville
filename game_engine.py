@@ -1118,18 +1118,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         gather_loc = INITIAL_BODY_SITE["location"]
 
-        if getattr(self, "bodies", None):
-
-            discovered_bodies = [b for b in self.bodies if getattr(b, "discovered", False)]
-
-            if discovered_bodies:
-
-                latest_body = max(discovered_bodies, key=lambda b: getattr(b, "created_day", 0))
-
-                gather_x, gather_y = latest_body.x, latest_body.y
-
-                gather_loc = getattr(latest_body, "location", INITIAL_BODY_SITE["location"])
-
         radius = 7
 
         n = len(all_names)
@@ -4920,6 +4908,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if new_bodies:
             body_parts = []
             for body in new_bodies:
+                body.x = INITIAL_BODY_SITE["x"]
+                body.y = INITIAL_BODY_SITE["y"]
+                body.location = INITIAL_BODY_SITE["location"]
                 label = display_name_for_person(body.victim_name)
                 if getattr(body, "is_werewolf_corpse", False):
                     label = f"{label}（狼人尸体）"
@@ -10908,24 +10899,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "location": INITIAL_BODY_SITE["location"],
 
             }
-
-            if hasattr(self, "bodies") and self.bodies:
-
-                discovered_bodies = [b for b in self.bodies if getattr(b, "discovered", False)]
-
-                if discovered_bodies:
-
-                    latest_body = max(discovered_bodies, key=lambda b: getattr(b, "created_day", 0))
-
-                    gather_site = {
-
-                        "x": latest_body.x,
-
-                        "y": latest_body.y,
-
-                        "location": latest_body.location,
-
-                    }
 
             hunt = getattr(self, "night_hunt", None)
 

@@ -277,6 +277,16 @@ def test_morning_discovers_and_announces_multiple_bodies(monkeypatch):
     assert discovered == wolf
     assert normal.discovered is True
     assert wolf.discovered is True
+    assert (normal.x, normal.y, normal.location) == (
+        game_engine.INITIAL_BODY_SITE["x"],
+        game_engine.INITIAL_BODY_SITE["y"],
+        game_engine.INITIAL_BODY_SITE["location"],
+    )
+    assert (wolf.x, wolf.y, wolf.location) == (
+        game_engine.INITIAL_BODY_SITE["x"],
+        game_engine.INITIAL_BODY_SITE["y"],
+        game_engine.INITIAL_BODY_SITE["location"],
+    )
     latest_log = engine.game_log[-1]["message"]
     assert game_engine.display_name_for_person("Arthur Burton") in latest_log
     assert game_engine.display_name_for_person(engine.werewolf_names[0]) in latest_log

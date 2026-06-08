@@ -969,7 +969,7 @@ def test_vote_rows_support_self_vote_then_hide_all_vote_buttons():
     assert 'class="dusk-portrait"' in html
     assert 'button.className = "dusk-vote-button";' in html
     assert "submitCrowVote(name)" in html
-    assert 'socket.emit("submit_crow_vote", {target_name: name});' in html
+    assert 'fetch("/api/submit_crow_vote"' in html
     assert 'fetch("/api/submit_crow_vote"' in html
     assert "const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;" in html
     assert "crowVoteSubmitting = true;" in html
@@ -1213,7 +1213,7 @@ def test_crow_vote_disabled_submitting_lock():
     assert 'let crowVoteSubmitting = false;' in html
 
     # 2. Verify lock check in submitCrowVote
-    assert 'if (!name || !gameState || crowVoteSubmitting) return;' in html
+    assert 'if (name === undefined || name === null || !gameState || crowVoteSubmitting) return;' in html
 
     # 3. Verify setting the lock and disabling buttons locally on click
     assert 'crowVoteSubmitting = true;' in html
@@ -1252,6 +1252,7 @@ def test_daybreak_socket_handler_or_fallback():
     assert "confirmNightTransition" in html
     assert 'socket.emit("confirm_night_transition")' in html
     assert 'fetch("/api/confirm_night_transition"' in html
+    assert "if (!nightTransitionConfirming) return;" in html
     assert 'overlay.classList.remove("show")' in html
     assert "nightTransitionConfirming = false;" in html
     assert 'fetchCurrentState()' in html
@@ -1291,6 +1292,17 @@ def test_vote_submission_disables_buttons_immediately():
     assert 'crowVoteSubmitting = true;' in html
     assert 'btn.disabled = true' in html
     assert 'id="voting-abstainers"' in html
+    assert 'abstainBtn.id = "abstain-vote-button";' in html
+    assert 'submitCrowVote("")' in html
+    assert 'fetch("/api/submit_crow_vote"' in html
+    assert 'socket.emit("submit_crow_vote"' not in html
+
+
+def test_dusk_discussion_forces_front_facing_sprites():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "const liveDuskStage = gameState ? duskStage(gameState) : \"\";" in html
+    assert "sprite.lastDir = \"down\";" in html
+    assert 'sprite.setTexture(key, "down-walk.000");' in html
 
 
 def test_confirm_vote_result_success_hides_voting_panel():
@@ -1366,3 +1378,21 @@ def test_audited_frontend_additions():
     assert 'id="voting-panel"' not in side_panel_markup
     assert 'id="chat-panel"' not in side_panel_markup
     assert 'id="night-transition-overlay"' not in side_panel_markup
+
+
+def test_dusk_npc_facing_and_crow_abstain_button():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Verify NPC orientation logic forces facing front (down) during dusk discussion or voting phases/stages when stationary
+    assert "const isDuskDiscussionOrVoting = gameState && (" in html
+    assert 'gameState.phase === "dusk_discussion" ||' in html
+    assert 'gameState.phase === "dusk" ||' in html
+    assert '["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(liveDuskStage)' in html
+    assert "if (isDuskDiscussionOrVoting) {" in html
+    assert 'sprite.setTexture(key, "down-walk.000");' in html
+
+    # 2. Verify Voting UI includes a Crow abstain/skip/no-vote button
+    assert 'abstainBtn.id = "abstain-vote-button";' in html
+    assert 'submitCrowVote("")' in html
+    assert '放弃投票' in html
+    assert '本轮不投票（弃票）' in html

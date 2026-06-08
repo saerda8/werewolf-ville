@@ -266,6 +266,17 @@ def test_dusk_plaza_targets_are_unique_and_spread_for_participants(monkeypatch):
     assert max(gaps) <= 100, f"participants should be spread around the plaza: {targets}"
 
 
+def test_dusk_discussion_order_starts_at_isabella_from_crows_left(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    _arrive_dusk_participants(engine)
+
+    order = engine._get_plaza_clockwise_order()
+
+    assert order[0] == "Isabella Rodriguez"
+    assert order[-1] == "Arthur Burton"
+
+
 def test_dusk_discussion_generation_reaches_crow_statement_without_llm_delay(monkeypatch):
     """Discussion generation must advance to Crow's statement even if NPC speech calls are slow."""
     engine = _make_engine(monkeypatch)
@@ -432,6 +443,19 @@ def test_crow_vote_recorded_in_dusk_votes(monkeypatch):
     engine.jail_vote_target("Arthur Burton")
     assert "Crow" in engine._dusk_votes, "Crow's vote should be in _dusk_votes"
     assert engine._dusk_votes["Crow"] == "Arthur Burton"
+
+
+def test_crow_can_abstain_vote(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    _arrive_dusk_participants(engine)
+    engine.submit_dusk_statement("Please vote.")
+
+    result = engine.submit_crow_vote("")
+
+    assert result.get("success")
+    assert engine._dusk_votes["Crow"] == ""
+    assert engine._dusk_crow_voted is True
 
 
 # ---------------------------------------------------------------------------
@@ -602,9 +626,32 @@ def test_confirm_vote_result_holds_final_words_before_prison(monkeypatch):
     result = engine.confirm_vote_result()
 
     assert result["success"] is True
-    assert events[0] == ("sleep", engine_dusk._DUSK_FINAL_WORDS_HOLD_SECONDS)
-    assert events[1] == ("place", "Arthur Burton")
+    assert events[0] == ("sleep", 6.0)
+    assert events[1] == ("sleep", engine_dusk._DUSK_FINAL_WORDS_HOLD_SECONDS)
+    assert events[2] == ("place", "Arthur Burton")
     assert engine.chat_bubbles["Arthur Burton"]["text"] == "我还有话要说。"
+
+
+def test_confirm_vote_result_all_abstain_has_crow_dismissal(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    _arrive_dusk_participants(engine)
+    engine.submit_dusk_statement("Please vote.")
+    engine._dusk_votes = {name: "" for name in engine.agents if engine.agents[name].is_alive}
+    engine._dusk_vote_reasons = {name: "abstain" for name in engine._dusk_votes}
+    engine._dusk_crow_voted = True
+    engine._resolve_dusk_votes()
+    engine._running = True
+    sleeps = []
+    monkeypatch.setattr(engine_dusk.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = engine.confirm_vote_result()
+
+    assert result["success"] is True
+    assert result["jailed"] is None
+    assert "今晚无人被关押" in engine.chat_bubbles["Crow"]["text"]
+    assert "晚上注意小心" in engine.chat_bubbles["Crow"]["text"]
+    assert sleeps == [6.0]
 
 
 # ---------------------------------------------------------------------------
