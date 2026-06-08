@@ -31,6 +31,7 @@ _CROW_DISCUSSION_TEXT = (
 )
 _CROW_START_VOTE_TEXT = "现在开始投票。"
 _DUSK_FINAL_WORDS_HOLD_SECONDS = 6.0
+_DUSK_SPEAKER_HOLD_SECONDS = 3.0
 
 _DUSK_FILLER_PATTERNS = (
     "我没意见",
@@ -47,7 +48,7 @@ _DUSK_FILLER_PATTERNS = (
     "不确定",
 )
 
-_DUSK_VOTE_OPENING_HOLD_SECONDS = 6.0
+_DUSK_VOTE_OPENING_HOLD_SECONDS = 3.0
 
 
 def active_town_people_rule() -> str:
@@ -110,20 +111,19 @@ class EngineDuskMixin:
                 self._transition_to_night()
             return
 
-        # Voting countdown: if vote is active and deadline passed, auto-resolve
+        # Voting countdown: if vote is active and deadline passed, auto-resolve.
+        # If everyone has voted earlier, resolve immediately.
         if (self._dusk_vote_active
                 and not getattr(self, "_dusk_vote_resolved", False)
                 and self._dusk_jail_target is None
-                and self._dusk_vote_deadline is not None
-                and time.time() >= self._dusk_vote_deadline):
-            self._log("⏰ 投票时间到！自动解决投票...", "system")
-            # If Crow hasn't voted, record abstain
-            if not getattr(self, "_dusk_crow_voted", False):
-                self._dusk_votes[self.detective_name] = ""
-                self._dusk_vote_reasons[self.detective_name] = "克罗未投票（弃票）"
-                self._dusk_crow_voted = True
-                self._log("🗳️ 克罗未在时限内投票，视为弃票。", "system")
-            self._resolve_dusk_votes()
+                and self._dusk_vote_deadline is not None):
+            if self._all_dusk_votes_collected():
+                self._log("🗳️ 全员投票完成，立即结算。", "system")
+                self._resolve_dusk_votes()
+            elif time.time() >= self._dusk_vote_deadline:
+                self._log("⏰ 投票时间到！未投票者按弃票处理。", "system")
+                self._finalize_missing_dusk_votes_as_abstain()
+                self._resolve_dusk_votes()
 
 
     # ==================== 昼夜转换（线程安全，都加锁）====================
@@ -498,7 +498,6 @@ class EngineDuskMixin:
         clue_summaries = [c.summary for c in getattr(self, "clues", [])[-5:]]
         clue_text = "；".join(clue_summaries[:3]) if clue_summaries else "暂无明确线索"
 
-        speaker_gap = float(self._gathering_departure_gap_seconds())
         for idx, speaker_name in enumerate(eligible_speakers):
             text = ""
             try:
@@ -541,8 +540,8 @@ class EngineDuskMixin:
             self._log(f"💬 黄昏讨论 {display_name_for_person(speaker_name)}: {text}", "chat")
             self._dusk_discussion_statements = list(statements)
             self._broadcast_state()
-            if idx < len(eligible_speakers) - 1 and speaker_gap > 0:
-                time.sleep(speaker_gap)
+            if getattr(self, "_running", False):
+                time.sleep(_DUSK_SPEAKER_HOLD_SECONDS)
 
         self._dusk_discussion_statements = statements
 
@@ -610,10 +609,15 @@ class EngineDuskMixin:
                 or self._dusk_jail_target is not None
             ):
                 return
-            self._dusk_stage = "voting_generating"
-            self._log("🗳️ 克罗宣布投票，正在生成居民投票。", "system")
+            self._dusk_stage = "voting"
+            self._dusk_vote_active = True
+            self._dusk_vote_deadline = time.time() + _VOTE_COUNTDOWN_SECONDS
+            self._log("🗳️ 投票开始（30秒）。克罗可立即投票，居民投票会实时更新。", "system")
             self._broadcast_state()
-        self._generate_dusk_votes_async()
+        if getattr(self, "_running", False):
+            threading.Thread(target=self._generate_dusk_votes_async, daemon=True).start()
+        else:
+            self._generate_dusk_votes_async()
 
 
     def _generate_dusk_votes_async(self):
@@ -623,17 +627,12 @@ class EngineDuskMixin:
             self._log(f"⚠️ 黄昏投票生成失败：{exc}", "error")
         finally:
             with self._lock:
-                if (
-                    self.phase == type(self.phase).DUSK_DISCUSSION
-                    and getattr(self, "_dusk_stage", "") == "voting_generating"
-                    and self._dusk_jail_target is None
-                ):
-                    self._dusk_stage = "voting"
-                    self._dusk_vote_active = True
-                    if not getattr(self, "_dusk_vote_deadline", None):
-                        self._dusk_vote_deadline = time.time() + _VOTE_COUNTDOWN_SECONDS
-                    self._log("🗳️ 居民投票生成完成，投票开始（30秒）。请克罗投票。", "system")
-                    self._broadcast_state()
+                if self._dusk_vote_active and not getattr(self, "_dusk_vote_resolved", False):
+                    if self._all_dusk_votes_collected():
+                        self._log("🗳️ 全员投票完成，立即结算。", "system")
+                        self._resolve_dusk_votes()
+                    else:
+                        self._broadcast_state()
 
 
     def _generate_dusk_votes(self):
@@ -654,12 +653,37 @@ class EngineDuskMixin:
         clue_summaries = [c.summary for c in getattr(self, 'clues', [])[-5:]]
 
 
-        # For each voter, try LLM or fallback
+        # For each voter, try LLM or fallback. Broadcast after each vote so the
+        # vote board fills in live instead of waiting for all NPCs.
         for voter_name in eligible_voters:
+            with self._lock:
+                if (
+                    self.phase != type(self.phase).DUSK_DISCUSSION
+                    or not self._dusk_vote_active
+                    or getattr(self, "_dusk_vote_resolved", False)
+                    or self._dusk_jail_target is not None
+                ):
+                    return
+                if voter_name in self._dusk_votes:
+                    continue
             reason, voted = self._generate_single_dusk_vote(voter_name, recent_dead, clue_summaries)
-            self._dusk_votes[voter_name] = voted
-            self._dusk_vote_reasons[voter_name] = reason
-        self._record_vote_history_snapshot()
+            with self._lock:
+                if (
+                    self.phase != type(self.phase).DUSK_DISCUSSION
+                    or not self._dusk_vote_active
+                    or getattr(self, "_dusk_vote_resolved", False)
+                    or self._dusk_jail_target is not None
+                ):
+                    return
+                if voter_name in self._dusk_votes:
+                    continue
+                self._dusk_votes[voter_name] = voted
+                self._dusk_vote_reasons[voter_name] = reason
+                self._record_vote_history_snapshot()
+                self._broadcast_state()
+                if self._all_dusk_votes_collected():
+                    self._resolve_dusk_votes()
+                    return
 
 
     def _generate_single_dusk_vote(self, voter_name: str, recent_dead: list, clue_summaries: list) -> tuple[str, str]:
@@ -674,7 +698,7 @@ class EngineDuskMixin:
 
             # Get all living non-jailed residents (including self) as possible vote targets
             possible_targets = [n for n, a in self.agents.items()
-                               if a.is_alive and n not in self._jailed]
+                               if a.is_alive and n not in self._jailed and n != self.detective_name]
             if not possible_targets:
                 return ("没有可指控的人", "")
 
@@ -690,7 +714,8 @@ class EngineDuskMixin:
 可选指控对象：{target_list}
 
 
-⚠️ 你有完全独立的判断权：你可以根据自己的推理投票指控任何人（包括自己），也可以选择弃票（证据不足时）。不受他人影响，不需要迎合任何人的意见。
+⚠️ 你有完全独立的判断权：你必须尽量投给一个具体嫌疑人（包括自己也可以）。只有完全找不到任何可疑对象时才弃票。
+如果你是狼人，你更应该主动把票投给一个具体非狼人对象，制造压力和怀疑。不要划水，不要轻易弃票。
 请分析并投票。输出JSON格式：
 {{"reason": "你的推理（简短）", "vote": "指控对象名（可选对象之一，包括自己，或空置票）"}}"""
 
@@ -708,7 +733,7 @@ class EngineDuskMixin:
                     reason = str(parsed.get("reason", "可疑"))
                     vote_name = str(parsed.get("vote", ""))
                     if self._is_abstain_vote(vote_name):
-                        return (reason or "我现在证据不足，先弃票。", "")
+                        return self._deterministic_dusk_vote(voter_name)
                     # Map display name back to internal name
                     vote_internal = self._resolve_display_name_to_internal(vote_name)
                     if vote_internal in possible_targets:
@@ -747,7 +772,7 @@ class EngineDuskMixin:
         """Deterministic fallback: vote based on simple clues and heuristics.
         Self-voting is allowed per spec section 5.3."""
         possible_targets = [n for n, a in self.agents.items()
-                           if a.is_alive and n not in self._jailed]
+                           if a.is_alive and n not in self._jailed and n != self.detective_name]
         if not possible_targets:
             return ("没有可指控的人", "")
 
@@ -767,7 +792,8 @@ class EngineDuskMixin:
             return (f"我怀疑{display_name_for_person(target)}", target)
 
 
-        # Villager voters: if clues point to someone, vote them; otherwise random/self/abstain
+        # Villager voters: if clues point to someone, vote them; otherwise push
+        # the most suspicious available person instead of defaulting to abstain.
         clues_about = set()
         for clue in getattr(self, 'clues', []):
             if clue.related_person and clue.related_person in possible_targets:
@@ -779,17 +805,38 @@ class EngineDuskMixin:
             return (f"根据线索，{display_name_for_person(target)}很可疑", target)
 
 
-        if self._rng.random() < 0.55:
-            return ("我现在还没有足够把握，先弃票。", "")
-
-
-        # 20% chance of self-vote for villagers as a defensive strategy
-        if self._rng.random() < 0.20 and voter_name in possible_targets:
+        # Small chance of self-vote for villagers as a defensive strategy.
+        if self._rng.random() < 0.10 and voter_name in possible_targets:
             return ("我确信自己不是狼人，投自己一票。", voter_name)
 
-        # Random vote
-        target = self._rng.choice(possible_targets)
+        suspicion_targets = [t for t in possible_targets if t != voter_name] or possible_targets
+        target = self._rng.choice(suspicion_targets)
         return (f"我感觉{display_name_for_person(target)}最近有些不对劲", target)
+
+
+    def _eligible_dusk_voters(self) -> list[str]:
+        return [
+            n for n, a in self.agents.items()
+            if a.is_alive and n not in self._jailed
+        ]
+
+
+    def _all_dusk_votes_collected(self) -> bool:
+        voters = set(self._eligible_dusk_voters())
+        if not voters:
+            return True
+        return voters.issubset(set(self._dusk_votes.keys()))
+
+
+    def _finalize_missing_dusk_votes_as_abstain(self) -> None:
+        for name in self._eligible_dusk_voters():
+            if name not in self._dusk_votes:
+                self._dusk_votes[name] = ""
+                reason = "克罗未投票（弃票）" if name == self.detective_name else "投票倒计时结束，视为弃票"
+                self._dusk_vote_reasons[name] = reason
+                if name == self.detective_name:
+                    self._dusk_crow_voted = True
+        self._record_vote_history_snapshot()
 
 
     def submit_crow_vote(self, target_name: str) -> dict:
@@ -800,7 +847,7 @@ class EngineDuskMixin:
             if self.phase != type(self.phase).DUSK_DISCUSSION:
                 return {"error": "Not in dusk discussion phase"}
             if not self._dusk_vote_active:
-                return {"error": "Dusk votes not yet generated"}
+                return {"error": "Dusk voting is not active"}
             if self._dusk_jail_target is not None:
                 return {"error": "Voting already resolved"}
             if getattr(self, "_dusk_crow_voted", False):
@@ -824,8 +871,11 @@ class EngineDuskMixin:
             voted_disp = display_name_for_person(target_name) if target_name else "弃票"
             self._log(f"🗳️ 克罗投票: {voted_disp}", "action")
 
-            # Auto-resolve immediately since all NPC votes are pre-generated
-            result = self._resolve_dusk_votes()
+            if self._all_dusk_votes_collected():
+                result = self._resolve_dusk_votes()
+            else:
+                self._record_vote_history_snapshot()
+                result = {"success": True, "pending": True, "vote_summary": self._build_vote_summary()}
             self._broadcast_state()
             return result
 
@@ -1056,7 +1106,34 @@ class EngineDuskMixin:
             self._place_in_prison(target_name, walk=True)
         except TypeError:
             self._place_in_prison(target_name)
-        self._send_crow_to_sheriff_office()
+        self._send_crow_to_prison_escort_target(target_name)
+
+
+    def _send_crow_to_prison_escort_target(self, target_name: str) -> None:
+        crow = self.agents.get(self.detective_name)
+        target = self.agents.get(target_name)
+        if not crow or not target:
+            self._send_crow_to_sheriff_office()
+            return
+        target_point = (
+            getattr(target, "target_x", target.x),
+            getattr(target, "target_y", target.y),
+        )
+        path_result = self._path_adjacent_to(
+            (crow.x, crow.y),
+            target_point,
+            blocked=self._occupied_tiles({self.detective_name, target_name}),
+            prefer_horizontal=True,
+        )
+        if path_result:
+            target_x, target_y, path = path_result
+            crow.target_x, crow.target_y = target_x, target_y
+            self.agent_paths[self.detective_name] = path
+            crow.runtime_state = "moving" if path else "idle"
+        else:
+            self._send_crow_to_sheriff_office()
+        crow.current_action = f"押送{display_name_for_person(target_name)}前往牢房"
+        crow.current_emoji = "🔒"
 
 
     def _place_in_prison(self, target_name: str, walk: bool = False):
@@ -1198,6 +1275,7 @@ class EngineDuskMixin:
             "abstain_count": abstain_count,
             "active": self._dusk_vote_active,
             "deadline": getattr(self, "_dusk_vote_deadline", None),
+            "seconds_remaining": max(0, int((getattr(self, "_dusk_vote_deadline", 0) or 0) - time.time())),
             "crow_voted": getattr(self, "_dusk_crow_voted", False),
             "discussion_active": getattr(self, "_dusk_discussion_active", False),
             "discussion_statements": list(getattr(self, "_dusk_discussion_statements", [])),

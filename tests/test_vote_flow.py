@@ -154,19 +154,22 @@ def test_autonomous_ai_lane_is_suspended_during_dusk(monkeypatch):
     assert not getattr(arthur, "_is_thinking", False)
 
 
-def test_dusk_discussion_uses_half_second_between_npc_statements(monkeypatch):
-    """Discussion waits for gathering, then publishes NPC statements with the configured gap."""
+def test_dusk_discussion_waits_three_seconds_after_every_npc_statement(monkeypatch):
+    """Live dusk discussion keeps every NPC statement readable, including the last one."""
     engine = _make_engine(monkeypatch)
-    monkeypatch.setitem(game_engine.CONFIG["game"], "gathering_departure_gap_seconds", 0.5)
+    engine._running = True
     sleeps = []
     monkeypatch.setattr(engine_dusk.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(
+        engine,
+        "_generate_single_dusk_discussion_statement",
+        lambda speaker_name, recent_dead, clue_text: f"{speaker_name} 发言",
+    )
 
-    engine._transition_to_dusk()
-    _arrive_dusk_participants(engine)
-    engine._begin_dusk_discussion_after_gathering()
+    engine._generate_dusk_discussion_statements()
 
     eligible = [n for n, a in engine.agents.items() if n != "Crow" and a.is_alive and n not in engine._jailed]
-    assert sleeps == [0.5] * (len(eligible) - 1)
+    assert sleeps == [3.0] * len(eligible)
     assert len(engine._dusk_discussion_statements) == len(eligible)
 
 

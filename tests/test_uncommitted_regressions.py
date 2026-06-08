@@ -131,7 +131,7 @@ def test_dusk_vote_ui_hides_vote_totals_and_has_only_footer_abstain_before_resul
     assert 'const showVoteButtons = stage === "voting" && voteSummary.active' in block
     assert 'const showVoteResults = ["results", "result"].includes(stage);' in block
     assert "showVoteResults ? `${Math.trunc(Number(count.count) || 0)}" in block
-    assert "showVoteResults && abstainers.length" in block
+    assert '(stage === "voting" || showVoteResults) && abstainers.length' in block
     assert 'footerAbstainBtn.id = "footer-abstain-btn";' in block
     assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));' in block
     assert 'id="abstain-vote-button"' not in block

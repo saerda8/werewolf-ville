@@ -1388,7 +1388,7 @@ def test_dusk_npc_facing_and_crow_abstain_button():
     assert "const isDuskDiscussionOrVoting = gameState && (" in html
     assert 'gameState.phase === "dusk_discussion" ||' in html
     assert 'gameState.phase === "dusk" ||' in html
-    assert '["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting_generating", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)' in html
+    assert '["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)' in html
     assert "if (isDuskDiscussionOrVoting) {" in html
     assert 'sprite.setTexture(key, "down-walk.000");' in html
 

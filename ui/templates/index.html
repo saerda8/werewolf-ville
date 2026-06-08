@@ -52,8 +52,9 @@ body.phase-locked #game-container { pointer-events: none; }
 .dusk-vote-name { font-weight: 800; color: #fff; }
 .dusk-vote-meta { margin-top: 3px; color: #aebbd5; font-size: 10px; }
 .dusk-vote-button, #confirm-vote-result {
-  border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer;
+  border: 0; border-radius: 6px; padding: 8px 14px; min-width: 64px; min-height: 38px; cursor: pointer;
   background: #d95743; color: #fff; font-weight: 800;
+  touch-action: manipulation;
 }
 .dusk-vote-button:hover, #confirm-vote-result:hover { background: #f06b55; }
 
@@ -1004,6 +1005,7 @@ let crowVoteSubmitting = false;
 let duskStatementSubmitting = false;
 let nightTransitionConfirming = false;
 let voteResultConfirming = false;
+let duskVoteCountdownTimer = null;
 let duskCameraPanKey = "";
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
 const BUBBLE_LIFETIME_SECONDS = 6;
@@ -1806,12 +1808,38 @@ function normalizeVoteCounts(voteSummary) {
   return result;
 }
 
+function duskVoteSecondsRemaining(voteSummary) {
+  const raw = Number(voteSummary.seconds_remaining);
+  if (Number.isFinite(raw) && raw >= 0) return Math.ceil(raw);
+  const deadline = Number(voteSummary.deadline || 0);
+  if (!deadline) return 0;
+  return Math.max(0, Math.ceil(deadline - Date.now() / 1000));
+}
+
+function ensureDuskVoteCountdownTimer(active) {
+  if (!active) {
+    if (duskVoteCountdownTimer) {
+      clearInterval(duskVoteCountdownTimer);
+      duskVoteCountdownTimer = null;
+    }
+    return;
+  }
+  if (duskVoteCountdownTimer) return;
+  duskVoteCountdownTimer = setInterval(() => {
+    if (!gameState || duskStage(gameState) !== "voting") {
+      ensureDuskVoteCountdownTimer(false);
+      return;
+    }
+    renderDuskVotingFlow(gameState);
+  }, 1000);
+}
+
 function submitCrowVote(name = "", clickedElement = null) {
   if (name === undefined || name === null || !gameState || crowVoteSubmitting) return;
   const voteSummary = gameState.vote_summary || {};
   const stage = duskStage(gameState);
   if (hasCrowVoted(voteSummary) || stage !== "voting" || voteSummary.active !== true) {
-    const msg = stage === "voting_generating" ? "居民投票生成中，请稍候。" : "投票尚未开始。";
+    const msg = stage === "voting" ? "投票状态同步中，请稍候。" : "投票尚未开始。";
     const countsEl = document.getElementById("voting-counts");
     if (countsEl) countsEl.textContent = msg;
     return;
@@ -2052,7 +2080,7 @@ function renderDuskVotingFlow(state) {
   const statementInput = document.getElementById("dusk-statement-input");
   const statementSubmit = document.getElementById("dusk-statement-submit");
   const crowInputStage = stage === "crow_statement" || stage === "crow_input";
-  const votingStages = ["voting_generating", "voting", "results", "result"];
+  const votingStages = ["voting", "results", "result"];
   const duskInteractionLocked = isDusk && stage !== "crow_statement" && stage !== "crow_input";
   document.body.classList.toggle("phase-locked", isDusk || isNight);
   const gameplayLocked = isDusk || isNight;
@@ -2080,7 +2108,6 @@ function renderDuskVotingFlow(state) {
     crow_statement: "轮到克罗最后发言",
     crow_input: "轮到克罗最后发言",
     vote_opening: "克罗正在宣布投票",
-    voting_generating: "居民正在形成投票判断",
     voting: "投票进行中",
     results: "投票结果",
     result: "投票结果",
@@ -2102,9 +2129,10 @@ function renderDuskVotingFlow(state) {
   }
 
   if (!votingPanel) return;
-  const showVotingPanel = isDusk && votingStages.includes(stage);
+  const showVotingPanel = isDusk && votingStages.includes(stage) && !voteResultConfirming;
   votingPanel.style.display = showVotingPanel ? "flex" : "none";
-  if (!isDusk || !votingStages.includes(stage)) return;
+  ensureDuskVoteCountdownTimer(isDusk && stage === "voting" && voteSummary.active === true && !voteResultConfirming);
+  if (!isDusk || !votingStages.includes(stage) || voteResultConfirming) return;
 
   const participants = eligibleDuskParticipants(state);
   const counts = normalizeVoteCounts(voteSummary);
@@ -2112,6 +2140,7 @@ function renderDuskVotingFlow(state) {
   const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;
   const showVoteButtons = stage === "voting" && voteSummary.active && (!hasCrowVoted(voteSummary) || crowVoteSubmitting);
   const showVoteResults = ["results", "result"].includes(stage);
+  const secondsLeft = duskVoteSecondsRemaining(voteSummary);
   const abstainers = [];
   Object.entries(voteSummary.votes || {}).forEach(([voter, vote]) => {
     const target = typeof vote === "string" ? vote : (vote && (vote.target || vote.target_name || vote.voted_for));
@@ -2126,10 +2155,13 @@ function renderDuskVotingFlow(state) {
     const row = document.createElement("div");
     row.className = `dusk-vote-row${name === winner ? " winner" : ""}`;
     const voterIcons = count.voters.map(voter => `<span class="dusk-voter-icon" title="${escapeHtml(getDisplayName(voter, state))}" style="background-image:url('${duskPortraitUrl(voter)}')"></span>`).join("");
+    const liveVoteMeta = voterIcons
+      ? `<span style="display:inline-flex;align-items:center;min-height:22px;">${voterIcons}</span>`
+      : (showVoteButtons ? "可投票，包括自己" : (crowHasVoted ? "等待其他居民投票" : "等待你的投票"));
     row.innerHTML = `
       <span class="dusk-portrait" title="${escapeHtml(getDisplayName(name, state))}" style="background-image:url('${duskPortraitUrl(name)}')"></span>
       <span><span class="dusk-vote-name">${escapeHtml(getDisplayName(name, state))}</span>
-      <span class="dusk-vote-meta">${showVoteResults ? `${Math.trunc(Number(count.count) || 0)} 票 ${voterIcons}` : (showVoteButtons ? "可投票，包括自己" : (crowHasVoted ? "已选择，等待计票" : "等待投票开始"))}</span></span>
+      <span class="dusk-vote-meta">${showVoteResults ? `${Math.trunc(Number(count.count) || 0)} 票 ${voterIcons}` : liveVoteMeta}</span></span>
     `;
     if (showVoteButtons) {
       const button = document.createElement("button");
@@ -2149,7 +2181,7 @@ function renderDuskVotingFlow(state) {
   const abstainersEl = document.getElementById("voting-abstainers");
   const abstainersListEl = document.getElementById("voting-abstainers-list");
   if (abstainersEl && abstainersListEl) {
-    if (showVoteResults && abstainers.length) {
+    if ((stage === "voting" || showVoteResults) && abstainers.length) {
       abstainersEl.style.display = "block";
       abstainersListEl.innerHTML = abstainers
         .map(voter => `<span class="dusk-voter-icon" title="${escapeHtml(getDisplayName(voter, state))}" style="background-image:url('${duskPortraitUrl(voter)}')"></span>`)
@@ -2162,21 +2194,18 @@ function renderDuskVotingFlow(state) {
 
   const countsEl = document.getElementById("voting-counts");
   if (countsEl) {
-    const voteGenerationPending = stage === "voting_generating" || (stage === "voting" && !voteSummary.active);
-    countsEl.textContent = voteGenerationPending
-      ? "居民投票生成中，请稍候。"
-      : (voteSummary.tie_broken_by_crow
+    countsEl.textContent = voteSummary.tie_broken_by_crow
       ? "最高票平票，按警长裁决权，由警长所投对象胜出。"
       : (crowVoteSubmitting
         ? "已选择，投票提交中，请稍候。"
-        : (crowHasVoted && stage === "voting" ? "克罗已投票，等待其他参与者完成投票。" : (showVoteButtons ? "请选择一名候选人，或使用底部按钮弃票。" : ""))));
+        : (stage === "voting"
+          ? `投票倒计时 ${secondsLeft} 秒。居民票会实时显示头像，未投者到时按弃票。`
+          : (showVoteButtons ? "请选择一名候选人，或使用底部按钮弃票。" : "")));
   }
   const actions = document.getElementById("jail-buttons");
   if (actions) {
     actions.innerHTML = "";
-    if (stage === "voting_generating" || (stage === "voting" && !voteSummary.active)) {
-      actions.innerHTML = '<div style="color:#f7d98a;">居民投票生成中，请稍候。</div>';
-    } else if (["results", "result"].includes(stage)) {
+    if (["results", "result"].includes(stage)) {
       actions.innerHTML = `<button id="confirm-vote-result" onclick="confirmVoteResult()">${voteResultConfirming ? "确认中..." : "确认结果"}</button>`;
       const confirmBtn = document.getElementById("confirm-vote-result");
       if (confirmBtn && voteResultConfirming) {
@@ -2228,6 +2257,8 @@ function renderDuskVotingFlow(state) {
       }
       footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));
       actions.appendChild(footerAbstainBtn);
+    } else if (stage === "voting") {
+      actions.innerHTML = `<div style="color:#f7d98a;">已投票，等待居民投票完成或倒计时结束（${secondsLeft}秒）。</div>`;
     }
   }
 }
@@ -2283,7 +2314,7 @@ function updateUI(state) {
   const newIsDusk = !isNight && (
     phase === "dusk_discussion" ||
     phase === "dusk" ||
-    ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting_generating", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(stage)
+    ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(stage)
   );
   scheduleDuskDiscussionCameraPan(state, newIsDusk, stage);
   if (newIsDusk && !isDusk) {
@@ -5225,7 +5256,7 @@ function update(time, delta) {
         const isDuskDiscussionOrVoting = gameState && (
           gameState.phase === "dusk_discussion" ||
           gameState.phase === "dusk" ||
-          ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting_generating", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)
+          ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)
         );
         if (isDuskDiscussionOrVoting) {
           sprite.lastDir = "down";
