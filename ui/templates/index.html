@@ -36,6 +36,7 @@ body.phase-locked #game-container { pointer-events: none; }
   gap: 8px; align-items: center; min-height: 48px; padding: 6px;
   margin-bottom: 6px; border: 1px solid rgba(142, 160, 196, 0.28);
   border-radius: 8px; background: rgba(15, 23, 42, 0.72);
+  position: relative;
 }
 .dusk-vote-row.winner {
   border-color: #ffdd57; background: rgba(117, 83, 18, 0.45);
@@ -48,15 +49,21 @@ body.phase-locked #game-container { pointer-events: none; }
   background-size: 300% 400%; background-position: 50% 0%; background-repeat: no-repeat;
 }
 .dusk-portrait { width: 34px; height: 34px; font-size: 15px; }
-.dusk-voter-icon { width: 22px; height: 22px; font-size: 10px; margin-left: -3px; }
+.dusk-voter-icon { width: 30px; height: 30px; font-size: 10px; margin-left: -4px; flex: 0 0 30px; }
 .dusk-vote-name { font-weight: 800; color: #fff; }
 .dusk-vote-meta { margin-top: 3px; color: #aebbd5; font-size: 10px; }
 .dusk-vote-button, #confirm-vote-result {
-  border: 0; border-radius: 6px; padding: 10px 16px; min-width: 74px; min-height: 44px; cursor: pointer;
+  border: 0; border-radius: 6px; padding: 12px 18px; min-width: 88px; min-height: 48px; cursor: pointer;
   background: #d95743; color: #fff; font-weight: 800;
   touch-action: manipulation; user-select: none; position: relative; z-index: 2;
 }
 .dusk-vote-button:hover, #confirm-vote-result:hover { background: #f06b55; }
+#voting-panel { z-index: 1300; pointer-events: auto; }
+#voting-votes, #jail-buttons { position: relative; z-index: 2; }
+#jail-buttons { flex-shrink: 0; }
+.dusk-vote-waiting {
+  color: #f7d98a; text-align: center; line-height: 1.5; padding: 8px 4px;
+}
 
 #night-transition-overlay {
   display: none; position: fixed; inset: 0; z-index: 1200;
@@ -1885,11 +1892,27 @@ function normalizeVoteCounts(voteSummary) {
 }
 
 function duskVoteSecondsRemaining(voteSummary) {
+  const deadline = Number(voteSummary.deadline || 0);
+  if (deadline) return Math.max(0, Math.ceil(deadline - Date.now() / 1000));
   const raw = Number(voteSummary.seconds_remaining);
   if (Number.isFinite(raw) && raw >= 0) return Math.ceil(raw);
-  const deadline = Number(voteSummary.deadline || 0);
-  if (!deadline) return 0;
-  return Math.max(0, Math.ceil(deadline - Date.now() / 1000));
+  return 0;
+}
+
+function refreshDuskVoteCountdownOnly() {
+  if (!gameState || duskStage(gameState) !== "voting") return;
+  const voteSummary = gameState.vote_summary || {};
+  const secondsLeft = duskVoteSecondsRemaining(voteSummary);
+  const countsEl = document.getElementById("voting-counts");
+  if (countsEl) {
+    countsEl.textContent = crowVoteSubmitting
+      ? "已选择，投票提交中，请稍候。"
+      : `投票倒计时 ${secondsLeft} 秒。已投票头像会实时显示，弃票名单在结果里展示。`;
+  }
+  const waitingEl = document.querySelector("#jail-buttons .dusk-vote-waiting");
+  if (waitingEl) {
+    waitingEl.textContent = `已投票，等待居民投票完成或倒计时结束（${secondsLeft}秒）。`;
+  }
 }
 
 function ensureDuskVoteCountdownTimer(active) {
@@ -1906,8 +1929,18 @@ function ensureDuskVoteCountdownTimer(active) {
       ensureDuskVoteCountdownTimer(false);
       return;
     }
-    renderDuskVotingFlow(gameState);
+    refreshDuskVoteCountdownOnly();
   }, 1000);
+}
+
+function hideDuskVoteActionsAfterClick() {
+  document.querySelectorAll(".dusk-vote-button").forEach(btn => btn.remove());
+  const footerAbstainBtn = document.getElementById("footer-abstain-btn");
+  if (footerAbstainBtn) footerAbstainBtn.remove();
+  const actions = document.getElementById("jail-buttons");
+  if (actions) {
+    actions.innerHTML = `<div class="dusk-vote-waiting">已投票，等待居民投票完成或倒计时结束。</div>`;
+  }
 }
 
 function submitCrowVote(name = "", clickedElement = null) {
@@ -1923,25 +1956,7 @@ function submitCrowVote(name = "", clickedElement = null) {
   crowVoteSubmitting = true;
   voteSummary.crow_vote_submitted = true;
   voteSummary.crow_vote = name || "";
-
-  if (clickedElement) {
-    clickedElement.disabled = true;
-    if (name) {
-      clickedElement.textContent = "已选择，投票中...";
-    } else {
-      clickedElement.textContent = "已选择弃票，投票中...";
-    }
-    clickedElement.style.opacity = "0.9";
-  }
-
-  const buttons = document.querySelectorAll(".dusk-vote-button");
-  buttons.forEach(btn => {
-    if (btn !== clickedElement) {
-      btn.disabled = true;
-      btn.style.opacity = "0.5";
-      btn.style.pointerEvents = "none";
-    }
-  });
+  hideDuskVoteActionsAfterClick();
   renderDuskVotingFlow(gameState);
   fetch("/api/submit_crow_vote", {
     method: "POST",
@@ -2197,14 +2212,12 @@ function renderDuskVotingFlow(state) {
     if (showVoteButtons) {
       const button = document.createElement("button");
       button.className = "dusk-vote-button";
-      const isThisTarget = crowVoteSubmitting && voteSummary.crow_vote === name;
-      button.textContent = isThisTarget ? "已选择，投票中..." : "投票";
-      if (crowHasVoted || crowVoteSubmitting) {
-        button.disabled = true;
-        button.style.opacity = isThisTarget ? "0.9" : "0.5";
-        button.style.pointerEvents = "none";
-      }
-      button.addEventListener("click", (e) => submitCrowVote(name, e.target));
+      button.textContent = "投票";
+      button.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        submitCrowVote(name, e.currentTarget);
+      });
+      button.addEventListener("click", (e) => submitCrowVote(name, e.currentTarget));
       row.appendChild(button);
     }
     rows.appendChild(row);
@@ -2237,7 +2250,7 @@ function renderDuskVotingFlow(state) {
   if (actions) {
     actions.innerHTML = "";
     if (["results", "result"].includes(stage)) {
-      actions.innerHTML = `<button id="confirm-vote-result" onclick="confirmVoteResult()">${voteResultConfirming ? "确认中..." : "确认结果"}</button>`;
+      actions.innerHTML = `<button id="confirm-vote-result" onpointerdown="event.preventDefault(); confirmVoteResult()" onclick="confirmVoteResult()">${voteResultConfirming ? "确认中..." : "确认结果"}</button>`;
       const confirmBtn = document.getElementById("confirm-vote-result");
       if (confirmBtn && voteResultConfirming) {
         confirmBtn.disabled = true;
@@ -2258,9 +2271,10 @@ function renderDuskVotingFlow(state) {
       footerAbstainBtn.style.fontSize = "13px";
       footerAbstainBtn.style.marginTop = "8px";
       footerAbstainBtn.style.transition = "all 0.2s ease";
-
-      const isAbstainTarget = crowVoteSubmitting && voteSummary.crow_vote === "";
-      footerAbstainBtn.textContent = isAbstainTarget ? "已选择弃票，投票中..." : "放弃投票 (弃票)";
+      footerAbstainBtn.style.minHeight = "48px";
+      footerAbstainBtn.style.position = "relative";
+      footerAbstainBtn.style.zIndex = "2";
+      footerAbstainBtn.textContent = "放弃投票 (弃票)";
 
       footerAbstainBtn.addEventListener("mouseover", () => {
         if (!footerAbstainBtn.disabled) {
@@ -2277,19 +2291,14 @@ function renderDuskVotingFlow(state) {
         }
       });
 
-      if (crowHasVoted || crowVoteSubmitting) {
-        footerAbstainBtn.disabled = true;
-        footerAbstainBtn.style.opacity = isAbstainTarget ? "0.9" : "0.5";
-        footerAbstainBtn.style.pointerEvents = "none";
-        if (isAbstainTarget) {
-          footerAbstainBtn.style.background = "linear-gradient(135deg, #d95743 0%, #a83d2e 100%)";
-          footerAbstainBtn.style.color = "#fff";
-        }
-      }
-      footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));
+      footerAbstainBtn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        submitCrowVote("", e.currentTarget);
+      });
+      footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.currentTarget));
       actions.appendChild(footerAbstainBtn);
     } else if (stage === "voting" && crowHasVoted) {
-      actions.innerHTML = `<div style="color:#f7d98a;">已投票，等待居民投票完成或倒计时结束（${secondsLeft}秒）。</div>`;
+      actions.innerHTML = `<div class="dusk-vote-waiting">已投票，等待居民投票完成或倒计时结束（${secondsLeft}秒）。</div>`;
     }
   }
 }
@@ -3931,6 +3940,18 @@ function bubbleSpeechText(speaker, payload) {
   }
   const speakerDisplayName = getDisplayName(speaker, gameState);
   const targetDisplayName = getDisplayName(target, gameState);
+  const publicDuskStages = new Set([
+    "knowledge_reveal",
+    "npc_discussion",
+    "discussion",
+    "crow_speaking",
+    "vote_opening",
+    "result_announcement",
+    "final_words",
+  ]);
+  if (isDusk && publicDuskStages.has(duskStage(gameState || {}))) {
+    return `${speakerDisplayName}说：${text}`;
+  }
 
   // Clean up any existing prefix starting with "对" and ending with "说：" or "说:"
   const prefixRegex = /^对\s*(.*?)\s*说[：:]\s*/;

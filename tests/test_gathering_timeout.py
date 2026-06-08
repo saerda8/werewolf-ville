@@ -27,6 +27,20 @@ def _make_engine(monkeypatch, seed=7):
     return game_engine.WerewolfGameEngine(random_seed=seed)
 
 
+def _make_real_map_engine(monkeypatch, seed=7):
+    monkeypatch.setattr(
+        game_engine.WerewolfGameEngine,
+        "_build_shared_spatial_memory",
+        lambda self: {},
+    )
+    monkeypatch.setattr(game_engine.Agent, "init_files", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "init_scratch_from_soul", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "load_shared_spatial_memory", lambda self, data: None)
+    monkeypatch.setattr(game_engine.Agent, "read_soul", lambda self: "test soul")
+    monkeypatch.setattr(game_engine.Agent, "read_memory", lambda self: "test memory")
+    return game_engine.WerewolfGameEngine(random_seed=seed)
+
+
 def test_late_round_one_response_is_ignored_after_timeout(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._init_gathering()
@@ -930,7 +944,7 @@ def test_crow_dismissal_waits_after_final_round_one_speaker(monkeypatch):
 
 def test_crow_buries_body_after_gathering(monkeypatch):
     """Test that when gathering finishes, Crow buries the body, updating its location, status, and speaking a statement."""
-    engine = _make_engine(monkeypatch)
+    engine = _make_real_map_engine(monkeypatch)
     engine._init_gathering()
 
     assert len(engine.bodies) > 0
@@ -949,6 +963,21 @@ def test_crow_buries_body_after_gathering(monkeypatch):
     assert initial_body.burying is True
     assert (initial_body.burial_target_x, initial_body.burial_target_y) == PARK_REAR_BURIAL_TARGET
     assert (initial_body.burial_target_x, initial_body.burial_target_y) != (12, 46)
+
+    path_result = engine._nearest_reachable_path(
+        (game_engine.INITIAL_BODY_SITE["x"], game_engine.INITIAL_BODY_SITE["y"]),
+        PARK_REAR_BURIAL_TARGET,
+        radius=6,
+        blocked=set(),
+    )
+    assert path_result is not None
+    _, _, burial_path = path_result
+    assert burial_path
+    assert burial_path[-1] == PARK_REAR_BURIAL_TARGET
+    assert all(y < 60 for _, y in burial_path), (
+        f"Burial path must not detour below the dormitory area: {burial_path}"
+    )
+    assert len(burial_path) < 50
 
     # Verify Crow's statement is in the chat bubbles
     assert "Crow" in engine.chat_bubbles

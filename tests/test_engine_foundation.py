@@ -2831,6 +2831,7 @@ def test_detective_chat_empty_response_keeps_lock_for_retry_window(monkeypatch):
     started_at = time.time()
     result = engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)
 
+    assert result.get("pending_response") is True
     assert result.get("response", "") == ""
     assert target.in_conversation_with == "Crow"
     assert detective.in_conversation_with is None

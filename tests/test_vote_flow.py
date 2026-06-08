@@ -35,6 +35,21 @@ def _make_engine(monkeypatch, seed=7):
     return game_engine.WerewolfGameEngine(random_seed=seed)
 
 
+def _make_real_map_engine(monkeypatch, seed=7):
+    monkeypatch.setattr(
+        game_engine.WerewolfGameEngine,
+        "_build_shared_spatial_memory",
+        lambda self: {},
+    )
+    monkeypatch.setattr(game_engine.Agent, "init_files", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "init_scratch_from_soul", lambda self: None)
+    monkeypatch.setattr(game_engine.Agent, "load_shared_spatial_memory", lambda self, data: None)
+    monkeypatch.setattr(game_engine.Agent, "read_soul", lambda self: "test soul")
+    monkeypatch.setattr(game_engine.Agent, "read_memory", lambda self: "test memory")
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "{}")
+    return game_engine.WerewolfGameEngine(random_seed=seed)
+
+
 def _arrive_dusk_participants(engine):
     for name in engine._eligible_dusk_participants():
         agent = engine.agents[name]
@@ -623,6 +638,47 @@ def test_confirm_vote_result_jails_only_resolved_winner(monkeypatch):
     assert engine._dusk_stage == "escorting"
 
 
+def test_prison_escort_real_map_moves_target_and_reaches_cell(monkeypatch):
+    engine = _make_real_map_engine(monkeypatch)
+    target_name = "Arthur Burton"
+    target = engine.agents[target_name]
+    crow = engine.agents["Crow"]
+    start = (game_engine.INITIAL_BODY_SITE["x"], game_engine.INITIAL_BODY_SITE["y"])
+    target.x, target.y = start
+    target.target_x, target.target_y = start
+    crow.x, crow.y = start[0] - 1, start[1]
+    crow.target_x, crow.target_y = crow.x, crow.y
+    engine.phase = game_engine.GamePhase.DUSK_DISCUSSION
+    engine._dusk_stage = "escorting"
+    engine._dusk_jail_target = target_name
+    engine._jailed.add(target_name)
+
+    engine._start_prison_escort(target_name)
+
+    assert (target.target_x, target.target_y) != start
+    assert engine.agent_paths.get(target_name)
+    assert (crow.target_x, crow.target_y) not in set(engine.agent_paths[target_name][-3:])
+
+    engine._move_agents()
+    engine._dusk_tick()
+
+    assert (target.x, target.y) != start
+
+    for _ in range(200):
+        if not engine.agent_paths.get(target_name) and (
+            target.x,
+            target.y,
+        ) == (target.target_x, target.target_y):
+            break
+        engine._move_agents()
+        engine._dusk_tick()
+
+    cell_key = engine._get_prison_cell(target_name)
+    assert target.current_location == engine_dusk.SHERIFF_AREA[cell_key]["name"]
+    assert (crow.x, crow.y) != (25, 69)
+    assert engine.phase == game_engine.GamePhase.NIGHT
+
+
 def test_dusk_discussion_replaces_filler_statement(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._transition_to_dusk()
@@ -640,6 +696,22 @@ def test_dusk_discussion_replaces_filler_statement(monkeypatch):
     for item in engine._dusk_discussion_statements:
         assert not engine_dusk._is_dusk_filler_statement(item["text"])
         assert "先听" not in item["text"]
+
+
+def test_dusk_public_statement_bubble_has_no_conversation_target(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    _arrive_dusk_participants(engine)
+    engine._dusk_stage = "npc_discussion"
+
+    engine._generate_dusk_discussion_statements()
+
+    assert engine._dusk_discussion_statements
+    for item in engine._dusk_discussion_statements:
+        speaker = item["speaker"]
+        bubble = engine.chat_bubbles[speaker]
+        assert bubble["text"] == item["text"]
+        assert bubble["target"] == ""
 
 
 def test_confirm_vote_result_holds_final_words_before_prison(monkeypatch):

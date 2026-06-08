@@ -197,7 +197,8 @@ def test_dusk_vote_submission_hides_vote_actions_and_confirms_without_delay():
     assert 'const showVoteButtons = stage === "voting" && voteSummary.active && !crowHasVoted;' in render_block
     assert 'else if (stage === "voting" && crowHasVoted)' in render_block
     assert 'voteSummary.crow_vote === undefined' not in render_block
-    assert 'const isAbstainTarget = crowVoteSubmitting && voteSummary.crow_vote === "";' in render_block
+    assert 'footerAbstainBtn.textContent = "放弃投票 (弃票)";' in render_block
+    assert '已选择弃票，投票中...' not in render_block
     assert 'fetch("/api/confirm_vote_result", {method: "POST"})' in confirm_block
     assert 'socket.emit("confirm_vote_result");' not in confirm_block
     assert "}, 2500);" not in confirm_block
@@ -986,7 +987,7 @@ def test_vote_rows_support_self_vote_then_hide_all_vote_buttons():
     assert 'row.className = `dusk-vote-row' in html
     assert 'class="dusk-portrait"' in html
     assert 'button.className = "dusk-vote-button";' in html
-    assert "submitCrowVote(name, e.target)" in html
+    assert "submitCrowVote(name, e.currentTarget)" in html
     assert 'fetch("/api/submit_crow_vote"' in html
     assert 'fetch("/api/submit_crow_vote"' in html
     assert "const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;" in html
@@ -1236,15 +1237,14 @@ def test_crow_vote_disabled_submitting_lock():
     # 2. Verify lock check in submitCrowVote
     assert 'if (name === undefined || name === null || !gameState || crowVoteSubmitting) return;' in html
 
-    # 3. Verify setting the lock and disabling buttons locally on click
+    # 3. Verify setting the lock and removing vote actions locally on click
     assert 'crowVoteSubmitting = true;' in html
-    assert 'const buttons = document.querySelectorAll(".dusk-vote-button");' in html
-    assert 'btn.disabled = true;' in html
-    assert 'btn.style.opacity = "0.5";' in html
-    assert 'btn.style.pointerEvents = "none";' in html
+    assert "hideDuskVoteActionsAfterClick();" in html
+    assert 'document.querySelectorAll(".dusk-vote-button").forEach(btn => btn.remove());' in html
+    assert "footerAbstainBtn.remove();" in html
 
     # 4. Verify rendering logic honors the lock state
-    assert 'if (crowHasVoted || crowVoteSubmitting) {' in html
+    assert 'const showVoteButtons = stage === "voting" && voteSummary.active && !crowHasVoted;' in html
 
     # 5. Verify reset of the lock when state is updated
     assert 'crowVoteSubmitting = false;' in html
@@ -1314,10 +1314,36 @@ def test_vote_submission_disables_buttons_immediately():
     assert 'btn.disabled = true' in html
     assert 'id="voting-abstainers"' in html
     assert 'footerAbstainBtn.id = "footer-abstain-btn";' in html
-    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));' in html
+    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.currentTarget));' in html
     assert 'abstainBtn.id = "abstain-vote-button";' not in html
     assert 'fetch("/api/submit_crow_vote"' in html
     assert 'socket.emit("submit_crow_vote"' not in html
+
+
+def test_dusk_vote_click_removes_actions_and_keeps_waiting_state_clean():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    submit_start = html.index("function submitCrowVote")
+    submit_end = html.index("function confirmVoteResult()", submit_start)
+    submit_block = html[submit_start:submit_end]
+    render_start = html.index("function renderDuskVotingFlow(state)")
+    render_end = html.index("function renderVoteHistory(state)", render_start)
+    render_block = html[render_start:render_end]
+
+    assert "function hideDuskVoteActionsAfterClick()" in html
+    assert "hideDuskVoteActionsAfterClick();" in submit_block
+    assert 'document.querySelectorAll(".dusk-vote-button").forEach(btn => btn.remove());' in html
+    assert 'const footerAbstainBtn = document.getElementById("footer-abstain-btn");' in html
+    assert "footerAbstainBtn.remove();" in html
+    assert "已选择弃票，投票中..." not in submit_block
+    assert "已选择弃票，投票中..." not in render_block
+    assert 'actions.innerHTML = `<div class="dusk-vote-waiting"' in render_block
+    assert ".dusk-voter-icon { width: 30px; height: 30px;" in html
+    assert "min-width: 88px; min-height: 48px;" in html
+    assert "#voting-panel { z-index: 1300;" in html
+    assert "function refreshDuskVoteCountdownOnly()" in html
+    assert "refreshDuskVoteCountdownOnly();" in html
+    assert 'button.addEventListener("pointerdown"' in html
+    assert 'onpointerdown="event.preventDefault(); confirmVoteResult()"' in html
 
 
 def test_dusk_discussion_forces_front_facing_sprites():
@@ -1415,6 +1441,6 @@ def test_dusk_npc_facing_and_crow_abstain_button():
 
     # 2. Verify Voting UI includes a Crow abstain/skip/no-vote button
     assert 'footerAbstainBtn.id = "footer-abstain-btn";' in html
-    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));' in html
+    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.currentTarget));' in html
     assert '放弃投票' in html
     assert '本轮不投票（弃票）' not in html

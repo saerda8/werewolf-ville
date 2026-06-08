@@ -1135,14 +1135,18 @@ class EngineDuskMixin:
         if not crow or not target:
             self._send_crow_to_sheriff_office()
             return
+        target_path = list(self.agent_paths.get(target_name, []))
         target_point = (
             getattr(target, "target_x", target.x),
             getattr(target, "target_y", target.y),
         )
+        blocked = self._occupied_tiles({self.detective_name, target_name})
+        if target_path:
+            blocked.update(target_path[-3:])
         path_result = self._path_adjacent_to(
             (crow.x, crow.y),
             target_point,
-            blocked=self._occupied_tiles({self.detective_name, target_name}),
+            blocked=blocked,
             prefer_horizontal=True,
         )
         if path_result:

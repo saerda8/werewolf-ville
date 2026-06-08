@@ -2144,17 +2144,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             reached_burial_target = (
 
-                abs(crow.x - getattr(body, "burial_target_x", 12))
+                abs(crow.x - getattr(body, "burial_target_x", 24))
 
-                + abs(crow.y - getattr(body, "burial_target_y", 46))
+                + abs(crow.y - getattr(body, "burial_target_y", 42))
 
             ) <= 1
 
             if reached_navigation_target or reached_burial_target:
 
-                body.x = getattr(body, "burial_target_x", 12)
+                body.x = getattr(body, "burial_target_x", 24)
 
-                body.y = getattr(body, "burial_target_y", 46)
+                body.y = getattr(body, "burial_target_y", 42)
 
                 body.burying = False
 
@@ -8364,6 +8364,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     or (agent.x, agent.y) != (agent.target_x, agent.target_y)
                 )
             )
+            escort_block_tiles = set()
+            if jailed_escort_moving:
+                crow_agent = self.agents.get(self.detective_name)
+                if crow_agent:
+                    escort_block_tiles.add((crow_agent.x, crow_agent.y))
 
             if name in self._jailed and not jailed_escort_moving:
 
@@ -8388,7 +8393,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 if getattr(agent, "runtime_state", "") == "moving" and getattr(agent, "_pending_action", None):
                     self._arrive_at_pending_action(name, agent)
-                    loc = self._reverse_lookup_location(agent.x, agent.y)
+                    loc = (
+                        SHERIFF_AREA[self._get_prison_cell(name)]["name"]
+                        if name in self._jailed
+                        else self._reverse_lookup_location(agent.x, agent.y)
+                    )
                     agent.current_location = loc
                     continue
 
@@ -8402,7 +8411,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     # 更新 current_location 为反查地名（避免坐标泄漏到日志）
 
-                    loc = self._reverse_lookup_location(agent.x, agent.y)
+                    loc = (
+                        SHERIFF_AREA[self._get_prison_cell(name)]["name"]
+                        if name in self._jailed
+                        else self._reverse_lookup_location(agent.x, agent.y)
+                    )
 
                     agent.current_location = loc
 
@@ -8433,6 +8446,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if need_repath:
 
                 blocked_tiles = self._occupied_tiles({name})
+                if escort_block_tiles:
+                    blocked_tiles -= escort_block_tiles
 
                 new_path = self._find_navigation_path(
 
@@ -8508,7 +8523,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     next_pos = path[0]
 
-                    if next_pos in self._occupied_tiles({name}):
+                    if next_pos in self._occupied_tiles({name}) and next_pos not in escort_block_tiles:
 
                         self.agent_paths.pop(name, None)
 
@@ -8528,7 +8543,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     self.agent_paths.pop(name, None)
 
-                    loc = self._reverse_lookup_location(agent.x, agent.y)
+                    loc = (
+                        SHERIFF_AREA[self._get_prison_cell(name)]["name"]
+                        if name in self._jailed
+                        else self._reverse_lookup_location(agent.x, agent.y)
+                    )
 
                     agent.current_location = loc
 
@@ -9859,7 +9878,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     priority=True,
 
-                    max_retries=0,
+                    max_retries=None,
 
                 )
 
@@ -9913,14 +9932,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
             if not response or not response.strip():
-                if not getattr(self, "_running", False):
+                if time.time() < retry_deadline:
                     detail = get_last_error_for_agent(target_name) or "模型返回为空"
                     self._log(
-                        f"[模型等待/空结果，保持真实谈话锁] {display_name_for_person(target_name)} 回复克罗：{detail}",
+                        f"[模型等待/空结果，继续保持真实谈话锁] {display_name_for_person(target_name)} 回复克罗：{detail}",
                         "system",
                     )
                     self._broadcast_state()
                     return {
+                        "pending_response": True,
                         "no_response": True,
                         "response": "",
                         "remaining_chats": CONFIG["conversation"]["detective_normal_chat_limit"]
