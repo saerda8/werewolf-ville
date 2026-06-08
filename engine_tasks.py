@@ -23,25 +23,20 @@ class EngineTasksMixin:
 
         if self.day >= 2:
             bullet_done = self._silver_bullet_acquired
-            tasks.append({
-                "id": "silver_bullet",
-                "label": "获取银子弹工具",
-                "description": "前往哈维橡树五金店，向亚瑟·伯顿获取银子弹工具",
-                "done": 1 if bullet_done else 0,
-                "total": 1,
-                "complete": bullet_done,
-                "daily": False,
-            })
-
             jewelry_done = self._silver_jewelry_acquired
+            silver_done_today = bool(getattr(self, "_silver_task_done_today", None))
             tasks.append({
-                "id": "silver_jewelry",
-                "label": "获取银饰物",
-                "description": "找到银饰物持有者并获取银饰物",
-                "done": 1 if jewelry_done else 0,
+                "id": "silver_resource_choice",
+                "label": "银器资源",
+                "description": "通过深挖向 NPC 获取银制首饰，或前往五金店取得制造子弹的工具（二选一）。完成任意一项即完成。",
+                "done": 1 if (silver_done_today or bullet_done or jewelry_done) else 0,
                 "total": 1,
-                "complete": jewelry_done,
+                "complete": silver_done_today or bullet_done or jewelry_done,
                 "daily": False,
+                "silver_bullet_acquired": bullet_done,
+                "silver_jewelry_acquired": jewelry_done,
+                "silver_task_done_today": getattr(self, "_silver_task_done_today", None),
+                "available_today": not silver_done_today,
             })
 
             if self.day >= 4 and bullet_done and jewelry_done and not self._silver_bullet_crafted:
@@ -54,31 +49,5 @@ class EngineTasksMixin:
                     "complete": False,
                     "daily": False,
                 })
-
-        if self.day == 2:
-            tasks.append({
-                "id": "day2_objective",
-                "label": "第二天目标",
-                "description": "前往哈维橡树五金店获取银子弹工具，或找到银饰物持有者",
-                "done": 1 if (bullet_done or jewelry_done) else 0,
-                "total": 1,
-                "complete": (bullet_done or jewelry_done),
-                "daily": False,
-            })
-        elif self.day == 3:
-            missing = []
-            if not self._silver_bullet_acquired:
-                missing.append("银子弹工具")
-            if not self._silver_jewelry_acquired:
-                missing.append("银饰物")
-            tasks.append({
-                "id": "day3_objective",
-                "label": "第三天目标",
-                "description": f"获取缺失的银器: {'、'.join(missing)}" if missing else "银器已齐全",
-                "done": 0 if missing else 1,
-                "total": 1,
-                "complete": not bool(missing),
-                "daily": False,
-            })
 
         return tasks

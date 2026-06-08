@@ -968,13 +968,13 @@ def test_vote_rows_support_self_vote_then_hide_all_vote_buttons():
     assert 'row.className = `dusk-vote-row' in html
     assert 'class="dusk-portrait"' in html
     assert 'button.className = "dusk-vote-button";' in html
-    assert "submitCrowVote(name)" in html
+    assert "submitCrowVote(name, e.target)" in html
     assert 'fetch("/api/submit_crow_vote"' in html
     assert 'fetch("/api/submit_crow_vote"' in html
     assert "const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;" in html
     assert "crowVoteSubmitting = true;" in html
     assert "voteSummary.crow_voted === true" in html
-    assert "const showVoteButtons = stage === \"voting\" && !crowHasVoted;" in html
+    assert "const showVoteButtons = stage === \"voting\" && voteSummary.active && (!hasCrowVoted(voteSummary) || crowVoteSubmitting);" in html
 
 
 def test_vote_results_use_backend_winner_integer_counts_and_voter_icons():
@@ -1292,8 +1292,9 @@ def test_vote_submission_disables_buttons_immediately():
     assert 'crowVoteSubmitting = true;' in html
     assert 'btn.disabled = true' in html
     assert 'id="voting-abstainers"' in html
-    assert 'abstainBtn.id = "abstain-vote-button";' in html
-    assert 'submitCrowVote("")' in html
+    assert 'footerAbstainBtn.id = "footer-abstain-btn";' in html
+    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));' in html
+    assert 'abstainBtn.id = "abstain-vote-button";' not in html
     assert 'fetch("/api/submit_crow_vote"' in html
     assert 'socket.emit("submit_crow_vote"' not in html
 
@@ -1387,12 +1388,12 @@ def test_dusk_npc_facing_and_crow_abstain_button():
     assert "const isDuskDiscussionOrVoting = gameState && (" in html
     assert 'gameState.phase === "dusk_discussion" ||' in html
     assert 'gameState.phase === "dusk" ||' in html
-    assert '["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(liveDuskStage)' in html
+    assert '["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting_generating", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)' in html
     assert "if (isDuskDiscussionOrVoting) {" in html
     assert 'sprite.setTexture(key, "down-walk.000");' in html
 
     # 2. Verify Voting UI includes a Crow abstain/skip/no-vote button
-    assert 'abstainBtn.id = "abstain-vote-button";' in html
-    assert 'submitCrowVote("")' in html
+    assert 'footerAbstainBtn.id = "footer-abstain-btn";' in html
+    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));' in html
     assert '放弃投票' in html
-    assert '本轮不投票（弃票）' in html
+    assert '本轮不投票（弃票）' not in html

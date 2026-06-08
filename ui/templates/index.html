@@ -1009,6 +1009,14 @@ const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说�
 const BUBBLE_LIFETIME_SECONDS = 6;
 let thoughtBubbleCache = {};
 let blueBubbleCache = {};
+const SILVER_TOOL_SHELF_FALLBACK_TILE = { x: 63, y: 47 };
+let silverToolShelfTile = Object.assign({}, SILVER_TOOL_SHELF_FALLBACK_TILE);
+let silverToolMarker = null;
+let silverToolMarkerParts = {};
+let silverToolAcquirePending = false;
+let silverToolMarkerFeedback = "";
+let silverToolMarkerFeedbackUntil = 0;
+let silverToolMarkerClickUntil = 0;
 
 function isActionStartBubbleHtml(html) {
   return String(html || "").includes("开始行动：");
@@ -1255,6 +1263,179 @@ function fetchCurrentState() {
       updateUI(state);
       return state;
     });
+}
+
+function silverResourceTask(state) {
+  const tasks = Array.isArray(state && state.daily_tasks) ? state.daily_tasks : [];
+  return tasks.find(task => task && task.id === "silver_resource_choice") || null;
+}
+
+function hasSilverBulletTool(state) {
+  if (!state) return false;
+  const silverTask = silverResourceTask(state);
+  let acquired = false;
+  if (silverTask && silverTask.silver_bullet_acquired !== undefined) acquired = acquired || !!silverTask.silver_bullet_acquired;
+  if (silverTask && silverTask.silver_task_done_today === "silver_bullet") acquired = true;
+  if (state.silver_bullet_acquired !== undefined) acquired = acquired || !!state.silver_bullet_acquired;
+  if (state.silver_tool_acquired !== undefined) acquired = acquired || !!state.silver_tool_acquired;
+  if (state.silver_tool !== undefined) acquired = acquired || !!state.silver_tool;
+  if (typeof state.silver_tool_status === "number") acquired = acquired || state.silver_tool_status >= 1;
+  if (state.silver_tool_status !== undefined) {
+    acquired = acquired || ["acquired", "completed", "true", "ready"].includes(String(state.silver_tool_status).toLowerCase());
+  }
+  return acquired;
+}
+
+function isSilverToolMarkerDay(state) {
+  const day = Number(state && state.day);
+  return day === 2 || day === 3;
+}
+
+function isCrowNearSupplyStore(state) {
+  const crow = state && state.personas && state.personas["Crow"];
+  if (!crow || !Number.isFinite(Number(crow.x)) || !Number.isFinite(Number(crow.y))) return false;
+  const dist = Math.abs(Number(crow.x) - silverToolShelfTile.x) +
+    Math.abs(Number(crow.y) - silverToolShelfTile.y);
+  return dist <= 4;
+}
+
+function shouldShowSilverToolMarker(state) {
+  return !!sceneRef && !!silverToolMarker && isSilverToolMarkerDay(state) && !isNight && !isDusk && !hasSilverBulletTool(state);
+}
+
+function currentSilverToolMarkerLabel(state) {
+  if (silverToolAcquirePending) return "处理中...";
+  if (silverToolMarkerFeedback && Date.now() < silverToolMarkerFeedbackUntil) return silverToolMarkerFeedback;
+  return isCrowNearSupplyStore(state) ? "点击获取工具" : "靠近五金店";
+}
+
+function setSilverToolMarkerFeedback(text, ms = 1400) {
+  silverToolMarkerFeedback = text || "";
+  silverToolMarkerFeedbackUntil = Date.now() + ms;
+  updateSilverToolMarker(gameState);
+}
+
+function setSilverToolShelfTile(x, y) {
+  if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return;
+  silverToolShelfTile = { x: Number(x), y: Number(y) };
+  if (silverToolMarker) {
+    silverToolMarker.setPosition(silverToolShelfTile.x * TILE_W + 16, silverToolShelfTile.y * TILE_W - 18);
+  }
+}
+
+function drawSilverToolMarkerHalo(color = 0xffdd57) {
+  const halo = silverToolMarkerParts.halo;
+  if (!halo) return;
+  halo.clear();
+  halo.fillStyle(color, 0.2);
+  halo.fillCircle(0, 0, 18);
+  halo.lineStyle(2, color, 0.95);
+  halo.strokeCircle(0, 0, 14);
+  halo.lineStyle(1, 0xffffff, 0.8);
+  halo.beginPath();
+  halo.moveTo(0, -23);
+  halo.lineTo(0, -14);
+  halo.moveTo(0, 14);
+  halo.lineTo(0, 23);
+  halo.moveTo(-23, 0);
+  halo.lineTo(-14, 0);
+  halo.moveTo(14, 0);
+  halo.lineTo(23, 0);
+  halo.strokePath();
+}
+
+function createSilverToolMarker(scene) {
+  if (!scene || silverToolMarker) return;
+  const marker = scene.add.container(0, 0);
+  const halo = scene.add.graphics();
+  const star = scene.add.text(0, -1, "✦", {
+    font: "bold 22px monospace",
+    fill: "#fff7a8",
+    stroke: "#9c5d00",
+    strokeThickness: 2
+  }).setOrigin(0.5);
+  const label = scene.add.text(0, 25, "靠近五金店", {
+    font: "bold 10px monospace",
+    fill: "#151515",
+    backgroundColor: "rgba(255, 221, 87, 0.92)",
+    padding: { x: 5, y: 2 }
+  }).setOrigin(0.5);
+  const hint = scene.add.text(0, 41, "银弹工具在这里", {
+    font: "bold 9px monospace",
+    fill: "#ffffff",
+    backgroundColor: "rgba(15, 24, 48, 0.78)",
+    padding: { x: 4, y: 1 }
+  }).setOrigin(0.5);
+
+  marker.add([halo, star, label, hint]);
+  marker.setDepth(24);
+  marker.setSize(92, 66);
+  marker.setInteractive(new Phaser.Geom.Rectangle(-46, -28, 92, 74), Phaser.Geom.Rectangle.Contains);
+  marker.on("pointerdown", acquireSilverBulletToolFromShelf);
+  marker.on("pointerover", () => marker.setScale(1.08));
+  marker.on("pointerout", () => marker.setScale(1));
+  scene.tweens.add({
+    targets: marker,
+    alpha: { from: 0.75, to: 1 },
+    yoyo: true,
+    repeat: -1,
+    duration: 650,
+    ease: "Sine.easeInOut"
+  });
+
+  silverToolMarker = marker;
+  silverToolMarkerParts = { halo, star, label, hint };
+  drawSilverToolMarkerHalo();
+  setSilverToolShelfTile(silverToolShelfTile.x, silverToolShelfTile.y);
+  updateSilverToolMarker(gameState);
+}
+
+function updateSilverToolMarker(state) {
+  if (!silverToolMarker) return;
+  const visible = shouldShowSilverToolMarker(state);
+  silverToolMarker.setVisible(visible);
+  if (!visible) return;
+
+  const label = currentSilverToolMarkerLabel(state);
+  const near = isCrowNearSupplyStore(state);
+  const labelEl = silverToolMarkerParts.label;
+  const hintEl = silverToolMarkerParts.hint;
+  const haloColor = silverToolAcquirePending ? 0x9fd6ff : (near ? 0xffdd57 : 0xf7b955);
+  if (labelEl) labelEl.setText(label);
+  if (hintEl) hintEl.setText(near ? "银弹工具" : "银弹工具在这里");
+  drawSilverToolMarkerHalo(haloColor);
+}
+
+async function acquireSilverBulletToolFromShelf(pointer, localX, localY, event) {
+  silverToolMarkerClickUntil = Date.now() + 250;
+  if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+  if (pointer && pointer.event && typeof pointer.event.stopPropagation === "function") {
+    pointer.event.stopPropagation();
+  }
+  if (silverToolAcquirePending || !gameState || !shouldShowSilverToolMarker(gameState)) return;
+
+  silverToolAcquirePending = true;
+  setSilverToolMarkerFeedback("处理中...", 3000);
+  try {
+    const resp = await fetch("/api/acquire_silver_bullet", { method: "POST" });
+    const result = await resp.json();
+    if (result && result.success) {
+      setSilverToolMarkerFeedback(result.already_acquired ? "已获取" : "已获取工具", 900);
+      if (gameState) gameState.silver_bullet_acquired = true;
+    } else {
+      setSilverToolMarkerFeedback((result && (result.error || result.message)) || "未获取", 1600);
+    }
+  } catch (err) {
+    setSilverToolMarkerFeedback("请求失败", 1600);
+  } finally {
+    silverToolAcquirePending = false;
+    try {
+      await fetchCurrentState();
+    } catch (err) {
+      setSilverToolMarkerFeedback("刷新失败", 1600);
+    }
+    updateSilverToolMarker(gameState);
+  }
 }
 
 function deepDiveRemaining(state) {
@@ -1628,7 +1809,13 @@ function normalizeVoteCounts(voteSummary) {
 function submitCrowVote(name = "", clickedElement = null) {
   if (name === undefined || name === null || !gameState || crowVoteSubmitting) return;
   const voteSummary = gameState.vote_summary || {};
-  if (hasCrowVoted(voteSummary) || duskStage(gameState) !== "voting" || voteSummary.active !== true) return;
+  const stage = duskStage(gameState);
+  if (hasCrowVoted(voteSummary) || stage !== "voting" || voteSummary.active !== true) {
+    const msg = stage === "voting_generating" ? "居民投票生成中，请稍候。" : "投票尚未开始。";
+    const countsEl = document.getElementById("voting-counts");
+    if (countsEl) countsEl.textContent = msg;
+    return;
+  }
   crowVoteSubmitting = true;
   voteSummary.crow_vote_submitted = true;
   voteSummary.crow_vote = name || "";
@@ -1636,9 +1823,9 @@ function submitCrowVote(name = "", clickedElement = null) {
   if (clickedElement) {
     clickedElement.disabled = true;
     if (name) {
-      clickedElement.textContent = "投票中...";
+      clickedElement.textContent = "已选择，投票中...";
     } else {
-      clickedElement.textContent = clickedElement.id === "footer-abstain-btn" ? "放弃投票 (弃票中...)" : "弃票中...";
+      clickedElement.textContent = "已选择弃票，投票中...";
     }
     clickedElement.style.opacity = "0.9";
   }
@@ -1688,8 +1875,28 @@ function confirmVoteResult() {
   }
   voteResultConfirming = true;
   renderDuskVotingFlow(gameState);
+  if (panel) panel.style.display = "none";
   if (socket && socket.connected) {
     socket.emit("confirm_vote_result");
+    setTimeout(() => {
+      if (!voteResultConfirming) return;
+      fetch("/api/confirm_vote_result", {method: "POST"})
+        .then(r => r.json())
+        .then(resp => {
+          if (resp && resp.error) {
+            voteResultConfirming = false;
+            addChatMsg("系统", resp.error, true);
+            if (panel) panel.style.display = "flex";
+          } else {
+            if (panel) panel.style.display = "none";
+          }
+          fetchCurrentState();
+        })
+        .catch(() => {
+          voteResultConfirming = false;
+          fetchCurrentState();
+        });
+    }, 2500);
   } else {
     fetch("/api/confirm_vote_result", {method: "POST"})
       .then(r => r.json())
@@ -1845,7 +2052,7 @@ function renderDuskVotingFlow(state) {
   const statementInput = document.getElementById("dusk-statement-input");
   const statementSubmit = document.getElementById("dusk-statement-submit");
   const crowInputStage = stage === "crow_statement" || stage === "crow_input";
-  const votingStages = ["voting", "results", "result"];
+  const votingStages = ["voting_generating", "voting", "results", "result"];
   const duskInteractionLocked = isDusk && stage !== "crow_statement" && stage !== "crow_input";
   document.body.classList.toggle("phase-locked", isDusk || isNight);
   const gameplayLocked = isDusk || isNight;
@@ -1872,9 +2079,14 @@ function renderDuskVotingFlow(state) {
     discussion: "居民按顺序讨论中",
     crow_statement: "轮到克罗最后发言",
     crow_input: "轮到克罗最后发言",
+    vote_opening: "克罗正在宣布投票",
+    voting_generating: "居民正在形成投票判断",
     voting: "投票进行中",
     results: "投票结果",
     result: "投票结果",
+    result_announcement_pending: "投票结果确认中",
+    result_announcement: "克罗正在宣布结果",
+    final_words: "被投出者正在发言",
     escorting: "克罗正在押送最高票者",
     escort: "克罗正在押送最高票者"
   };
@@ -1899,6 +2111,7 @@ function renderDuskVotingFlow(state) {
   const winner = voteSummary.winner || voteSummary.jail_target || "";
   const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;
   const showVoteButtons = stage === "voting" && voteSummary.active && (!hasCrowVoted(voteSummary) || crowVoteSubmitting);
+  const showVoteResults = ["results", "result"].includes(stage);
   const abstainers = [];
   Object.entries(voteSummary.votes || {}).forEach(([voter, vote]) => {
     const target = typeof vote === "string" ? vote : (vote && (vote.target || vote.target_name || vote.voted_for));
@@ -1916,13 +2129,13 @@ function renderDuskVotingFlow(state) {
     row.innerHTML = `
       <span class="dusk-portrait" title="${escapeHtml(getDisplayName(name, state))}" style="background-image:url('${duskPortraitUrl(name)}')"></span>
       <span><span class="dusk-vote-name">${escapeHtml(getDisplayName(name, state))}</span>
-      <span class="dusk-vote-meta">${stage === "voting" ? (crowHasVoted ? "已投票，等待其他人" : "可投票，包括自己") : `${Math.trunc(Number(count.count) || 0)} 票 ${voterIcons}`}</span></span>
+      <span class="dusk-vote-meta">${showVoteResults ? `${Math.trunc(Number(count.count) || 0)} 票 ${voterIcons}` : (showVoteButtons ? "可投票，包括自己" : (crowHasVoted ? "已选择，等待计票" : "等待投票开始"))}</span></span>
     `;
     if (showVoteButtons) {
       const button = document.createElement("button");
       button.className = "dusk-vote-button";
       const isThisTarget = crowVoteSubmitting && voteSummary.crow_vote === name;
-      button.textContent = isThisTarget ? "投票中..." : "投票";
+      button.textContent = isThisTarget ? "已选择，投票中..." : "投票";
       if (crowHasVoted || crowVoteSubmitting) {
         button.disabled = true;
         button.style.opacity = isThisTarget ? "0.9" : "0.5";
@@ -1933,32 +2146,10 @@ function renderDuskVotingFlow(state) {
     }
     rows.appendChild(row);
   });
-  if (showVoteButtons) {
-    const abstainRow = document.createElement("div");
-    abstainRow.className = "dusk-vote-row";
-    abstainRow.innerHTML = `
-      <span class="dusk-portrait" title="弃票" style="background-color: #29436a; color: #fff; font-weight: 800; border: 2px solid rgba(255, 255, 255, 0.55); font-size: 16px; display: inline-flex; align-items: center; justify-content: center;">⚪</span>
-      <span><span class="dusk-vote-name" style="color: #aebbd5;">放弃投票</span>
-      <span class="dusk-vote-meta">本轮不投票（弃票）</span></span>
-    `;
-    const abstainBtn = document.createElement("button");
-    abstainBtn.className = "dusk-vote-button";
-    abstainBtn.id = "abstain-vote-button";
-    const isAbstainTarget = crowVoteSubmitting && (voteSummary.crow_vote === "" || voteSummary.crow_vote === undefined);
-    abstainBtn.textContent = isAbstainTarget ? "弃票中..." : "弃票";
-    if (crowHasVoted || crowVoteSubmitting) {
-      abstainBtn.disabled = true;
-      abstainBtn.style.opacity = isAbstainTarget ? "0.9" : "0.5";
-      abstainBtn.style.pointerEvents = "none";
-    }
-    abstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));
-    abstainRow.appendChild(abstainBtn);
-    rows.appendChild(abstainRow);
-  }
   const abstainersEl = document.getElementById("voting-abstainers");
   const abstainersListEl = document.getElementById("voting-abstainers-list");
   if (abstainersEl && abstainersListEl) {
-    if (abstainers.length) {
+    if (showVoteResults && abstainers.length) {
       abstainersEl.style.display = "block";
       abstainersListEl.innerHTML = abstainers
         .map(voter => `<span class="dusk-voter-icon" title="${escapeHtml(getDisplayName(voter, state))}" style="background-image:url('${duskPortraitUrl(voter)}')"></span>`)
@@ -1971,21 +2162,22 @@ function renderDuskVotingFlow(state) {
 
   const countsEl = document.getElementById("voting-counts");
   if (countsEl) {
-    const voteGenerationPending = stage === "voting" && !voteSummary.active;
+    const voteGenerationPending = stage === "voting_generating" || (stage === "voting" && !voteSummary.active);
     countsEl.textContent = voteGenerationPending
       ? "居民投票生成中，请稍候。"
       : (voteSummary.tie_broken_by_crow
       ? "最高票平票，按警长裁决权，由警长所投对象胜出。"
-      : (crowHasVoted && stage === "voting" ? "克罗已投票，等待其他参与者完成投票。" : ""));
+      : (crowVoteSubmitting
+        ? "已选择，投票提交中，请稍候。"
+        : (crowHasVoted && stage === "voting" ? "克罗已投票，等待其他参与者完成投票。" : (showVoteButtons ? "请选择一名候选人，或使用底部按钮弃票。" : ""))));
   }
   const actions = document.getElementById("jail-buttons");
   if (actions) {
     actions.innerHTML = "";
-    if (stage === "voting" && !voteSummary.active) {
+    if (stage === "voting_generating" || (stage === "voting" && !voteSummary.active)) {
       actions.innerHTML = '<div style="color:#f7d98a;">居民投票生成中，请稍候。</div>';
     } else if (["results", "result"].includes(stage)) {
-      const winnerText = winner ? `并押送 ${escapeHtml(getDisplayName(winner, state))}` : "";
-      actions.innerHTML = `<button id="confirm-vote-result" onclick="confirmVoteResult()">${voteResultConfirming ? "确认中..." : `确认结果${winnerText}`}</button>`;
+      actions.innerHTML = `<button id="confirm-vote-result" onclick="confirmVoteResult()">${voteResultConfirming ? "确认中..." : "确认结果"}</button>`;
       const confirmBtn = document.getElementById("confirm-vote-result");
       if (confirmBtn && voteResultConfirming) {
         confirmBtn.disabled = true;
@@ -2008,7 +2200,7 @@ function renderDuskVotingFlow(state) {
       footerAbstainBtn.style.transition = "all 0.2s ease";
 
       const isAbstainTarget = crowVoteSubmitting && (voteSummary.crow_vote === "" || voteSummary.crow_vote === undefined);
-      footerAbstainBtn.textContent = isAbstainTarget ? "放弃投票 (弃票中...)" : "放弃投票 (弃票)";
+      footerAbstainBtn.textContent = isAbstainTarget ? "已选择弃票，投票中..." : "放弃投票 (弃票)";
 
       footerAbstainBtn.addEventListener("mouseover", () => {
         if (!footerAbstainBtn.disabled) {
@@ -2091,7 +2283,7 @@ function updateUI(state) {
   const newIsDusk = !isNight && (
     phase === "dusk_discussion" ||
     phase === "dusk" ||
-    ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(stage)
+    ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting_generating", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(stage)
   );
   scheduleDuskDiscussionCameraPan(state, newIsDusk, stage);
   if (newIsDusk && !isDusk) {
@@ -2122,6 +2314,7 @@ function updateUI(state) {
     atmosphere.className = isNight ? "night" : (isDusk ? "dusk" : "");
   }
   renderNightTransition(state);
+  updateSilverToolMarker(state);
 
   const hour = Math.floor(state.game_hour);
   const min = Math.floor((state.game_hour % 1) * 60);
@@ -4254,12 +4447,16 @@ function create() {
   });
 
   const self = this;
+  createSilverToolMarker(this);
   // 异步获取小镇内所有可互动场景物件并以精致的中文标签常态化渲染在地图上
   fetch("/api/objects")
     .then(resp => resp.json())
     .then(data => {
       if (data.objects) {
         data.objects.forEach(obj => {
+          if (obj.name === "supply store product shelf") {
+            setSilverToolShelfTile(obj.x, obj.y);
+          }
           let px = obj.x * TILE_W + 16;
           let py = obj.y * TILE_W + 16;
 
@@ -4283,6 +4480,7 @@ function create() {
 
   // 鼠标拖拽移动相机
   this.input.on("pointerdown", (pointer) => {
+    if (Date.now() < silverToolMarkerClickUntil) return;
     if (isNight) return;
     // 如果点击的是 canvas 以外的 HTML 元素，直接忽略
     if (pointer.event && pointer.event.target && pointer.event.target.tagName !== "CANVAS") {
@@ -5027,7 +5225,7 @@ function update(time, delta) {
         const isDuskDiscussionOrVoting = gameState && (
           gameState.phase === "dusk_discussion" ||
           gameState.phase === "dusk" ||
-          ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "voting", "results", "result", "escorting", "escort"].includes(liveDuskStage)
+          ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting_generating", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)
         );
         if (isDuskDiscussionOrVoting) {
           sprite.lastDir = "down";

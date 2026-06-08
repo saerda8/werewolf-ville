@@ -615,17 +615,32 @@ def test_confirm_vote_result_holds_final_words_before_prison(monkeypatch):
     events = []
     monkeypatch.setattr(engine, "_jailed_final_words", lambda target: "我还有话要说。")
     monkeypatch.setattr(engine_dusk.time, "sleep", lambda seconds: events.append(("sleep", seconds)))
+    started = []
+
+    class FakeThread:
+        def __init__(self, target, args=(), daemon=False):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self):
+            started.append((self.target, self.args, self.daemon))
+
+    monkeypatch.setattr(engine_dusk.threading, "Thread", FakeThread)
     original_place = engine._place_in_prison
 
-    def record_place(target):
+    def record_place(target, **kwargs):
         events.append(("place", target))
-        original_place(target)
+        original_place(target, **kwargs)
 
     monkeypatch.setattr(engine, "_place_in_prison", record_place)
 
     result = engine.confirm_vote_result()
 
     assert result["success"] is True
+    assert result["pending"] is True
+    assert started == [(engine._run_vote_result_sequence, ("Arthur Burton",), True)]
+    engine._run_vote_result_sequence("Arthur Burton")
     assert events[0] == ("sleep", 6.0)
     assert events[1] == ("sleep", engine_dusk._DUSK_FINAL_WORDS_HOLD_SECONDS)
     assert events[2] == ("place", "Arthur Burton")
@@ -644,11 +659,26 @@ def test_confirm_vote_result_all_abstain_has_crow_dismissal(monkeypatch):
     engine._running = True
     sleeps = []
     monkeypatch.setattr(engine_dusk.time, "sleep", lambda seconds: sleeps.append(seconds))
+    started = []
+
+    class FakeThread:
+        def __init__(self, target, args=(), daemon=False):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self):
+            started.append((self.target, self.args, self.daemon))
+
+    monkeypatch.setattr(engine_dusk.threading, "Thread", FakeThread)
 
     result = engine.confirm_vote_result()
 
     assert result["success"] is True
     assert result["jailed"] is None
+    assert result["pending"] is True
+    assert started == [(engine._run_vote_result_sequence, (None,), True)]
+    engine._run_vote_result_sequence(None)
     assert "今晚无人被关押" in engine.chat_bubbles["Crow"]["text"]
     assert "晚上注意小心" in engine.chat_bubbles["Crow"]["text"]
     assert sleeps == [6.0]

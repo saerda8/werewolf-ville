@@ -15,12 +15,9 @@ from world_config import (
 
 # Day 1 fixed knowledge revelation text (spec section 3)
 _DAY1_KNOWLEDGE_TEXT = (
-    "我今天在大学里查了不少旧资料，也专门对照了第一天死者身上的伤痕。"
-    "现在我基本可以确定，那种咬痕和抓痕不是普通野兽留下的，而是狼人造成的。"
-    "从伤口的形状来看，凶手很可能不止一个，甚至可能有两个。"
-    "狼人是一种古老又危险的生物，白天看起来和正常人一样，也没有可怕的攻击力，"
-    "是最容易被制服的时候；可一到晚上，它就会变成狼首怪物，力量和攻击性都非常强，"
-    "手无寸铁的人很容易被它咬死或者抓死。所以今晚大家一定要小心，尽量待在室内。"
+    "我查过尸体咬痕、抓痕和旧资料，可以确定这不是野兽，是狼人。"
+    "狼人白天像普通人，也能被制服；夜里会变成狼首怪物，力量和攻击性都很强。"
+    "伤口显示凶手可能不止一个，大家今晚尽量待在室内，黄昏投票一定要认真判断、互相核对。"
 )
 
 # Voting countdown in seconds
@@ -49,6 +46,8 @@ _DUSK_FILLER_PATTERNS = (
     "不好说",
     "不确定",
 )
+
+_DUSK_VOTE_OPENING_HOLD_SECONDS = 6.0
 
 
 def active_town_people_rule() -> str:
@@ -90,7 +89,13 @@ class EngineDuskMixin:
 
         if getattr(self, "_dusk_stage", "") == "escorting":
             crow = self.agents.get(self.detective_name)
-            if crow and (crow.x, crow.y) == (crow.target_x, crow.target_y):
+            target_name = getattr(self, "_dusk_jail_target", None)
+            target = self.agents.get(target_name) if target_name else None
+            target_arrived = (
+                not target
+                or (target.x, target.y) == (target.target_x, target.target_y)
+            )
+            if crow and target_arrived and (crow.x, crow.y) == (crow.target_x, crow.target_y):
                 self._transition_to_night()
             return
 
@@ -332,6 +337,7 @@ class EngineDuskMixin:
             "target": "",
             "time": time.time(),
         }
+        self._log(f"💬 克罗（黄昏主持）: {_CROW_DISCUSSION_TEXT}", "chat")
         self._broadcast_state()
         self._pause_for_dusk_bubble()
         self._dusk_stage = "npc_discussion"
@@ -420,7 +426,7 @@ class EngineDuskMixin:
             "target": "",
             "time": time.time(),
         }
-        self._log(f"💬 {disp}（第1天知识揭露）: {_DAY1_KNOWLEDGE_TEXT[:80]}...", "chat")
+        self._log(f"💬 {disp}（第1天知识揭露）: {_DAY1_KNOWLEDGE_TEXT}", "chat")
         self._broadcast_state()
 
     # ==================== Dusk discussion ====================
@@ -439,14 +445,27 @@ class EngineDuskMixin:
         agent = self.agents[speaker_name]
         memory_text = str(agent.read_memory() or "")[-900:]
         cognition_text = str(agent.read_cognition() or "")[-500:]
+        possible_suspects = [
+            display_name_for_person(name)
+            for name, suspect in self.agents.items()
+            if name != speaker_name and suspect.is_alive and name not in self._jailed
+        ]
+        suspect_text = "、".join(possible_suspects) or "暂无其他存活对象"
+        role_instruction = (
+            "你实际是狼人。发言时必须伪装成好人，自证清白，把怀疑甩给一个具体非狼人对象；"
+            "不要承认狼人身份，不要显得在保护同伴。"
+            if agent.role == "werewolf"
+            else "你是好人。发言时必须自证清白，指出一个具体怀疑对象，并提醒大家下一步该查什么。"
+        )
         system_prompt = (
             f"你是{display_name_for_person(speaker_name)}，现在是第{self.day}天黄昏讨论。"
             f"最近死者：{recent_dead}。已知线索：{clue_text}。"
             f"你对白天经历的记忆：{memory_text}。你的当前判断：{cognition_text}。"
-            "结合自己的经历、怀疑和阵营目标发表意见，可以辩护、怀疑、说真话或撒谎；"
-            "必须说出一个具体观察、行踪、怀疑对象或自证依据。"
+            f"可怀疑对象：{suspect_text}。{role_instruction}"
+            "发言要像狼人杀讨论：先用自己的行踪/观察/记忆自证，再点名一个具体怀疑对象，"
+            "再基于尸体、讨论或公开线索给出推理理由。"
             "禁止说“我没意见”“先听警长/克罗”“等大家说完”“暂时没有线索”等划水句；"
-            "不要投票，不要要求马上拘留。80字以内。"
+            "不要投票，不要要求马上拘留。80字以内，必须只说角色本人会说的话。"
         )
         result = {"text": ""}
 
@@ -494,10 +513,24 @@ class EngineDuskMixin:
             if _is_dusk_filler_statement(text):
                 speaker = self.agents.get(speaker_name)
                 location = getattr(speaker, "current_location", "") or "白天所在区域"
-                text = (
-                    f"我今天主要在{location}活动，没亲眼看到凶手。"
-                    f"我会把{recent_dead}的死亡和已公开线索对照，重点留意行踪解释不清的人。"
-                )
+                suspect_pool = [
+                    name for name, agent in self.agents.items()
+                    if name != speaker_name and agent.is_alive and name not in self._jailed
+                ]
+                if getattr(speaker, "role", "") == "werewolf":
+                    suspect_pool = [name for name in suspect_pool if name not in self.werewolf_names] or suspect_pool
+                suspect_name = self._rng.choice(suspect_pool) if suspect_pool else ""
+                suspect_text = display_name_for_person(suspect_name) if suspect_name else "行踪解释不清的人"
+                if getattr(speaker, "role", "") == "werewolf":
+                    text = (
+                        f"我白天在{location}，没有靠近尸体。"
+                        f"{suspect_text}的行踪最含糊，我怀疑他在借混乱藏线索。"
+                    )
+                else:
+                    text = (
+                        f"我白天在{location}，能说明自己的去向。"
+                        f"{suspect_text}需要解释行踪，大家别放过尸体和讨论里的矛盾。"
+                    )
             text = self._limit_gathering_speech(text, max_chars=90)
             statements.append({"speaker": speaker_name, "text": text})
             self.chat_bubbles[speaker_name] = {
@@ -545,23 +578,42 @@ class EngineDuskMixin:
                 "time": time.time(),
             }
             self._log(f"💬 克罗黄昏发言: {text}", "chat")
-            self._dusk_stage = "voting"
+            self._dusk_stage = "vote_opening"
             self._dusk_vote_active = False
             self._dusk_vote_deadline = None
             self._dusk_crow_voted = False
-            self._log("🗳️ 黄昏发言结束，正在生成居民投票。", "system")
             self.chat_bubbles[self.detective_name] = {
                 "text": _CROW_START_VOTE_TEXT,
                 "target": "",
                 "time": time.time(),
             }
+            self._log(f"💬 克罗（投票开始）: {_CROW_START_VOTE_TEXT}", "chat")
             self._broadcast_state()
-            threading.Thread(target=self._generate_dusk_votes_async, daemon=True).start()
+            if getattr(self, "_running", False):
+                threading.Thread(target=self._open_dusk_vote_after_crow_bubble, daemon=True).start()
+            else:
+                self._open_dusk_vote_after_crow_bubble()
             return {
                 "success": True,
                 "statement": text,
                 "vote_summary": self._build_vote_summary(),
             }
+
+
+    def _open_dusk_vote_after_crow_bubble(self):
+        if getattr(self, "_running", False):
+            time.sleep(_DUSK_VOTE_OPENING_HOLD_SECONDS)
+        with self._lock:
+            if (
+                self.phase != type(self.phase).DUSK_DISCUSSION
+                or getattr(self, "_dusk_stage", "") != "vote_opening"
+                or self._dusk_jail_target is not None
+            ):
+                return
+            self._dusk_stage = "voting_generating"
+            self._log("🗳️ 克罗宣布投票，正在生成居民投票。", "system")
+            self._broadcast_state()
+        self._generate_dusk_votes_async()
 
 
     def _generate_dusk_votes_async(self):
@@ -571,7 +623,12 @@ class EngineDuskMixin:
             self._log(f"⚠️ 黄昏投票生成失败：{exc}", "error")
         finally:
             with self._lock:
-                if self.phase == type(self.phase).DUSK_DISCUSSION and getattr(self, "_dusk_stage", "") == "voting" and self._dusk_jail_target is None:
+                if (
+                    self.phase == type(self.phase).DUSK_DISCUSSION
+                    and getattr(self, "_dusk_stage", "") == "voting_generating"
+                    and self._dusk_jail_target is None
+                ):
+                    self._dusk_stage = "voting"
                     self._dusk_vote_active = True
                     if not getattr(self, "_dusk_vote_deadline", None):
                         self._dusk_vote_deadline = time.time() + _VOTE_COUNTDOWN_SECONDS
@@ -885,12 +942,30 @@ class EngineDuskMixin:
             if getattr(self, "_dusk_stage", "") != "results":
                 return {"error": "Vote result is not ready"}
             winner = getattr(self, "_dusk_winner", None)
-            if winner:
-                self._dusk_jail_target = winner
-                warning = (
-                    f"{display_name_for_person(winner)}得票最高，我会先把你关押进牢房。"
-                    "你还有什么话要说？"
-                )
+            if getattr(self, "_dusk_result_sequence_running", False):
+                return {"success": True, "jailed": winner, "pending": True}
+            self._dusk_result_sequence_running = True
+            self._dusk_jail_target = winner
+            self._dusk_stage = "result_announcement_pending"
+            self._broadcast_state()
+
+        if getattr(self, "_running", False):
+            threading.Thread(target=self._run_vote_result_sequence, args=(winner,), daemon=True).start()
+        else:
+            self._run_vote_result_sequence(winner)
+        return {"success": True, "jailed": winner, "pending": True}
+
+    def _run_vote_result_sequence(self, winner: str | None) -> None:
+        if winner:
+            warning = (
+                f"{display_name_for_person(winner)}得票最高，我会先把你关押进牢房。"
+                "你还有什么话要说？"
+            )
+            with self._lock:
+                if self.phase != type(self.phase).DUSK_DISCUSSION:
+                    self._dusk_result_sequence_running = False
+                    return
+                self._dusk_stage = "result_announcement"
                 self.chat_bubbles[self.detective_name] = {
                     "text": warning,
                     "target": winner,
@@ -898,8 +973,14 @@ class EngineDuskMixin:
                 }
                 self._log(f"💬 克罗（宣布投票结果）: {warning}", "chat")
                 self._broadcast_state()
-                self._pause_for_dusk_bubble()
-                final_words = self._jailed_final_words(winner)
+            self._pause_for_dusk_bubble()
+
+            final_words = self._jailed_final_words(winner)
+            with self._lock:
+                if self.phase != type(self.phase).DUSK_DISCUSSION:
+                    self._dusk_result_sequence_running = False
+                    return
+                self._dusk_stage = "final_words"
                 self.chat_bubbles[winner] = {
                     "text": final_words,
                     "target": self.detective_name,
@@ -907,44 +988,78 @@ class EngineDuskMixin:
                 }
                 self._log(f"💬 {display_name_for_person(winner)}（被拘留）: {final_words}", "chat")
                 self._broadcast_state()
-                self._pause_for_dusk_final_words()
+            self._pause_for_dusk_final_words()
+
+            with self._lock:
+                if self.phase != type(self.phase).DUSK_DISCUSSION:
+                    self._dusk_result_sequence_running = False
+                    return
                 self._jailed.add(winner)
-                self._place_in_prison(winner)
-            else:
-                dismissal = "今晚无人被关押。大家先回去吧，晚上注意小心，尽量不要出去。"
-                self.chat_bubbles[self.detective_name] = {
-                    "text": dismissal,
-                    "target": "",
-                    "time": time.time(),
-                }
-                self._log(f"💬 克罗（投票结束）: {dismissal}", "chat")
+                self._start_prison_escort(winner)
+                self._dusk_stage = "escorting"
+                self._dusk_result_sequence_running = False
+                if self.day == 4:
+                    outcome = self._resolve_day4_after_vote()
+                    if outcome == "pending_silver_shot":
+                        self._log("⚠️ 请克罗做出最终决定：使用银子弹射击存疑目标。", "system")
                 self._broadcast_state()
-                self._pause_for_dusk_bubble()
-            crow = self.agents.get(self.detective_name)
-            office = SHERIFF_AREA["sheriff_office"]["anchor_points"][0]
-            target = self._nearest_walkable_tile(
-                office,
-                blocked=self._occupied_tiles({self.detective_name}),
-            ) or office
-            crow.target_x, crow.target_y = target
-            crow.current_action = "押送结束，返回警长办公室"
-            crow.current_emoji = "🔒"
-            self.agent_paths.pop(self.detective_name, None)
-            self._dusk_stage = "escorting"
-            # Day4: resolve game outcome after vote
-            if self.day == 4:
-                outcome = self._resolve_day4_after_vote()
-                if outcome == "pending_silver_shot":
-                    self._log("⚠️ 请克罗做出最终决定：使用银子弹射击存疑目标。", "system")
-                self._broadcast_state()
-                return {"success": True, "jailed": winner, "day4_outcome": outcome}
-            if winner == self.detective_name:
-                self._transition_to_night()
+            return
+
+        dismissal = "今晚无人被关押。大家先回去吧，晚上注意小心，尽量不要出去。"
+        with self._lock:
+            if self.phase != type(self.phase).DUSK_DISCUSSION:
+                self._dusk_result_sequence_running = False
+                return
+            self._dusk_stage = "result_announcement"
+            self.chat_bubbles[self.detective_name] = {
+                "text": dismissal,
+                "target": "",
+                "time": time.time(),
+            }
+            self._log(f"💬 克罗（投票结束）: {dismissal}", "chat")
             self._broadcast_state()
-            return {"success": True, "jailed": winner}
+        self._pause_for_dusk_bubble()
+        with self._lock:
+            if self.phase != type(self.phase).DUSK_DISCUSSION:
+                self._dusk_result_sequence_running = False
+                return
+            self._send_crow_to_sheriff_office()
+            self._dusk_stage = "escorting"
+            self._dusk_result_sequence_running = False
+            self._broadcast_state()
+
+    def _send_crow_to_sheriff_office(self) -> None:
+        crow = self.agents.get(self.detective_name)
+        if not crow:
+            return
+        office = SHERIFF_AREA["sheriff_office"]["anchor_points"][0]
+        path_result = self._nearest_reachable_path(
+            (crow.x, crow.y),
+            office,
+            radius=8,
+            blocked=self._occupied_tiles({self.detective_name}),
+        )
+        if path_result:
+            target_x, target_y, path = path_result
+            target = (target_x, target_y)
+        else:
+            target = (crow.x, crow.y)
+            path = []
+        crow.target_x, crow.target_y = target
+        crow.current_action = "押送结束，返回警长办公室"
+        crow.current_emoji = "🔒"
+        self.agent_paths[self.detective_name] = path
+        crow.runtime_state = "moving" if path else "idle"
+
+    def _start_prison_escort(self, target_name: str) -> None:
+        try:
+            self._place_in_prison(target_name, walk=True)
+        except TypeError:
+            self._place_in_prison(target_name)
+        self._send_crow_to_sheriff_office()
 
 
-    def _place_in_prison(self, target_name: str):
+    def _place_in_prison(self, target_name: str, walk: bool = False):
         """Move a jailed target to a prison cell anchor point."""
         target = self.agents[target_name]
         # Pick the emptier prison cell
@@ -954,26 +1069,46 @@ class EngineDuskMixin:
                               if n != target_name and self._get_prison_cell(n) == "prison_cell_2")
 
 
-        chosen_cell = "prison_cell_1" if cell_1_occupants <= cell_2_occupants else "prison_cell_2"
-        setattr(target, '_prison_cell', chosen_cell)
-
-
-        anchor_points = SHERIFF_AREA[chosen_cell]["anchor_points"]
-        # Pick anchor point not occupied
+        preferred_cells = (
+            ["prison_cell_2", "prison_cell_1"]
+            if cell_2_occupants <= cell_1_occupants
+            else ["prison_cell_1", "prison_cell_2"]
+        )
         occupied = self._occupied_tiles({target_name})
-        best_pt = anchor_points[0]
-        for pt in anchor_points:
-            if pt not in occupied:
-                best_pt = pt
-                break
+        best = None
+        for cell_key in preferred_cells:
+            for anchor in SHERIFF_AREA[cell_key]["anchor_points"]:
+                path_result = self._nearest_reachable_path(
+                    (target.x, target.y),
+                    anchor,
+                    radius=10,
+                    blocked=occupied,
+                )
+                if not path_result:
+                    continue
+                target_x, target_y, path = path_result
+                score = (0 if cell_key == "prison_cell_2" else 1, len(path))
+                if best is None or score < best[0]:
+                    best = (score, cell_key, (target_x, target_y), path)
 
+        if best:
+            _, chosen_cell, best_pt, path = best
+        else:
+            chosen_cell = preferred_cells[0]
+            best_pt = (target.x, target.y)
+            path = []
 
-        target.x, target.y = best_pt
+        setattr(target, '_prison_cell', chosen_cell)
         target.target_x, target.target_y = best_pt
         target.current_location = SHERIFF_AREA[chosen_cell]["name"]
         target.current_action = "被拘留中"
         target.current_emoji = "🔒"
         target.runtime_state = "jailed"
+        if walk:
+            self.agent_paths[target_name] = path
+            target.runtime_state = "moving" if path else "jailed"
+            return
+        target.x, target.y = best_pt
         self.agent_paths.pop(target_name, None)
 
 
@@ -989,13 +1124,37 @@ class EngineDuskMixin:
         """Generate final words for a jailed target."""
         agent = self.agents[target_name]
         if agent.role == "werewolf":
-            fallback = "我没有杀人！这是误会！"
+            fallback = "我不是狼人，这次判断太急了；请继续查行踪含糊的人，别让真凶躲过去。"
         else:
-            fallback = "我是无辜的，请务必查清真相！"
+            fallback = "我是好人，我的行踪经得起查；请继续盯住可疑对象，别让狼人带偏投票。"
         try:
+            recent_dead = "、".join(display_name_for_person(d) for d in self.dead_list[-3:]) if self.dead_list else "暂无"
+            clue_summaries = [c.summary for c in getattr(self, "clues", [])[-5:]]
+            clue_text = "；".join(clue_summaries[:3]) if clue_summaries else "暂无明确线索"
+            suspect_pool = [
+                display_name_for_person(name)
+                for name, suspect in self.agents.items()
+                if name != target_name and suspect.is_alive and name not in self._jailed
+            ]
+            suspect_text = "、".join(suspect_pool) or "暂无其他存活对象"
+            if agent.role == "werewolf":
+                role_instruction = (
+                    "你实际是狼人，但遗言必须伪装成好人：自证清白，点名一个具体对象甩锅，"
+                    "提醒大家继续查他。禁止承认狼人身份，禁止狠话，禁止嘲讽或挑衅克罗。"
+                )
+            else:
+                role_instruction = (
+                    "你是好人。遗言必须自证清白，点名一个具体怀疑对象，提醒大家下一步查证。"
+                    "禁止狠话，禁止嘲讽或挑衅克罗。"
+                )
             raw = _chat_for_agent(target_name,
-                f"你被Crow拘留了。这是你最后对外说的话。请用{display_name_for_person(target_name)}的身份说一句简短的话。",
-                "请说最后一句话", max_retries=0)
+                (
+                    f"你是{display_name_for_person(target_name)}，被克罗按黄昏投票结果关押。"
+                    f"最近死者：{recent_dead}。公开线索：{clue_text}。"
+                    f"可怀疑对象：{suspect_text}。{role_instruction}"
+                    "请说一段80字以内的遗言，只说角色本人会说的话。"
+                ),
+                "请说黄昏投票后的遗言", max_retries=0)
             if raw and len(raw.strip()) >= 4:
                 return raw.strip()[:120]
         except Exception:

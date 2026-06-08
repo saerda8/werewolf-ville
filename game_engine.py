@@ -376,6 +376,23 @@ LANDMARK_DEFAULT_OBJECTS = {
 }
 
 
+SILVER_JEWELRY_ELIGIBLE_HOLDERS = (
+    "Isabella Rodriguez",
+    "Maria Lopez",
+    "Jane Moreno",
+    "Mei Lin",
+)
+
+SILVER_JEWELRY_KEYWORDS = (
+    "银饰",
+    "银首饰",
+    "银项链",
+    "银制首饰",
+    "首饰",
+    "项链",
+)
+
+
 
 
 
@@ -589,13 +606,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         # 银器进展
 
-        # _silver_jewelry_holder: random non-Crow resident who holds the silver jewelry
+        # _silver_jewelry_holder: one random non-werewolf female NPC who holds silver jewelry
 
         # _silver_knife_holder: random non-Crow, non-werewolf resident who has a hidden silver knife
 
         non_crow_all = [k for k in ACTIVE_CHARACTERS.keys() if k != "Crow"]
 
-        self._silver_jewelry_holder = self._rng.choice(non_crow_all)
+        self._silver_jewelry_holder = self._choose_silver_jewelry_holder()
 
         non_crow_non_wolf = [k for k in non_crow_all if k not in self.werewolf_names]
 
@@ -776,6 +793,48 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             return int(quota.get("kill_1", 3))
 
         return int(quota)
+
+    def _choose_silver_jewelry_holder(self) -> str:
+        candidates = [
+            name for name in SILVER_JEWELRY_ELIGIBLE_HOLDERS
+            if name in ACTIVE_CHARACTERS and name not in self.werewolf_names
+        ]
+        if not candidates:
+            candidates = [
+                name for name in ACTIVE_CHARACTERS
+                if name != self.detective_name and name not in self.werewolf_names
+            ]
+        return self._rng.choice(candidates) if candidates else ""
+
+    @staticmethod
+    def _mentions_silver_jewelry(message: str) -> bool:
+        text = str(message or "")
+        return any(keyword in text for keyword in SILVER_JEWELRY_KEYWORDS)
+
+    def _resolve_silver_jewelry_deep_dive(self, target_name: str, message: str) -> tuple[str | None, dict]:
+        if target_name != getattr(self, "_silver_jewelry_holder", ""):
+            return None, {}
+        if not self._mentions_silver_jewelry(message):
+            return None, {}
+        if self._silver_jewelry_acquired:
+            return "那件银制首饰我已经交给你了，希望它真的能派上用场。", {
+                "already_acquired": True,
+                "silver_jewelry_acquired": True,
+            }
+        if self._silver_task_done_today:
+            return "我要考虑一下，你明天再来吧。", {
+                "blocked_by_daily_silver_limit": True,
+                "silver_task_done_today": self._silver_task_done_today,
+            }
+
+        self._silver_jewelry_acquired = True
+        self._silver_task_done_today = "silver_jewelry"
+        holder_label = display_name_for_person(target_name)
+        self._log(f"💍 Crow 通过深挖从{holder_label}处获得了银制首饰！", "action")
+        return "你问到这一步，我也不再藏了。这件银制首饰交给你，希望它能保护镇上的人。", {
+            "silver_jewelry_acquired": True,
+            "silver_task_done_today": self._silver_task_done_today,
+        }
 
 
 
@@ -2151,6 +2210,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             return
 
+        if getattr(self, "_gathering_round", 1) == 1:
+            for name in getattr(self, "_gathering_queue", []):
+                agent = self.agents.get(name)
+                if not agent or not agent.is_alive:
+                    continue
+                if self.agent_paths.get(name) or (agent.x, agent.y) != (agent.target_x, agent.target_y):
+                    self._gathering_next_tick = time.time() + 0.5
+                    return
+
         if self._gathering_busy:
 
             speak_elapsed = now - getattr(self, '_gathering_speak_start_time', 0)
@@ -2434,6 +2502,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self._start_crow_scene_investigation()
 
         self.day_start_time = time.time()
+        if getattr(self, "_plans_pending_after_gathering", False):
+            self._plans_pending_after_gathering = False
+            if self.day < 4:
+                self._generate_daily_plans()
 
 
 
@@ -3770,7 +3842,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         )]
 
-        self._silver_jewelry_holder = non_crow[0]
+        self._silver_jewelry_holder = self._choose_silver_jewelry_holder()
 
         non_crow_non_wolf = [n for n in non_crow if n not in self.werewolf_names]
 
@@ -3893,13 +3965,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         if getattr(self, '_gathering_active', False):
 
+            self._move_agents()
+
             self._handle_gathering()
-
-            # 第二圈才允许移动（NPC决定离开后需要走向目的地）
-
-            if getattr(self, '_gathering_round', 1) >= 2:
-
-                self._move_agents()
 
             return
 
@@ -3980,6 +4048,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 return {"success": False, "error": "当前不是夜晚阶段"}
             progress = getattr(self, "_night_progress", {})
             if not progress.get("complete"):
+                self._night_tick()
+                progress = getattr(self, "_night_progress", {})
+            if not progress.get("complete"):
                 return {"success": False, "error": "夜晚尚未结束"}
             self._transition_to_day()
             self._broadcast_state()
@@ -4019,7 +4090,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if self._silver_task_done_today:
 
-                return {"success": False, "error": "今天已经完成过一项关键银器行动，明天再继续"}
+                return {"success": False, "error": "明天再来吧"}
 
 
 
@@ -4145,7 +4216,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if self._silver_task_done_today:
 
-                return {"success": False, "error": "今天已经完成过一项关键银器行动，明天再继续"}
+                return {"success": False, "error": "我要考虑一下，你明天再来吧。"}
 
             if not holder or not holder.is_alive:
 
@@ -4715,6 +4786,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             "holder": holder_name,
             "target": target_name,
             "initial_path_len": initial_path_len,
+            "started_at": time.time(),
+            "deadline_at": time.time() + 60.0,
         }
         progress["knife_complete"] = False
         progress["knife_progress"] = 0
@@ -4732,6 +4805,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         target = self.agents.get(target_name)
         if not holder or not holder.is_alive or not target or not target.is_alive:
             self._complete_silver_knife_action("actor_or_target_unavailable")
+            return
+
+        now = time.time()
+        if now >= float(action.get("deadline_at") or now + 1):
+            result = self.use_silver_knife(holder_name, target_name)
+            if result.get("success"):
+                self._silver_knife_target_tonight = target_name
+                if target_name in self.werewolf_names:
+                    self._silver_knife_killed_werewolf_tonight = True
+                    for body in reversed(self.bodies):
+                        if body.victim_name == target_name:
+                            body.is_werewolf_corpse = True
+                            break
+            self._complete_silver_knife_action("forced_timeout")
             return
 
         if abs(holder.x - target.x) + abs(holder.y - target.y) <= 1:
@@ -4756,6 +4843,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         progress = getattr(self, "_night_progress", {}) or {}
         progress["knife_progress"] = max(0, min(99, round((initial - remaining) * 100 / initial)))
         self._night_progress = progress
+
+        if remaining == 0 and (
+            holder.x,
+            holder.y,
+        ) == (
+            getattr(holder, "target_x", holder.x),
+            getattr(holder, "target_y", holder.y),
+        ):
+            self._complete_silver_knife_action("unreachable_after_move")
+            return
 
         if abs(holder.x - target.x) + abs(holder.y - target.y) <= 1:
             result = self.use_silver_knife(holder_name, target_name)
@@ -4879,11 +4976,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 agent.current_location = "home"
 
 
+        wolf_deadline_seconds = min(
+            float(getattr(self, "night_duration", CONFIG.get("game", {}).get("night_duration_seconds", 300)) or 300),
+            60.0,
+        )
         self.night_hunt = NightHuntState(
 
             started_at=self.night_start_time,
 
-            deadline_at=self.night_start_time + self.night_duration,
+            deadline_at=self.night_start_time + wolf_deadline_seconds,
 
         )
 
@@ -4951,59 +5052,21 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             return
 
-        import math as _math
-
-
-
-
-
-        alive = [agent for agent in self.agents.values()
-
-                 if agent.is_alive and agent.name not in self._jailed]
-
-        radius = 5
-
-        occupied_tiles = set()
-
-        for index, agent in enumerate(alive):
-
-            angle = index * 2 * _math.pi / max(1, len(alive))
-
-            target = (
-
-                round(body.x + radius * _math.cos(angle)),
-
-                round(body.y + radius * _math.sin(angle)),
-
-            )
-
-            spawn_tile = self._nearest_walkable_tile(
-
-                target,
-
-                radius=6,
-
-                blocked=occupied_tiles,
-
-            )
-
-            if spawn_tile:
-
-                agent.x, agent.y = spawn_tile
-
-            occupied_tiles.add((agent.x, agent.y))
-
-            agent.target_x = agent.x
-
-            agent.target_y = agent.y
-
-            agent.current_location = body.location
-
-            agent.current_action = "discussing the discovered body"
-
-            agent.current_emoji = "\U0001f4ac"
-
-            agent.runtime_state = "idle"
+        participants = [
+            name for name, agent in self.agents.items()
+            if agent.is_alive and name not in self._jailed
+        ]
+        if hasattr(self, "_clear_daytime_state_for_dusk"):
+            self._clear_daytime_state_for_dusk(participants)
+        if hasattr(self, "_send_dusk_participants_to_plaza"):
+            self._send_dusk_participants_to_plaza(participants)
+            for name in participants:
+                agent = self.agents.get(name)
+                if not agent:
+                    continue
+                agent.current_action = "前往广场参加早晨讨论"
+                agent.current_emoji = "\U0001f4ac"
+            return
 
         self.agent_paths.clear()
 
@@ -5127,10 +5190,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             daemon=True,
         ).start()
 
-        # 生成每日计划（异步，不阻塞）
-
-        # Day4 skips daily plans — no free activity
-        if self.day < 4:
+        self._plans_pending_after_gathering = bool(discovered_body and self.day < 4)
+        if self.day < 4 and not self._plans_pending_after_gathering:
             self._generate_daily_plans()
 
 
@@ -5281,6 +5342,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         candidates = self._build_hunt_candidates()
 
         fallback = choose_forced_target(candidates)
+        if not fallback and candidates:
+            fallback = min(candidates, key=lambda candidate: candidate.score)
 
         if not fallback:
 
@@ -5298,10 +5361,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             try:
 
+                model_choices = sorted(reachable_names) or sorted(candidate.name for candidate in candidates)
                 requested = self.agents[self.werewolf_name].werewolf_choose_target(
-
-                    sorted(reachable_names), self.day
-
+                    model_choices, self.day
                 )
 
                 if requested in reachable_names:
@@ -5556,8 +5618,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             target = self.agents.get(hunt.target_name)
 
         if not target:
-
-            return
+            fallback_target = self._eligible_night_targets()
+            if fallback_target:
+                target = self.agents.get(fallback_target[0])
+                self.night_hunt.target_name = fallback_target[0]
+            if not target:
+                hunt.stage = "complete"
+                hunt.withdrawal_complete = True
+                progress = getattr(self, "_night_progress", {}) or {}
+                progress["wolf_complete"] = True
+                self._night_progress = progress
+                return
 
 
 
@@ -5587,9 +5658,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-        wolf.target_x = target.x
-
-        wolf.target_y = target.y
+        approach = self._path_adjacent_to(
+            (wolf.x, wolf.y),
+            (target.x, target.y),
+            blocked=self._occupied_tiles({self.werewolf_name, target.name}),
+        )
+        if approach:
+            adj_x, adj_y, path = approach
+            wolf.target_x = adj_x
+            wolf.target_y = adj_y
+            if path is not None:
+                self.agent_paths[self.werewolf_name] = path
+        else:
+            wolf.target_x = target.x
+            wolf.target_y = target.y
 
         wolf.current_action = f"hunting {target.name}"
 
@@ -9532,6 +9614,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         """
 
         should_broadcast_start = False
+        special_response = None
+        silver_deep_dive_result = {}
 
         with self._lock:
 
@@ -9693,6 +9777,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 self._daily_normal_chats[self.detective_name].add(target_name)
 
+            if is_deep_dive:
+                special_response, silver_deep_dive_result = self._resolve_silver_jewelry_deep_dive(
+                    target_name,
+                    incoming_message,
+                )
+
 
 
             self.chat_bubbles[self.detective_name] = {
@@ -9726,19 +9816,25 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         # Call the LLM without holding the game engine lock
 
-        response = self._generate_agent_response(
+        if special_response is None:
 
-            target,
+            response = self._generate_agent_response(
 
-            self.detective_name,
+                target,
 
-            prompt_message,
+                self.detective_name,
 
-            self.day,
+                prompt_message,
 
-            priority=True,
+                self.day,
 
-        )
+                priority=True,
+
+            )
+
+        else:
+
+            response = special_response
 
 
 
@@ -9931,7 +10027,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-            return {
+            result = {
 
                 "response": response,
 
@@ -9944,6 +10040,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "delivered_clues": [clue.summary for clue in delivered_clues],
 
             }
+            result.update(silver_deep_dive_result)
+            return result
 
 
 
@@ -10566,7 +10664,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             started_at = getattr(self, "_silver_knife_phase_started_at", 0.0) or now
             stage_elapsed = max(0, now - started_at)
             action = getattr(self, "_silver_knife_action", {}) or {}
-            stage_duration = max(1.0, float(action.get("initial_path_len") or 1))
+            stage_duration = max(1.0, float(action.get("deadline_at") or (started_at + 60.0)) - started_at)
         elif stage == "complete" or progress.get("complete"):
             stage_elapsed = 1.0
             stage_duration = 1.0
@@ -10574,7 +10672,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         else:
             night_started_at = getattr(self, "night_start_time", None) or now
             stage_elapsed = max(0, now - night_started_at)
-            stage_duration = max(1.0, getattr(self, "night_duration", 300))
+            hunt_deadline = getattr(hunt, "deadline_at", None) if hunt else None
+            if hunt_deadline:
+                stage_duration = max(1.0, float(hunt_deadline) - night_started_at)
+            else:
+                stage_duration = max(1.0, min(float(getattr(self, "night_duration", 300) or 300), 60.0))
             stage = "werewolf"
         return {
             "active": bool(progress.get("active", self.phase == GamePhase.NIGHT)),
@@ -11080,6 +11182,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "dusk_crow_statement": getattr(self, "_dusk_crow_statement", ""),
                 "silver_bullet_acquired": self._silver_bullet_acquired,
                 "silver_jewelry_acquired": self._silver_jewelry_acquired,
+                "silver_task_done_today": self._silver_task_done_today,
+                "silver_resource_available_today": not bool(self._silver_task_done_today),
 
                 "silver_bullet_crafted": self._silver_bullet_crafted,
 
