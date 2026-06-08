@@ -502,7 +502,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         self.llm_provider = configure_runtime_llm(llm_override)
 
-        if self.llm_provider["provider"] != "chat2api":
+        if self.llm_provider["provider"] != "chat2api" or self.llm_provider.get("api_base"):
 
             for name in active_names:
 

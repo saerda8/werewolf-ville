@@ -1470,6 +1470,32 @@ def test_custom_provider_override_uses_custom_base_without_exposing_key(monkeypa
     assert "sk-custom-secret" not in str(status)
 
 
+def test_chat2api_override_assigns_one_runtime_model_without_exposing_key(monkeypatch):
+    engine = _make_engine(
+        monkeypatch,
+        seed=6,
+        llm_override={
+            "provider": "chat2api",
+            "api_key": "sk-local-secret",
+            "model": "gpt-5.5",
+            "api_base": "http://localhost:8080",
+            "wire_api": "responses",
+            "reasoning_effort": "",
+        },
+    )
+    status = engine.get_status()
+
+    assert status["llm_provider"] == {
+        "provider": "chat2api",
+        "model": "gpt-5.5",
+        "api_base": "http://localhost:8080",
+        "wire_api": "responses",
+        "reasoning_effort": "",
+    }
+    assert set(status["model_assignments"].values()) == {"gpt-5.5"}
+    assert "sk-local-secret" not in str(status)
+
+
 def test_anthropic_provider_override_uses_one_model_without_exposing_key(monkeypatch):
     engine = _make_engine(
         monkeypatch,

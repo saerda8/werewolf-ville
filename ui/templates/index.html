@@ -1534,9 +1534,7 @@ function normalizeApiBaseUrl(apiBase) {
 
 function saveRuntimeLlmOptions(options) {
   try {
-    const savedOptions = Object.assign({}, options);
-    delete savedOptions.api_key;
-    localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify(savedOptions));
+    localStorage.setItem(LLM_STORAGE_KEY, JSON.stringify(options));
   } catch (e) {
     console.warn("Could not save LLM settings locally:", e);
   }
@@ -1565,7 +1563,7 @@ function loadRuntimeLlmOptions() {
     const reasoningEl = document.getElementById("llm-reasoning-effort");
     if (providerEl) providerEl.value = saved.provider || DEFAULT_RUNTIME_LLM_OPTIONS.provider;
     updateProviderFields();
-    if (keyEl) keyEl.value = "";
+    if (keyEl) keyEl.value = saved.api_key || "";
     if (modelEl) modelEl.value = saved.model || "";
     if (baseEl && (saved.provider === "chat2api" || saved.provider === "custom" || saved.provider === "custom_anthropic") && saved.api_base) {
       baseEl.value = normalizeApiBaseUrl(saved.api_base);
