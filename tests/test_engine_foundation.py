@@ -9,7 +9,10 @@ from world_config import (
     AMBIENT_RESIDENT_DISPLAY_NAMES,
     AMBIENT_RESIDENT_SPRITES,
     INITIAL_BODY_SITE,
+    SHERIFF_AREA,
 )
+
+PARK_REAR_BURIAL_TARGET = (24, 42)
 
 
 def _make_engine(monkeypatch, seed=7, llm_override=None):
@@ -2817,7 +2820,7 @@ def test_detective_chat_real_chat_releases_after_thirty_seconds_only_when_model_
     assert "Arthur Burton" not in engine.chat_bubbles
 
 
-def test_detective_chat_empty_response_releases_waiting_bubble(monkeypatch):
+def test_detective_chat_empty_response_keeps_lock_for_retry_window(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._gathering_active = False
     engine.phase = game_engine.GamePhase.DAY
@@ -2825,13 +2828,19 @@ def test_detective_chat_empty_response_releases_waiting_bubble(monkeypatch):
     target = engine.agents["Arthur Burton"]
     target.generate_response = lambda speaker, msg, day: ""
 
+    started_at = time.time()
     result = engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)
 
-    assert result["no_response"] is True
-    assert result["response"] == ""
-    assert target.in_conversation_with is None
+    assert result.get("response", "") == ""
+    assert target.in_conversation_with == "Crow"
     assert detective.in_conversation_with is None
-    assert "Arthur Burton" not in engine.chat_bubbles
+    assert engine._detective_chat_active_target == "Arthur Burton"
+    assert target.runtime_state == "acting"
+    release_at = getattr(target, "_detective_chat_release_at", 0)
+    assert started_at < release_at <= started_at + 31
+    bubble = engine.chat_bubbles["Arthur Burton"]
+    assert bubble.get("kind") == "conversation_pending"
+    assert bubble.get("target") == "Crow"
 
 
 def test_busy_detective_redirects_third_party_talk_path(monkeypatch):
@@ -3164,6 +3173,39 @@ def test_jail_choice_waits_for_confirmation_before_escort(monkeypatch):
 # Ensure agents never stop on top of blocking furniture objects
 # (shelves, counters, tables, etc.) after movement.
 # ═══════════════════════════════════════════════════════════════════
+
+
+def test_dusk_escort_moves_marked_jailed_target_along_prison_path(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    target_name = "Arthur Burton"
+    target = engine.agents[target_name]
+    target.x, target.y = 48, 46
+    target.target_x, target.target_y = 48, 46
+    target.runtime_state = "idle"
+
+    engine._jailed.add(target_name)
+    engine._dusk_jail_target = target_name
+    engine._dusk_stage = "escorting"
+    engine._place_in_prison(target_name, walk=True)
+
+    start = (target.x, target.y)
+    assert engine.agent_paths.get(target_name), "escort must assign a walking path"
+
+    engine._move_agents()
+
+    assert (target.x, target.y) != start
+    for _ in range(80):
+        if not engine.agent_paths.get(target_name):
+            break
+        engine._move_agents()
+
+    prison_points = {
+        point
+        for room_key in ("prison_cell_1", "prison_cell_2")
+        for point in SHERIFF_AREA[room_key]["anchor_points"]
+    }
+    assert (target.x, target.y) in prison_points
+    assert (target.x, target.y) == (target.target_x, target.target_y)
 
 
 def _make_engine_with_go_maze(monkeypatch, seed=7):
@@ -4337,8 +4379,8 @@ def test_bury_bodies_after_gathering_marks_body_and_crow_explains(monkeypatch):
 
     assert body.buried is False
     assert body.burying is True
-    assert body.burial_target_x == 12
-    assert body.burial_target_y == 46
+    assert (body.burial_target_x, body.burial_target_y) == PARK_REAR_BURIAL_TARGET
+    assert (body.burial_target_x, body.burial_target_y) != (12, 46)
     for _ in range(200):
         engine._move_agents()
         if body.buried:
@@ -4346,7 +4388,7 @@ def test_bury_bodies_after_gathering_marks_body_and_crow_explains(monkeypatch):
 
     assert body.buried is True
     assert body.location == "Johnson Park"
-    assert (body.x, body.y) == (12, 46)
+    assert (body.x, body.y) == PARK_REAR_BURIAL_TARGET
     bubble = engine.chat_bubbles[engine.detective_name]["text"]
     assert "尸体" in bubble
     assert "公园" in bubble

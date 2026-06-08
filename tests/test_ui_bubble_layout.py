@@ -185,6 +185,24 @@ def test_deep_dive_submit_decrements_remaining_optimistically():
     assert 'updateUI(state);' in html
 
 
+def test_dusk_vote_submission_hides_vote_actions_and_confirms_without_delay():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    render_start = html.index("function renderDuskVotingFlow(state)")
+    render_end = html.index("function renderVoteHistory(state)", render_start)
+    render_block = html[render_start:render_end]
+    confirm_start = html.index("function confirmVoteResult()")
+    confirm_end = html.index("function confirmNightTransition()", confirm_start)
+    confirm_block = html[confirm_start:confirm_end]
+
+    assert 'const showVoteButtons = stage === "voting" && voteSummary.active && !crowHasVoted;' in render_block
+    assert 'else if (stage === "voting" && crowHasVoted)' in render_block
+    assert 'voteSummary.crow_vote === undefined' not in render_block
+    assert 'const isAbstainTarget = crowVoteSubmitting && voteSummary.crow_vote === "";' in render_block
+    assert 'fetch("/api/confirm_vote_result", {method: "POST"})' in confirm_block
+    assert 'socket.emit("confirm_vote_result");' not in confirm_block
+    assert "}, 2500);" not in confirm_block
+
+
 def test_frontend_fixes_history_labels_colors_bubble_directions_prefixes():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
@@ -974,7 +992,8 @@ def test_vote_rows_support_self_vote_then_hide_all_vote_buttons():
     assert "const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;" in html
     assert "crowVoteSubmitting = true;" in html
     assert "voteSummary.crow_voted === true" in html
-    assert "const showVoteButtons = stage === \"voting\" && voteSummary.active && (!hasCrowVoted(voteSummary) || crowVoteSubmitting);" in html
+    assert 'const showVoteButtons = stage === "voting" && voteSummary.active && !crowHasVoted;' in html
+    assert 'else if (stage === "voting" && crowHasVoted)' in html
 
 
 def test_vote_results_use_backend_winner_integer_counts_and_voter_icons():
@@ -989,7 +1008,8 @@ def test_vote_results_use_backend_winner_integer_counts_and_voter_icons():
     assert "voteSummary.tie_broken_by_crow" in html
     assert "最高票平票，按警长裁决权，由警长所投对象胜出。" in html
     assert 'onclick="confirmVoteResult()"' in html
-    assert 'socket.emit("confirm_vote_result");' in html
+    assert 'fetch("/api/confirm_vote_result", {method: "POST"})' in html
+    assert 'socket.emit("confirm_vote_result");' not in html
     assert "jailAgent(name)" not in html
 
 
@@ -1007,7 +1027,8 @@ def test_night_transition_is_anonymous_fullscreen_and_confirm_only():
     assert "state.night_transition || state.night_sequence" in html
     assert 'id="night-progress-fill"' in html
     assert 'id="night-finish-confirm" onclick="confirmNightTransition()"' in html
-    assert 'socket.emit("confirm_night_transition");' in html
+    assert 'fetch("/api/confirm_night_transition", {method: "POST"})' in html
+    assert 'socket.emit("confirm_night_transition");' not in html
     assert "夜晚结束" in html
     assert "target_name" not in html[html.index("function renderNightTransition(state)"):html.index("function renderNightTransition(state)") + 2500]
 
@@ -1250,9 +1271,9 @@ def test_voting_abstainers_row():
 def test_daybreak_socket_handler_or_fallback():
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert "confirmNightTransition" in html
-    assert 'socket.emit("confirm_night_transition")' in html
+    assert 'fetch("/api/confirm_night_transition", {method: "POST"})' in html
+    assert 'socket.emit("confirm_night_transition")' not in html
     assert 'fetch("/api/confirm_night_transition"' in html
-    assert "if (!nightTransitionConfirming) return;" in html
     assert 'overlay.classList.remove("show")' in html
     assert "nightTransitionConfirming = false;" in html
     assert 'fetchCurrentState()' in html

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -1980,45 +1980,23 @@ function confirmVoteResult() {
   voteResultConfirming = true;
   renderDuskVotingFlow(gameState);
   if (panel) panel.style.display = "none";
-  if (socket && socket.connected) {
-    socket.emit("confirm_vote_result");
-    setTimeout(() => {
-      if (!voteResultConfirming) return;
-      fetch("/api/confirm_vote_result", {method: "POST"})
-        .then(r => r.json())
-        .then(resp => {
-          if (resp && resp.error) {
-            voteResultConfirming = false;
-            addChatMsg("系统", resp.error, true);
-            if (panel) panel.style.display = "flex";
-          } else {
-            if (panel) panel.style.display = "none";
-          }
-          fetchCurrentState();
-        })
-        .catch(() => {
-          voteResultConfirming = false;
-          fetchCurrentState();
-        });
-    }, 2500);
-  } else {
-    fetch("/api/confirm_vote_result", {method: "POST"})
-      .then(r => r.json())
-      .then(resp => {
-        if (resp && resp.error) {
-          voteResultConfirming = false;
-          addChatMsg("系统", resp.error, true);
-        } else {
-          voteResultConfirming = false;
-          if (panel) panel.style.display = "none";
-        }
-        fetchCurrentState();
-      })
-      .catch(err => {
+  fetch("/api/confirm_vote_result", {method: "POST"})
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.error) {
         voteResultConfirming = false;
-        fetchCurrentState();
-      });
-  }
+        addChatMsg("系统", resp.error, true);
+        if (panel) panel.style.display = "flex";
+      } else {
+        voteResultConfirming = false;
+        if (panel) panel.style.display = "none";
+      }
+      fetchCurrentState();
+    })
+    .catch(err => {
+      voteResultConfirming = false;
+      fetchCurrentState();
+    });
 }
 
 function confirmNightTransition() {
@@ -2030,55 +2008,31 @@ function confirmNightTransition() {
   }
   nightTransitionConfirming = true;
   renderNightTransition(gameState);
-  if (socket && socket.connected) {
-    socket.emit("confirm_night_transition");
-    setTimeout(() => {
-      if (!nightTransitionConfirming) return;
-      fetch("/api/confirm_night_transition", {method: "POST"})
-        .then(r => r.json())
-        .then(resp => {
-          nightTransitionConfirming = false;
-          if (resp && resp.error) {
-            addChatMsg("系统", resp.error, true);
-          } else {
-            const overlay = document.getElementById("night-transition-overlay");
-            if (overlay) overlay.classList.remove("show");
-          }
-          fetchCurrentState();
-        })
-        .catch(err => {
-          nightTransitionConfirming = false;
-          fetchCurrentState();
-        });
-    }, 2500);
-  } else {
-    fetch("/api/confirm_night_transition", {method: "POST"})
-      .then(r => r.json())
-      .then(resp => {
-        nightTransitionConfirming = false;
-        if (resp && resp.error) {
-          addChatMsg("系统", resp.error, true);
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = "确认天亮";
-          }
-        } else {
-          const overlay = document.getElementById("night-transition-overlay");
-          if (overlay) overlay.classList.remove("show");
-        }
-        fetchCurrentState();
-      })
-      .catch(err => {
-        nightTransitionConfirming = false;
+  fetch("/api/confirm_night_transition", {method: "POST"})
+    .then(r => r.json())
+    .then(resp => {
+      nightTransitionConfirming = false;
+      if (resp && resp.error) {
+        addChatMsg("系统", resp.error, true);
         if (btn) {
           btn.disabled = false;
           btn.textContent = "确认天亮";
         }
-        fetchCurrentState();
-      });
-  }
+      } else {
+        const overlay = document.getElementById("night-transition-overlay");
+        if (overlay) overlay.classList.remove("show");
+      }
+      fetchCurrentState();
+    })
+    .catch(err => {
+      nightTransitionConfirming = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "确认天亮";
+      }
+      fetchCurrentState();
+    });
 }
-
 function renderNightTransition(state) {
   const overlay = document.getElementById("night-transition-overlay");
   if (!overlay) return;
@@ -2215,7 +2169,7 @@ function renderDuskVotingFlow(state) {
   const counts = normalizeVoteCounts(voteSummary);
   const winner = voteSummary.winner || voteSummary.jail_target || "";
   const crowHasVoted = hasCrowVoted(voteSummary) || crowVoteSubmitting;
-  const showVoteButtons = stage === "voting" && voteSummary.active && (!hasCrowVoted(voteSummary) || crowVoteSubmitting);
+  const showVoteButtons = stage === "voting" && voteSummary.active && !crowHasVoted;
   const showVoteResults = ["results", "result"].includes(stage);
   const secondsLeft = duskVoteSecondsRemaining(voteSummary);
   const abstainers = [];
@@ -2305,7 +2259,7 @@ function renderDuskVotingFlow(state) {
       footerAbstainBtn.style.marginTop = "8px";
       footerAbstainBtn.style.transition = "all 0.2s ease";
 
-      const isAbstainTarget = crowVoteSubmitting && (voteSummary.crow_vote === "" || voteSummary.crow_vote === undefined);
+      const isAbstainTarget = crowVoteSubmitting && voteSummary.crow_vote === "";
       footerAbstainBtn.textContent = isAbstainTarget ? "已选择弃票，投票中..." : "放弃投票 (弃票)";
 
       footerAbstainBtn.addEventListener("mouseover", () => {
@@ -2334,7 +2288,7 @@ function renderDuskVotingFlow(state) {
       }
       footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));
       actions.appendChild(footerAbstainBtn);
-    } else if (stage === "voting") {
+    } else if (stage === "voting" && crowHasVoted) {
       actions.innerHTML = `<div style="color:#f7d98a;">已投票，等待居民投票完成或倒计时结束（${secondsLeft}秒）。</div>`;
     }
   }

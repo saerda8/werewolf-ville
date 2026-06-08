@@ -436,7 +436,7 @@ class EngineDuskMixin:
     # ==================== Dusk discussion ====================
 
     def _dusk_discussion_speech_timeout_seconds(self) -> float:
-        return 3.0
+        return 10.0
 
     def _generate_single_dusk_discussion_statement(
         self,
@@ -469,6 +469,7 @@ class EngineDuskMixin:
             "发言要像狼人杀讨论：先用自己的行踪/观察/记忆自证，再点名一个具体怀疑对象，"
             "再基于尸体、讨论或公开线索给出推理理由。"
             "禁止说“我没意见”“先听警长/克罗”“等大家说完”“暂时没有线索”等划水句；"
+            "不要使用固定格式开头；每个人都要根据自己的职业、记忆和怀疑对象说出不同重点。"
             "不要投票，不要要求马上拘留。80字以内，必须只说角色本人会说的话。"
         )
         result = {"text": ""}
@@ -479,7 +480,7 @@ class EngineDuskMixin:
                     speaker_name,
                     system_prompt,
                     "请发表黄昏讨论发言，不要投票。",
-                    max_retries=0,
+                    max_retries=1,
                 )
             except Exception:
                 result["text"] = ""
@@ -525,20 +526,23 @@ class EngineDuskMixin:
                 suspect_name = self._rng.choice(suspect_pool) if suspect_pool else ""
                 suspect_text = display_name_for_person(suspect_name) if suspect_name else "行踪解释不清的人"
                 if getattr(speaker, "role", "") == "werewolf":
-                    text = (
-                        f"我白天在{location}，没有靠近尸体。"
-                        f"{suspect_text}的行踪最含糊，我怀疑他在借混乱藏线索。"
-                    )
+                    templates = [
+                        f"我白天一直在{location}附近，没机会靠近死者。{suspect_text}一直避开关键问题，我怀疑他在把线索往别人身上推。",
+                        f"我能解释自己的去向，反倒是{suspect_text}说话绕来绕去。现在不能再等，他的行踪必须被重点追问。",
+                        f"尸体出现后{suspect_text}最急着撇清自己，这不像普通紧张。我建议先盯住他，别被表面的安静骗了。",
+                    ]
                 else:
-                    text = (
-                        f"我白天在{location}，能说明自己的去向。"
-                        f"{suspect_text}需要解释行踪，大家别放过尸体和讨论里的矛盾。"
-                    )
+                    templates = [
+                        f"我白天在{location}，能说明自己见过什么。{suspect_text}的时间线最薄弱，我希望他把去向说完整。",
+                        f"我不想空猜，但{suspect_text}和尸体线索对不上。现在要查的是谁能解释行动，谁只是在躲问题。",
+                        f"我能说清自己的位置；{suspect_text}还没解释关键空档。大家别只听态度，要看他说法有没有矛盾。",
+                    ]
+                text = self._rng.choice(templates)
             text = self._limit_gathering_speech(text, max_chars=90)
             statements.append({"speaker": speaker_name, "text": text})
             self.chat_bubbles[speaker_name] = {
                 "text": text,
-                "target": self.detective_name,
+                "target": "",
                 "time": time.time(),
             }
             self._log(f"💬 黄昏讨论 {display_name_for_person(speaker_name)}: {text}", "chat")
@@ -1293,6 +1297,7 @@ class EngineDuskMixin:
             "deadline": getattr(self, "_dusk_vote_deadline", None),
             "seconds_remaining": max(0, int((getattr(self, "_dusk_vote_deadline", 0) or 0) - time.time())),
             "crow_voted": getattr(self, "_dusk_crow_voted", False),
+            "crow_vote": self._dusk_votes.get(self.detective_name) if getattr(self, "_dusk_crow_voted", False) else None,
             "discussion_active": getattr(self, "_dusk_discussion_active", False),
             "discussion_statements": list(getattr(self, "_dusk_discussion_statements", [])),
             "crow_statement": getattr(self, "_dusk_crow_statement", ""),

@@ -613,3 +613,35 @@ ID:
 - `python -m py_compile game_engine.py engine_navigation.py world_config.py ui/app.py`
 - 全角色真实地图审计：8 个角色住处和默认白天地点均能生成真实可达路径。
 - 本地服务已重启，`http://127.0.0.1:5000/?cachebust=40` 返回 200，页面显示版本 40。
+
+### BUG-2026-06-09-001: detective chat, dusk vote, escort, and burial regressions
+
+Severity: Blocker
+Status: Fixed
+
+Symptoms:
+- Detective-to-NPC real chat could show the listening bubble, receive an empty model reply, immediately release the NPC, and allow the NPC to start a new thought/action cycle.
+- Dusk vote buttons stayed in a submitting-looking state, sometimes treating missing `crow_vote` as abstain.
+- After confirming vote results, Crow could leave while the voted target stayed in place, blocking the night transition.
+- Morning burial used `(12, 46)`, causing Crow to drag bodies on a long route near the sheriff/home area instead of the rear of Johnson Park.
+- Dusk public statements could be tagged as directed to Crow, and fallback speeches were too repetitive.
+
+Root causes:
+- `detective_chat()` released the conversation lock on the first empty response.
+- `_move_agents()` skipped every jailed resident, including the current escort target with an active prison path.
+- Voting UI kept `crowVoteSubmitting` inside `showVoteButtons`, and old confirm paths waited on socket/fallback timing.
+- Burial target was hard-coded to `(12, 46)`.
+- Dusk public speech bubbles used `target=Crow`; fallback text used one repeated template.
+
+Fix:
+- Live detective chat retries empty responses within the 30s lock window; non-running tests keep the lock instead of releasing immediately.
+- Escort target can walk to prison while the dusk escort stage is active, then remains `jailed`.
+- Vote and night confirm buttons call REST endpoints immediately; voting UI hides all voting actions after Crow votes and shows countdown/waiting instead.
+- Burial target moved to park rear `(24, 42)` and pathless burial movement no longer creates fake moving state.
+- Dusk speech prompt/fallback now pushes specific suspicion and public bubbles no longer target Crow.
+
+Verification:
+- `python -m py_compile game_engine.py engine_dusk.py ui/app.py tests/test_engine_foundation.py tests/test_gathering_timeout.py tests/test_ui_bubble_layout.py tests/test_vote_flow.py`
+- `python -m pytest -q tests/test_ui_bubble_layout.py -q`
+- `python -m pytest -q tests/test_vote_flow.py -q`
+- Targeted regressions for detective chat empty response, prison escort movement, and park burial target passed.

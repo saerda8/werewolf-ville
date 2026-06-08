@@ -3,6 +3,8 @@ import time
 
 import game_engine
 
+PARK_REAR_BURIAL_TARGET = (24, 42)
+
 
 def _make_engine(monkeypatch, seed=7):
     empty_maze = [[0] * 140 for _ in range(100)]
@@ -945,8 +947,8 @@ def test_crow_buries_body_after_gathering(monkeypatch):
     # Verify the body is not removed immediately; it enters a dragging sequence.
     assert initial_body.buried is False
     assert initial_body.burying is True
-    assert initial_body.burial_target_x == 12
-    assert initial_body.burial_target_y == 46
+    assert (initial_body.burial_target_x, initial_body.burial_target_y) == PARK_REAR_BURIAL_TARGET
+    assert (initial_body.burial_target_x, initial_body.burial_target_y) != (12, 46)
 
     # Verify Crow's statement is in the chat bubbles
     assert "Crow" in engine.chat_bubbles
@@ -1467,13 +1469,15 @@ def test_round_two_timeout_logs_unified_fallback_message(monkeypatch):
     release.set()
 
 
-def test_detective_chat_empty_response_releases_waiting(monkeypatch):
-    """When detective chat LLM returns empty, release the target instead of hanging."""
+def test_detective_chat_empty_response_keeps_waiting_for_retry(monkeypatch):
+    """When detective chat LLM returns empty, keep the target locked for a retry window."""
     engine = _make_engine(monkeypatch)
     engine._daily_interviewed = {
         name for name, agent in engine.agents.items()
         if name != engine.detective_name and agent.is_alive
     }
+    target = engine.agents["Arthur Burton"]
+    detective = engine.agents[engine.detective_name]
 
     monkeypatch.setattr(
         engine,
@@ -1481,16 +1485,19 @@ def test_detective_chat_empty_response_releases_waiting(monkeypatch):
         lambda *args, **kwargs: "",
     )
 
+    started_at = time.time()
     result = engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)
 
     waiting_logs = [e["message"] for e in engine.game_log if "模型等待失败/空结果，结束等待" in e.get("message", "")]
-    assert len(waiting_logs) >= 1, (
-        f"Expected waiting log for detective chat empty response, got: {[e['message'] for e in engine.game_log]}"
+    assert len(waiting_logs) == 0, (
+        f"Detective chat should retry instead of ending waiting immediately: {waiting_logs}"
     )
-    assert result.get("no_response") is True
-    assert result.get("response") == ""
-    assert "Arthur Burton" not in engine.chat_bubbles
-    assert engine.agents["Arthur Burton"].in_conversation_with is None
+    assert result.get("response", "") == ""
+    assert target.in_conversation_with == engine.detective_name
+    assert detective.in_conversation_with is None
+    assert engine._detective_chat_active_target == "Arthur Burton"
+    assert started_at < getattr(target, "_detective_chat_release_at", 0) <= started_at + 31
+    assert engine.chat_bubbles["Arthur Burton"].get("kind") == "conversation_pending"
 
 
 def test_unified_fallback_log_not_present_on_success(monkeypatch):

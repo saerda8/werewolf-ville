@@ -1,4 +1,4 @@
-"""
+﻿"""
 
 游戏引擎 - 时间系统 / 状态调度 / 位置管理
 
@@ -1926,7 +1926,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         body = bodies_to_bury[0]
 
-        grave_x, grave_y = 12, 46
+        grave_x, grave_y = 24, 42
 
         body.burying = True
 
@@ -1994,7 +1994,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             return
 
-        target = (getattr(body, "burial_target_x", 12), getattr(body, "burial_target_y", 46))
+        target = (getattr(body, "burial_target_x", 24), getattr(body, "burial_target_y", 42))
 
         path_result = self._nearest_reachable_path(
 
@@ -2016,17 +2016,21 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             crow.target_y = ty
 
+            body.burial_target_x = tx
+
+            body.burial_target_y = ty
+
             self.agent_paths[self.detective_name] = path
 
             crow.runtime_state = "moving"
 
         else:
 
-            crow.target_x, crow.target_y = target
+            crow.target_x, crow.target_y = crow.x, crow.y
 
             self.agent_paths.pop(self.detective_name, None)
 
-            crow.runtime_state = "moving"
+            crow.runtime_state = "idle"
 
 
 
@@ -6167,6 +6171,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     self._skip_planning_turn_if_current(name)
                     continue
                 else:
+                    if name in self._jailed:
+                        agent.runtime_state = "jailed"
+                        loc = self._reverse_lookup_location(agent.x, agent.y)
+                        agent.current_location = loc
+                        continue
+
                     agent.runtime_state = "acting"
                     self._skip_planning_turn_if_current(name)
                     continue
@@ -8343,9 +8353,19 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 continue
 
-            # Jailed residents cannot move
+            # Jailed residents normally cannot move, but the vote winner still
+            # needs to visibly walk to the cell during the escort sequence.
+            jailed_escort_moving = (
+                name in self._jailed
+                and getattr(self, "_dusk_stage", "") == "escorting"
+                and name == getattr(self, "_dusk_jail_target", None)
+                and (
+                    bool(self.agent_paths.get(name))
+                    or (agent.x, agent.y) != (agent.target_x, agent.target_y)
+                )
+            )
 
-            if name in self._jailed:
+            if name in self._jailed and not jailed_escort_moving:
 
                 continue
 
@@ -8514,6 +8534,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     if getattr(agent, "_pending_action", None):
                         self._arrive_at_pending_action(name, agent)
+                    elif name in self._jailed:
+                        agent.runtime_state = "jailed"
                     else:
                         agent.runtime_state = "acting"
                         agent._arrived_at_time = time.time()
@@ -9814,23 +9836,50 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-        # Call the LLM without holding the game engine lock
+        # Call the LLM without holding the game engine lock. In the live game,
+        # empty model output is retried inside the 30s conversation lock window.
 
         if special_response is None:
 
-            response = self._generate_agent_response(
+            response = ""
 
-                target,
+            retry_deadline = target._detective_chat_release_at or (time.time() + 30.0)
 
-                self.detective_name,
+            while True:
 
-                prompt_message,
+                response = self._generate_agent_response(
 
-                self.day,
+                    target,
 
-                priority=True,
+                    self.detective_name,
 
-            )
+                    prompt_message,
+
+                    self.day,
+
+                    priority=True,
+
+                    max_retries=0,
+
+                )
+
+                if response and response.strip():
+                    break
+
+                if not getattr(self, "_running", False):
+                    break
+
+                if time.time() >= retry_deadline:
+                    break
+
+                with self._lock:
+                    if (
+                        getattr(self, "_detective_chat_job_id", 0) != chat_job_id
+                        or getattr(self, "_detective_chat_active_target", None) != target_name
+                    ):
+                        return {"error": "这次回复已经过期"}
+
+                time.sleep(min(1.0, max(0.1, retry_deadline - time.time())))
 
         else:
 
@@ -9864,6 +9913,21 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
             if not response or not response.strip():
+                if not getattr(self, "_running", False):
+                    detail = get_last_error_for_agent(target_name) or "模型返回为空"
+                    self._log(
+                        f"[模型等待/空结果，保持真实谈话锁] {display_name_for_person(target_name)} 回复克罗：{detail}",
+                        "system",
+                    )
+                    self._broadcast_state()
+                    return {
+                        "no_response": True,
+                        "response": "",
+                        "remaining_chats": CONFIG["conversation"]["detective_normal_chat_limit"]
+                        - detective.chat_count.get(target_name, 0),
+                        "deep_dive_remaining": detective.deep_dive_quota - detective.deep_dive_used,
+                        "delivered_clues": [],
+                    }
                 detail = get_last_error_for_agent(target_name) or "模型返回为空"
                 self._log(
                     f"[模型等待失败/空结果，结束等待] {display_name_for_person(target_name)} 回复警长：{detail}",
