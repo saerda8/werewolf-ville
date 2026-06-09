@@ -1382,6 +1382,7 @@ def test_normal_chat_button_is_independent_from_deep_dive_quota():
 def test_initial_camera_prefers_original_gathering_site():
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert "const site = state.initial_gathering_site;" in html
+    assert 'state.phase === "day" && state.primary_cta === "gathering"' in html
 
 
 def test_pending_detective_chat_does_not_suppress_real_reply_bubble():
@@ -1435,6 +1436,7 @@ def test_dusk_npc_facing_and_crow_abstain_button():
     assert "const isDuskDiscussionOrVoting = gameState && (" in html
     assert 'gameState.phase === "dusk_discussion" ||' in html
     assert 'gameState.phase === "dusk" ||' in html
+    assert '(gameState.phase === "day" && gameState.primary_cta === "gathering") ||' in html
     assert '["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)' in html
     assert "if (isDuskDiscussionOrVoting) {" in html
     assert 'sprite.setTexture(key, "down-walk.000");' in html
@@ -1444,3 +1446,12 @@ def test_dusk_npc_facing_and_crow_abstain_button():
     assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.currentTarget));' in html
     assert '放弃投票' in html
     assert '本轮不投票（弃票）' not in html
+
+
+def test_morning_gathering_hides_normal_action_bubbles():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    start = html.index("function buildNpcThoughtBubble")
+    end = html.index("function resolveBubbleLayout", start)
+    block = html[start:end]
+    assert 'state.phase === "day" && state.primary_cta === "gathering"' in block
+    assert 'return "";' in block

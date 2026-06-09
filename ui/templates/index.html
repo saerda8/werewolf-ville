@@ -78,6 +78,13 @@ body.phase-locked #game-container { pointer-events: none; }
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.1);
 }
+@media (min-width: 1101px) {
+  #dusk-statement-panel .modal-content,
+  #voting-panel .modal-content,
+  .night-transition-card {
+    transform: translateX(-150px);
+  }
+}
 .night-actors { display: flex; justify-content: center; gap: 20px; margin: 24px 0; }
 .night-actor {
   width: 72px; height: 72px; display: flex; align-items: center; justify-content: center;
@@ -1248,18 +1255,23 @@ function centerCameraOnState(state) {
 }
 
 function scheduleDuskDiscussionCameraPan(state, active, stage) {
-  if (!active || !sceneRef || !state) {
-    if (!active) duskCameraPanKey = "";
+  const morningGathering = !!(state && state.phase === "day" && state.primary_cta === "gathering");
+  if ((!active && !morningGathering) || !sceneRef || !state) {
+    if (!active && !morningGathering) duskCameraPanKey = "";
     return;
   }
-  const keyStage = stage === "voting" ? "voting" : "gathering";
+  const keyStage = morningGathering ? "morning" : (stage === "voting" ? "voting" : "gathering");
   const key = `${state.day || ""}:${keyStage}`;
   if (duskCameraPanKey === key) return;
   duskCameraPanKey = key;
   setTimeout(() => {
     if (!sceneRef || !gameState) return;
     const liveStage = duskStage(gameState);
-    const liveActive = gameState.phase === "dusk_discussion" || liveStage === "voting";
+    const liveActive = (
+      gameState.phase === "dusk_discussion" ||
+      liveStage === "voting" ||
+      (gameState.phase === "day" && gameState.primary_cta === "gathering")
+    );
     if (!liveActive) return;
     const site = gameState.initial_gathering_site;
     if (site && Number.isFinite(site.x) && Number.isFinite(site.y)) {
@@ -3763,6 +3775,7 @@ function formatActionDurationLine(p, state) {
 
 function buildNpcThoughtBubble(name, persona, state) {
   if (isDusk || isNight) return "";
+  if (state && state.phase === "day" && state.primary_cta === "gathering") return "";
   if (name === "Crow") return "";
   if (String(name).trim().toLowerCase() === "crow") return "";
 
@@ -5311,8 +5324,10 @@ function update(time, delta) {
       sprite.setTint(0x666666);
       sprite.anims.stop();
       sprite.setTexture(key, "down");
+      sprite.setAngle(p.jailed_corpse ? 90 : 0);
     } else {
       sprite.clearTint();
+      sprite.setAngle(0);
 
       // 平滑移动：基于时间的插值
       const dx = targetPx - sprite.x;
@@ -5362,6 +5377,7 @@ function update(time, delta) {
         const isDuskDiscussionOrVoting = gameState && (
           gameState.phase === "dusk_discussion" ||
           gameState.phase === "dusk" ||
+          (gameState.phase === "day" && gameState.primary_cta === "gathering") ||
           ["gathering", "knowledge_reveal", "npc_discussion", "discussion", "crow_statement", "crow_input", "vote_opening", "voting", "results", "result", "result_announcement_pending", "result_announcement", "final_words", "escorting", "escort"].includes(liveDuskStage)
         );
         if (isDuskDiscussionOrVoting) {

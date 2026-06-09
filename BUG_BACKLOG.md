@@ -645,3 +645,30 @@ Verification:
 - `python -m pytest -q tests/test_ui_bubble_layout.py -q`
 - `python -m pytest -q tests/test_vote_flow.py -q`
 - Targeted regressions for detective chat empty response, prison escort movement, and park burial target passed.
+
+### BUG-2026-06-09-002: real chat lock, morning gathering, jailed corpse, and silver tool regressions
+
+Severity: Blocker
+Status: Fixed
+
+Symptoms:
+- During detective-to-NPC real chat, the frontend could hide blue thought/action bubbles while the backend still logged and committed stale planning output.
+- Day2/Day3 morning gathering reused ordinary action text, left “morning discussion” bubbles above NPCs, and could wait forever for arrivals.
+- Voted-out residents could keep old action state or return to daily life instead of becoming inert jail corpses.
+- Hardware-store silver bullet tools incorrectly depended on Arthur being alive/present/not jailed.
+- Day2 silver resource task text did not match the fixed requirement.
+
+Fix:
+- Stale planning threads now re-check the action generation/conversation lock at every key publish boundary before writing raw model logs, parsed action logs, pending actions, planning state, or start-action logs.
+- Morning gathering clears ordinary action text, hides frontend blue action bubbles during `primary_cta=gathering`, pans to the gathering site, forces stationary NPCs to face front, and has a 15s arrival fallback.
+- Prison placement clears old planning/dialog/path state; jailed residents are exposed as `jailed_corpse`, visually gray/lying, and no longer expose action/thought fields.
+- Silver tool acquisition is a shelf interaction independent of Arthur; success logs “恭喜你获得制作子弹的工具”.
+- Task label/description fixed to `通过深挖女性角色获得银质项链/去五金店找到制造子弹的工具(二选一)`.
+- Dusk discussion prompt now includes prior accusations and forces accused NPCs to respond/defend/counter-accuse.
+
+Verification:
+- `python -m py_compile game_engine.py engine_dusk.py engine_tasks.py ui/app.py`
+- `python -m pytest -q tests/test_engine_foundation.py -k "inflight_planning_result or stale_planning_thread or morning_gathering or jailed_resident or acquire_silver_bullet or daily_tasks_day2"`: 12 passed
+- `python -m pytest -q tests/test_gathering_timeout.py tests/test_vote_flow.py tests/test_ui_bubble_layout.py`: 202 passed
+- Targeted daytime real-chat tests: 4 passed
+- Local service restarted; `http://127.0.0.1:5000/?cachebust=67` returns 200 and displays version 67.

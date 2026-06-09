@@ -246,6 +246,7 @@ def test_detective_chat_clears_npc_state(monkeypatch):
     agent.current_action_type = "talk"
     agent._pending_action = {"action_type": "talk", "target_person": engine.detective_name}
     monkeypatch.setattr(game_engine, "chat_for_agent", lambda *a, **kw: "response")
+    monkeypatch.setattr(agent, "generate_response", lambda *a, **kw: "response")
     crow.chat_count = {}
     crow.deep_dive_quota = 3
     crow.deep_dive_used = 0
@@ -281,6 +282,7 @@ def test_detective_chat_records_npc_memory(monkeypatch):
         return orig(e, d)
     agent.add_memory = track
     monkeypatch.setattr(game_engine, "chat_for_agent", lambda *a, **kw: "response")
+    monkeypatch.setattr(agent, "generate_response", lambda *a, **kw: "response")
     result = engine.detective_chat(tn, "hello?", is_deep_dive=False)
     assert "error" not in result
     assert called[0], "NPC add_memory should be called"

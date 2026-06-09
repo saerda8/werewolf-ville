@@ -757,7 +757,7 @@ def test_confirm_vote_result_holds_final_words_before_prison(monkeypatch):
     assert events[0] == ("sleep", 6.0)
     assert events[1] == ("sleep", engine_dusk._DUSK_FINAL_WORDS_HOLD_SECONDS)
     assert events[2] == ("place", "Arthur Burton")
-    assert engine.chat_bubbles["Arthur Burton"]["text"] == "我还有话要说。"
+    assert "Arthur Burton" not in engine.chat_bubbles
 
 
 def test_confirm_vote_result_all_abstain_has_crow_dismissal(monkeypatch):

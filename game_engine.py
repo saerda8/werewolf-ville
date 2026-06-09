@@ -618,7 +618,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         self._silver_knife_holder = self._rng.choice(non_crow_non_wolf) if non_crow_non_wolf else None
 
-        self._silver_bullet_acquired = False   # from Arthur at Harvey Oak Supply Store
+        self._silver_bullet_acquired = False   # bullet-making tool from the hardware shelf
 
         self._silver_jewelry_acquired = False  # from jewelry holder
 
@@ -1518,6 +1518,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._gathering_speaker_idx = 0
 
         self._gathering_next_tick = time.time() + 5  # 给用户 5 秒看到 NPC 聚集画面再开始发言
+        self._gathering_arrival_started_at = time.time()
 
         self._gathering_speak_start_time = 0
 
@@ -2215,13 +2216,29 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             return
 
         if getattr(self, "_gathering_round", 1) == 1:
+            waiting_for_arrival = False
             for name in getattr(self, "_gathering_queue", []):
                 agent = self.agents.get(name)
                 if not agent or not agent.is_alive:
                     continue
                 if self.agent_paths.get(name) or (agent.x, agent.y) != (agent.target_x, agent.target_y):
-                    self._gathering_next_tick = time.time() + 0.5
+                    waiting_for_arrival = True
+            if waiting_for_arrival:
+                arrival_started = float(getattr(self, "_gathering_arrival_started_at", now) or now)
+                if now - arrival_started < 15.0:
+                    self._gathering_next_tick = now + 0.5
                     return
+                for name in getattr(self, "_gathering_queue", []):
+                    agent = self.agents.get(name)
+                    if not agent or not agent.is_alive:
+                        continue
+                    agent.x, agent.y = agent.target_x, agent.target_y
+                    agent.current_action = ""
+                    agent.current_action_type = ""
+                    agent.current_emoji = ""
+                    agent.runtime_state = "idle"
+                    self.agent_paths.pop(name, None)
+                self._log("[晨会集合兜底] 到场等待超过15秒，已将仍在路上的参与者就近落位。", "system")
 
         if self._gathering_busy:
 
@@ -3787,6 +3804,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._gathering_speaker_idx = 0
 
         self._gathering_next_tick = 0
+        self._gathering_arrival_started_at = 0
 
         self._gathering_speak_start_time = 0
 
@@ -4073,18 +4091,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
     def acquire_silver_bullet(self) -> dict:
-
-        """Crow attempts to acquire the silver bullet tool from Arthur at Harvey Oak Supply Store.
-
-
-
-
-
-        Returns dict with success/failure, and clues/suspicion if blocked.
-
-        If Arthur is a werewolf or blocked by a werewolf, acquisition can fail.
-
-        """
+        """Crow acquires the bullet-making tool directly from the hardware shelf."""
 
         with self._lock:
 
@@ -4095,20 +4102,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             if self._silver_task_done_today:
 
                 return {"success": False, "error": "明天再来吧"}
-
-
-
-
-
-            arthur = self.agents.get("Arthur Burton")
-
-            if not arthur or not arthur.is_alive:
-
-                return {"success": False, "error": "亚瑟·伯顿已死亡或不存在"}
-
-            if "Arthur Burton" in self._jailed:
-
-                return {"success": False, "error": "亚瑟·伯顿已被拘留，无法获取银子弹"}
 
 
 
@@ -4130,57 +4123,19 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-            # Deterministic fallback: acquisition succeeds unless Arthur is a werewolf
-
-            if arthur.role == "werewolf":
-
-                # Arthur refuses, produces clues
-
-                self._log("⚠️ 亚瑟拒绝提供银子弹工具，行为可疑！", "action")
-
-                self.create_clue(
-
-                    clue_type="suspicious_behavior",
-
-                    summary="亚瑟·伯顿拒绝提供银子弹工具，声称店里没有。但他的态度非常紧张不安。",
-
-                    source=self.detective_name,
-
-                    related_person="Arthur Burton",
-
-                    location="Harvey Oak Supply Store",
-
-                )
-
-                return {
-
-                    "success": False,
-
-                    "error": "亚瑟拒绝提供银子弹工具",
-
-                    "suspicious": True,
-
-                    "clue": "亚瑟·伯顿的行为非常可疑，他似乎在隐瞒什么。",
-
-                }
-
-
-
-
-
             # Success
 
             self._silver_bullet_acquired = True
 
             self._silver_task_done_today = "silver_bullet"
 
-            self._log("🔧 Crow 从亚瑟处获得了银子弹工具！", "action")
+            self._log("恭喜你获得制作子弹的工具", "action")
 
             return {
 
                 "success": True,
 
-                "message": "从亚瑟·伯顿处获得了银子弹工具",
+                "message": "恭喜你获得制作子弹的工具",
 
                 "silver_bullet_acquired": True,
 
@@ -4949,11 +4904,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 # Jailed residents stay in prison, not sent home
 
                 if name in self._jailed:
-
-                    agent.current_action = "被拘留中"
-
-                    agent.current_emoji = "🔒"
-
+                    self._place_in_prison(name, walk=False)
                     continue
 
                 cfg = AGENT_CONFIGS[name]
@@ -5068,8 +5019,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 agent = self.agents.get(name)
                 if not agent:
                     continue
-                agent.current_action = "前往广场参加早晨讨论"
-                agent.current_emoji = "\U0001f4ac"
+                agent.current_action = ""
+                agent.current_action_type = ""
+                agent.current_emoji = ""
             return
 
         self.agent_paths.clear()
@@ -6573,27 +6525,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-                    # 保存到 agent 供 status 查询
-
-                    a._last_raw_response = decision.get("raw_response", "")
-
-                    a._last_decision = decision
-
-
-
-
-
-                    # 记录模型原始输出
-
-                    raw = decision.get("raw_response", "")
-
-                    if raw:
-
-                        self._log(f"[模型原始输出] {n}: {raw}", "llm_raw")
-
-                    else:
-
-                        self._log(f"[模型原始输出] {n}: <空输出>", "llm_raw")
+                    with self._lock:
+                        if _decision_cancelled():
+                            return
+                        a._last_raw_response = decision.get("raw_response", "")
+                        a._last_decision = decision
+                        raw = decision.get("raw_response", "")
+                        if raw:
+                            self._log(f"[模型原始输出] {n}: {raw}", "llm_raw")
+                        else:
+                            self._log(f"[模型原始输出] {n}: <空输出>", "llm_raw")
 
 
 
@@ -6602,38 +6543,36 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     # 检查 ok 字段
 
                     def _fallback_continue_current(reason: str):
-                        if _decision_cancelled():
-                            return
-                        loc_now = a.current_location or self._reverse_lookup_location(a.x, a.y) or "某处"
-                        a.current_location = loc_now
-                        a.current_action = self._default_continuing_action(n, loc_now)
-                        a.current_action_type = "continue_current"
-                        a.current_emoji = self._get_emoji(a.current_action)
-                        a._pending_action = {
-                            "action_type": "continue_current",
-                            "target_location": loc_now,
-                            "target_object": "",
-                            "target_person": "",
-                            "action": a.current_action,
-                            "action_status": a.current_action,
-
-                            "thought": reason,
-
-                            "expected_result": "完成当前事务",
-
-                        }
-
-                        a.runtime_state = "starting_action"
-
-                        self._mark_action_started(a, time.time())
-                        self._log(
-                            f"[行动解析] {actor_label}: 地点={self._destination_label_zh(loc_now)}；"
-                            f"行动={a.current_action}；类型=continue_current；原因={reason}",
-                            "think",
-                        )
+                        with self._lock:
+                            if _decision_cancelled():
+                                return
+                            loc_now = a.current_location or self._reverse_lookup_location(a.x, a.y) or "某处"
+                            a.current_location = loc_now
+                            a.current_action = self._default_continuing_action(n, loc_now)
+                            a.current_action_type = "continue_current"
+                            a.current_emoji = self._get_emoji(a.current_action)
+                            a._pending_action = {
+                                "action_type": "continue_current",
+                                "target_location": loc_now,
+                                "target_object": "",
+                                "target_person": "",
+                                "action": a.current_action,
+                                "action_status": a.current_action,
+                                "thought": reason,
+                                "expected_result": "完成当前事务",
+                            }
+                            a.runtime_state = "starting_action"
+                            self._mark_action_started(a, time.time())
+                            self._log(
+                                f"[行动解析] {actor_label}: 地点={self._destination_label_zh(loc_now)}；"
+                                f"行动={a.current_action}；类型=continue_current；原因={reason}",
+                                "think",
+                            )
 
                     if not decision.get("ok", False):
                         err = decision.get("error", "unknown")
+                        if _decision_cancelled():
+                            return
                         self._log(f"[LLM状态] {actor_label}: 决策失败（{err}），转为continue_current，稍后重试", "think")
                         _fallback_continue_current(f"模型暂时没有给出可执行计划：{err}")
                         a._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
@@ -6736,19 +6675,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     expect_part = f"；预期={localize_visible_character_names(expected_result)}" if expected_result else ""
 
-                    self._log(
-
-                        f"[行动解析] {actor_label}: 地点={loc_log}{obj_part}{pers_part}；"
-
-                        f"行动={localize_visible_character_names(action)}{type_part}{expect_part}",
-
-                        "think",
-
-                    )
-
-                    if thought:
-
-                        self._log(f"[行动理由] {actor_label}: {localize_visible_character_names(thought)}", "think")
+                    with self._lock:
+                        if _decision_cancelled():
+                            return
+                        self._log(
+                            f"[行动解析] {actor_label}: 地点={loc_log}{obj_part}{pers_part}；"
+                            f"行动={localize_visible_character_names(action)}{type_part}{expect_part}",
+                            "think",
+                        )
+                        if thought:
+                            self._log(f"[行动理由] {actor_label}: {localize_visible_character_names(thought)}", "think")
 
 
 
@@ -7006,75 +6942,41 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-                    # 保存 pending action
-
-                    a._pending_action = {
-
-                        "action_type": action_type or "continue_current",
-                        "target_location": matched_loc,
-
-                        "target_object": target_obj,
-
-                        "target_person": target_person,
-
-                        "action": action,
-
-                        "action_status": action_status,
-
-                        "thought": thought,
-
-                        "expected_result": expected_result,
-
-                        "observation_before": packet,
-
-                    }
-
-
-
-
-
-                    # 更新 agent 状态字段
-
-                    a.current_action = action or "doing something"
-
-                    a.current_action_type = action_type or "continue_current"
-                    a.current_emoji = self._get_emoji(a.current_action)
-                    self._record_observation_event(
-                        event_type="action_start",
-                        subject=n,
-                        text=f"{display_name_for_person(n)}开始：{localize_visible_character_names(action_status or action)}",
-                        x=a.x,
-                        y=a.y,
-                        public=False,
-                    )
-
-                    a.runtime_state = "planning"
-
                     plan_delay = float(CONFIG.get("agent", {}).get("planning_display_seconds", 3.5))
-
-                    a._action_plan_ready_at = time.time() + plan_delay
-
-
-
-
-
-                    # 记录思维到 cognition（在行动之前）
-
-                    if thought:
-
-                        a.write_cognition(f"### 第{self.day}天 {self.game_hour:.1f}点\n决策思考：{thought}\n计划行动：{action_type} -> {matched_loc}，{action}")
-
-
-
-                    self._log(
-
-                        f"[行动计划] {actor_label}: 思考={localize_visible_character_names(thought or '正在判断下一步')}；"
-
-                        f"计划={localize_visible_character_names(expected_result or action or '等待行动')}",
-
-                        "action",
-
-                    )
+                    with self._lock:
+                        if _decision_cancelled():
+                            return
+                        a._pending_action = {
+                            "action_type": action_type or "continue_current",
+                            "target_location": matched_loc,
+                            "target_object": target_obj,
+                            "target_person": target_person,
+                            "action": action,
+                            "action_status": action_status,
+                            "thought": thought,
+                            "expected_result": expected_result,
+                            "observation_before": packet,
+                        }
+                        a.current_action = action or "doing something"
+                        a.current_action_type = action_type or "continue_current"
+                        a.current_emoji = self._get_emoji(a.current_action)
+                        self._record_observation_event(
+                            event_type="action_start",
+                            subject=n,
+                            text=f"{display_name_for_person(n)}开始：{localize_visible_character_names(action_status or action)}",
+                            x=a.x,
+                            y=a.y,
+                            public=False,
+                        )
+                        a.runtime_state = "planning"
+                        a._action_plan_ready_at = time.time() + plan_delay
+                        if thought:
+                            a.write_cognition(f"### 第{self.day}天 {self.game_hour:.1f}点\n决策思考：{thought}\n计划行动：{action_type} -> {matched_loc}，{action}")
+                        self._log(
+                            f"[行动计划] {actor_label}: 思考={localize_visible_character_names(thought or '正在判断下一步')}；"
+                            f"计划={localize_visible_character_names(expected_result or action or '等待行动')}",
+                            "action",
+                        )
 
 
 
@@ -7334,14 +7236,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                         obj_log = f"，目标物件：{target_obj}" if target_obj else ""
 
+                        if _decision_cancelled():
+                            return
                         self._log(
-
                             f"[开始行动] {actor_label}: 前往 {self._destination_label_zh(matched_loc)}{localize_visible_character_names(obj_log)}，"
-
                             f"准备：{localize_visible_character_names(a.current_action)}（{ACTION_TYPE_LABELS_ZH.get(action_type, action_type)}）",
-
                             "action",
-
                         )
 
                     else:
@@ -7371,14 +7271,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                             a.current_location = self._reverse_lookup_location(a.x, a.y)
 
+                        if _decision_cancelled():
+                            return
                         self._log(
-
                             f"[开始行动] {actor_label}: 在原地 {self._destination_label_zh(a.current_location)} "
-
                             f"执行：{localize_visible_character_names(a.current_action)}（{ACTION_TYPE_LABELS_ZH.get(action_type, action_type)}）",
-
                             "action",
-
                         )
 
 
@@ -7386,6 +7284,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
                 except Exception as e:
+                    if _decision_cancelled():
+                        return
 
                     loc_now = a.current_location or self._reverse_lookup_location(a.x, a.y) or "当前位置"
                     fallback_action = self._default_continuing_action(n, loc_now)
@@ -8555,6 +8455,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         self._arrive_at_pending_action(name, agent)
                     elif name in self._jailed:
                         agent.runtime_state = "jailed"
+                        agent.current_action = "被拘留中"
+                        agent.current_action_type = ""
+                        agent.current_emoji = ""
+                        agent._jailed_corpse = True
                     else:
                         agent.runtime_state = "acting"
                         agent._arrived_at_time = time.time()
@@ -10916,7 +10820,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         or getattr(self, "_detective_chat_pending_target", None) == name
                     )
                 )
-                suppress_action_fields = is_detective or detective_chat_locked
+                suppress_action_fields = is_detective or detective_chat_locked or is_jailed
                 visual_moving = bool(self.agent_paths.get(name)) or (
                     agent.x != agent.target_x or agent.y != agent.target_y
                 ) or getattr(agent, 'runtime_state', 'idle') == "moving"
@@ -10956,7 +10860,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 "display_name": display_name,
 
-                "alive": agent.is_alive,
+                "alive": agent.is_alive and not bool(getattr(agent, "_jailed_corpse", False)),
 
                 "model": getattr(self, "model_assignments", {}).get(name, getattr(agent, 'model', '')),
 
@@ -10990,7 +10894,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 "path_len": 0 if suppress_action_fields else len(self.agent_paths.get(name, [])),
 
-                "runtime_state": "idle" if is_detective else ("acting" if detective_chat_locked else getattr(agent, 'runtime_state', 'idle')),
+                "runtime_state": (
+                    "idle"
+                    if is_detective
+                    else ("jailed" if is_jailed else ("acting" if detective_chat_locked else getattr(agent, 'runtime_state', 'idle')))
+                ),
                 "visual_moving": visual_moving,
                 "action_started_at": 0 if suppress_action_fields else getattr(agent, "_action_started_at", 0),
                 "action_status_visible_at": 0 if suppress_action_fields else getattr(agent, "_action_status_visible_at", 0),
@@ -11012,6 +10920,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "deep_dive_available": deep_dive_available,
 
                 "jailed": is_jailed,
+                "jailed_corpse": bool(is_jailed and getattr(agent, "_jailed_corpse", False)),
 
                 "prison_cell": self._get_prison_cell(name) if is_jailed else None,
 

@@ -25,18 +25,23 @@ class EngineTasksMixin:
             bullet_done = self._silver_bullet_acquired
             jewelry_done = self._silver_jewelry_acquired
             silver_done_today = bool(getattr(self, "_silver_task_done_today", None))
+            silver_choice_complete = (
+                silver_done_today
+                if self.day == 2
+                else (bullet_done and jewelry_done)
+            )
             tasks.append({
                 "id": "silver_resource_choice",
-                "label": "银器资源",
-                "description": "通过深挖向 NPC 获取银制首饰，或前往五金店取得制造子弹的工具（二选一）。完成任意一项即完成。",
-                "done": 1 if (silver_done_today or bullet_done or jewelry_done) else 0,
+                "label": "通过深挖女性角色获得银质项链/去五金店找到制造子弹的工具(二选一)",
+                "description": "通过深挖女性角色获得银质项链/去五金店找到制造子弹的工具(二选一)",
+                "done": 1 if silver_choice_complete else 0,
                 "total": 1,
-                "complete": silver_done_today or bullet_done or jewelry_done,
+                "complete": silver_choice_complete,
                 "daily": False,
                 "silver_bullet_acquired": bullet_done,
                 "silver_jewelry_acquired": jewelry_done,
                 "silver_task_done_today": getattr(self, "_silver_task_done_today", None),
-                "available_today": not silver_done_today,
+                "available_today": not silver_done_today and not (bullet_done and jewelry_done),
             })
 
             if self.day >= 4 and bullet_done and jewelry_done and not self._silver_bullet_crafted:

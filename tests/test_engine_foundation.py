@@ -2343,12 +2343,12 @@ def test_daily_tasks_day2_has_silver_tasks(monkeypatch):
     status = engine.get_status()
     tasks = status["daily_tasks"]
 
-    bullet_task = [t for t in tasks if t["id"] == "silver_bullet"]
-    jewelry_task = [t for t in tasks if t["id"] == "silver_jewelry"]
-    assert len(bullet_task) == 1
-    assert len(jewelry_task) == 1
-    assert bullet_task[0]["complete"] is False
-    assert jewelry_task[0]["complete"] is False
+    silver_task = [t for t in tasks if t["id"] == "silver_resource_choice"]
+    assert len(silver_task) == 1
+    expected = "通过深挖女性角色获得银质项链/去五金店找到制造子弹的工具(二选一)"
+    assert silver_task[0]["label"] == expected
+    assert silver_task[0]["description"] == expected
+    assert silver_task[0]["complete"] is False
 
 
 def test_daily_tasks_day4_has_craft_task_when_both_acquired(monkeypatch):
@@ -2419,8 +2419,8 @@ def test_acquire_silver_bullet_success(monkeypatch):
     assert "silver_bullet_acquired" in result
 
 
-def test_acquire_silver_bullet_fails_when_arthur_is_werewolf(monkeypatch):
-    """If Arthur is a werewolf, acquisition fails with suspicious clue."""
+def test_acquire_silver_bullet_does_not_depend_on_arthur(monkeypatch):
+    """The hardware-shelf tool remains available regardless of Arthur's state."""
     engine = _make_engine(monkeypatch, seed=99)
     engine.phase = game_engine.GamePhase.DAY
 
@@ -2430,15 +2430,17 @@ def test_acquire_silver_bullet_fails_when_arthur_is_werewolf(monkeypatch):
     crow.x = supply["x"]
     crow.y = supply["y"]
 
-    # Force Arthur to be a werewolf
+    # Arthur may be a dead, jailed werewolf; the shelf remains interactive.
     engine.agents["Arthur Burton"].role = "werewolf"
+    engine.agents["Arthur Burton"].is_alive = False
+    engine._jailed.add("Arthur Burton")
     if "Arthur Burton" not in engine.werewolf_names:
         engine.werewolf_names.append("Arthur Burton")
 
     result = engine.acquire_silver_bullet()
-    assert result["success"] is False
-    assert result.get("suspicious") is True
-    assert engine._silver_bullet_acquired is False
+    assert result["success"] is True
+    assert result["message"] == "恭喜你获得制作子弹的工具"
+    assert engine._silver_bullet_acquired is True
 
 
 def test_acquire_silver_bullet_fails_when_too_far(monkeypatch):
@@ -2524,7 +2526,7 @@ def test_only_one_silver_objective_per_day(monkeypatch):
     engine.agents[holder].y = crow.y
     second = engine.acquire_silver_jewelry(holder)
     assert second["success"] is False
-    assert "今天已经完成过" in second["error"]
+    assert "明天再来" in second["error"]
 
 
 def test_silver_bullet_can_be_fired_once(monkeypatch):
@@ -5091,6 +5093,113 @@ def test_stale_planning_thread_does_not_override_detective_conversation_lock(mon
     assert arthur.current_thought == "", (
         "Stale planning thought must not appear while agent is in detective conversation"
     )
+
+
+def test_inflight_planning_result_cannot_publish_after_detective_chat_lock(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    monkeypatch.setitem(game_engine.CONFIG["game"], "active_agents", ["Arthur Burton"])
+    monkeypatch.setitem(game_engine.CONFIG["llm"], "action_decision_interval_seconds", 0)
+    arthur = engine.agents["Arthur Burton"]
+    arthur._last_llm_decision_time = 0
+    arthur._next_llm_retry_time = 0
+    started = threading.Event()
+    release = threading.Event()
+
+    def delayed_decision(*args, **kwargs):
+        started.set()
+        release.wait(timeout=2)
+        return {
+            "ok": True,
+            "raw_response": '{"thought":"旧计划","action":"整理长椅"}',
+            "target_location": "Johnson Park",
+            "target_object": "bench",
+            "target_person": "",
+            "action": "整理长椅",
+            "action_type": "work",
+            "thought": "旧计划",
+            "expected_result": "整理好长椅",
+            "action_status": "整理中",
+        }
+
+    monkeypatch.setattr(arthur, "decide_next_action", delayed_decision)
+    engine._update_agent_schedules()
+    assert started.wait(timeout=1)
+
+    with engine._lock:
+        arthur.in_conversation_with = "Crow"
+        engine._detective_chat_active_target = "Arthur Burton"
+        engine._bump_agent_action_generation(arthur)
+        arthur._pending_action = None
+        arthur.current_action = ""
+        arthur.current_thought = ""
+        baseline = len(engine.game_log)
+
+    release.set()
+    deadline = time.time() + 2
+    while arthur._is_thinking and time.time() < deadline:
+        time.sleep(0.01)
+
+    new_messages = [entry.get("message", "") for entry in engine.game_log[baseline:]]
+    assert not any("旧计划" in message or "整理长椅" in message for message in new_messages)
+    assert arthur._pending_action is None
+    assert arthur.current_action == ""
+    assert arthur.current_thought == ""
+
+
+def test_morning_gathering_does_not_publish_normal_action_text(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.day = 2
+    engine._place_alive_agents_near_body(object())
+
+    for name, agent in engine.agents.items():
+        if agent.is_alive and name not in engine._jailed:
+            assert agent.current_action == ""
+            assert agent.current_action_type == ""
+            assert agent.current_emoji == ""
+
+
+def test_morning_gathering_arrival_timeout_cannot_deadlock(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = True
+    engine._gathering_busy = False
+    engine._gathering_round = 1
+    engine._gathering_queue = ["Arthur Burton"]
+    engine._gathering_arrival_started_at = time.time() - 16
+    engine._gathering_next_tick = time.time() + 100
+    arthur = engine.agents["Arthur Burton"]
+    arthur.target_x, arthur.target_y = arthur.x + 3, arthur.y
+    engine.agent_paths["Arthur Burton"] = [(arthur.x + 1, arthur.y)]
+
+    engine._handle_gathering()
+
+    assert (arthur.x, arthur.y) == (arthur.target_x, arthur.target_y)
+    assert "Arthur Burton" not in engine.agent_paths
+    assert arthur.current_action == ""
+    assert arthur.runtime_state == "idle"
+
+
+def test_jailed_resident_is_exposed_as_inert_corpse_in_cell(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    target_name = "Arthur Burton"
+    target = engine.agents[target_name]
+    target._pending_action = {"action": "去工作"}
+    target._last_decision = {"action": "去工作"}
+    target.current_thought = "继续营业"
+    engine._jailed.add(target_name)
+
+    engine._place_in_prison(target_name, walk=False)
+    status = engine.get_status()["personas"][target_name]
+
+    assert status["jailed"] is True
+    assert status["jailed_corpse"] is True
+    assert status["alive"] is False
+    assert status["runtime_state"] == "jailed"
+    assert status["action"] == ""
+    assert status["thought"] == ""
+    assert target._pending_action is None
+    assert target._last_decision == {}
 
 
 def test_planned_action_to_busy_target_does_not_clear_pending_action_silently(monkeypatch):

@@ -455,17 +455,36 @@ class EngineDuskMixin:
             if name != speaker_name and suspect.is_alive and name not in self._jailed
         ]
         suspect_text = "、".join(possible_suspects) or "暂无其他存活对象"
+        prior_statements = list(getattr(self, "_dusk_discussion_statements", []) or [])
+        prior_text = "；".join(
+            f"{display_name_for_person(item.get('speaker', ''))}说：{str(item.get('text', ''))[:100]}"
+            for item in prior_statements[-5:]
+            if isinstance(item, dict)
+        ) or "暂无"
+        speaker_display = display_name_for_person(speaker_name)
+        accused_by = [
+            display_name_for_person(item.get("speaker", ""))
+            for item in prior_statements
+            if isinstance(item, dict)
+            and speaker_display
+            and speaker_display in str(item.get("text", ""))
+        ]
         role_instruction = (
             "你实际是狼人。发言时必须伪装成好人，自证清白，把怀疑甩给一个具体非狼人对象；"
             "不要承认狼人身份，不要显得在保护同伴。"
             if agent.role == "werewolf"
             else "你是好人。发言时必须自证清白，指出一个具体怀疑对象，并提醒大家下一步该查什么。"
         )
+        if accused_by:
+            role_instruction += (
+                f"前面{('、'.join(accused_by))}已经点名怀疑你；你必须先正面解释并反驳，"
+                "再指出对方说法的漏洞或反踩一个更可疑的具体对象，不能装作没听见。"
+            )
         system_prompt = (
             f"你是{display_name_for_person(speaker_name)}，现在是第{self.day}天黄昏讨论。"
             f"最近死者：{recent_dead}。已知线索：{clue_text}。"
             f"你对白天经历的记忆：{memory_text}。你的当前判断：{cognition_text}。"
-            f"可怀疑对象：{suspect_text}。{role_instruction}"
+            f"前面大家的发言：{prior_text}。可怀疑对象：{suspect_text}。{role_instruction}"
             "发言要像狼人杀讨论：先用自己的行踪/观察/记忆自证，再点名一个具体怀疑对象，"
             "再基于尸体、讨论或公开线索给出推理理由。"
             "禁止说“我没意见”“先听警长/克罗”“等大家说完”“暂时没有线索”等划水句；"
@@ -1163,6 +1182,21 @@ class EngineDuskMixin:
     def _place_in_prison(self, target_name: str, walk: bool = False):
         """Move a jailed target to a prison cell anchor point."""
         target = self.agents[target_name]
+        if hasattr(self, "_bump_agent_action_generation"):
+            self._bump_agent_action_generation(target)
+        target._pending_action = None
+        target._last_decision = {}
+        target._last_raw_response = ""
+        target.current_thought = ""
+        target.current_thought_time = 0
+        target.current_action_type = ""
+        target.in_conversation_with = None
+        target._conversation_started_at = 0
+        target._departure_delay_until = 0
+        target._action_move_ready_at = 0
+        target._jailed_corpse = False
+        self.chat_bubbles.pop(target_name, None)
+        self.agent_paths.pop(target_name, None)
         # Pick the emptier prison cell
         cell_1_occupants = sum(1 for n in self._jailed
                               if n != target_name and self._get_prison_cell(n) == "prison_cell_1")
@@ -1208,8 +1242,11 @@ class EngineDuskMixin:
         if walk:
             self.agent_paths[target_name] = path
             target.runtime_state = "moving" if path else "jailed"
+            if not path:
+                target._jailed_corpse = True
             return
         target.x, target.y = best_pt
+        target._jailed_corpse = True
         self.agent_paths.pop(target_name, None)
 
 
