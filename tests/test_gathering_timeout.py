@@ -1521,12 +1521,14 @@ def test_detective_chat_empty_response_keeps_waiting_for_retry(monkeypatch):
     assert len(waiting_logs) == 0, (
         f"Detective chat should retry instead of ending waiting immediately: {waiting_logs}"
     )
-    assert result.get("response", "") == ""
+    assert result.get("response", "")
+    assert result.get("no_response") is not True
+    assert "Arthur Burton" in engine._daily_interviewed
     assert target.in_conversation_with == engine.detective_name
     assert detective.in_conversation_with is None
     assert engine._detective_chat_active_target == "Arthur Burton"
-    assert started_at < getattr(target, "_detective_chat_release_at", 0) <= started_at + 31
-    assert engine.chat_bubbles["Arthur Burton"].get("kind") == "conversation_pending"
+    assert getattr(target, "_detective_chat_release_at", 0) == 0
+    assert engine.chat_bubbles["Arthur Burton"].get("kind") != "conversation_pending"
 
 
 def test_unified_fallback_log_not_present_on_success(monkeypatch):

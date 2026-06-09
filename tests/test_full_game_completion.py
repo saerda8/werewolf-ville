@@ -282,15 +282,14 @@ def test_morning_discovers_and_announces_multiple_bodies(monkeypatch):
         game_engine.INITIAL_BODY_SITE["y"],
         game_engine.INITIAL_BODY_SITE["location"],
     )
-    assert (wolf.x, wolf.y, wolf.location) == (
-        game_engine.INITIAL_BODY_SITE["x"],
-        game_engine.INITIAL_BODY_SITE["y"],
-        game_engine.INITIAL_BODY_SITE["location"],
-    )
+    assert wolf.location == game_engine.INITIAL_BODY_SITE["location"]
+    assert (wolf.x, wolf.y) != (normal.x, normal.y)
+    assert abs(wolf.x - normal.x) + abs(wolf.y - normal.y) <= 2
     latest_log = engine.game_log[-1]["message"]
     assert game_engine.display_name_for_person("Arthur Burton") in latest_log
     assert game_engine.display_name_for_person(engine.werewolf_names[0]) in latest_log
     assert "狼人尸体" in latest_log
+    assert f"发现{game_engine.display_name_for_person(engine.werewolf_names[0])}是狼人，但可能还有狼人活着" in latest_log
 
 
 def test_day3_night_auto_crafts_silver_bullet(monkeypatch):
@@ -527,12 +526,12 @@ def test_status_exposes_night_progress(monkeypatch):
     assert status["night_progress"]["stage"] == "werewolf"
 
 
-def test_status_only_exposes_temporary_silver_knife_holder_marker(monkeypatch):
-    """get_status may expose holder for temporary testing, but not night target/outcome."""
+def test_status_no_longer_exposes_temporary_silver_knife_holder_marker(monkeypatch):
+    """get_status no longer leaks the hidden silver-knife holder or night target/outcome."""
     engine = _start_night(monkeypatch)
     status = engine.get_status()
-    assert status["silver_knife_holder"] == engine._silver_knife_holder
-    assert status["silver_knife_used"] is False
+    assert "silver_knife_holder" not in status
+    assert "silver_knife_used" not in status
     assert "silver_knife_phase_started_at" not in status
     assert "silver_knife_phase_duration" not in status
     assert "silver_knife_scrapped_tonight" not in status

@@ -1080,7 +1080,8 @@ def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
     assert 'body.is_werewolf_corpse === true' in html
     assert '"werewolf_corpse"' in html
     assert "const bodyOffsets = [[0, 0], [1, 0], [-1, 0]" in html
-    assert "setDisplaySize(TILE_W * 1.35, TILE_W * 1.35)" in html
+    assert "setDisplaySize(TILE_W * 1.35, TILE_W * 1.35)" not in html
+    assert "setDisplaySize(TILE_W * 1.08, TILE_W * 1.08)" in html
 
     # 4) Check Day 4 silver shot triggers pending_silver_shot or silver_shot_available
     assert 'state.phase === "pending_silver_shot"' in html
@@ -1136,7 +1137,7 @@ def test_game_over_ui_uses_reason_detail_and_closes_phase_modals():
     show_block = html[show_start:html.index("function gameOverReasonText", show_start)]
 
     assert 'id="game-over-card"' in html
-    assert 'data.game_over_detail || "恭喜你消灭了所有的狼人，获得胜利。"' in show_block
+    assert 'data.game_over_detail || "恭喜你消灭了所有的狼人，获得胜利"' in show_block
     assert "data.game_over_detail || gameOverReasonText(data.game_over_reason)" in show_block
     assert '"dusk-statement-panel", "voting-panel", "night-transition-overlay", "silver-shot-modal"' in show_block
     assert "function gameOverReasonText(reason)" in html
@@ -1427,14 +1428,26 @@ def test_dusk_discussion_forces_front_facing_sprites():
     assert 'sprite.setTexture(key, "down-walk.000");' in html
 
 
-def test_night_phase_snaps_sprites_and_marks_silver_knife_holder():
+def test_night_phase_snaps_sprites_without_debug_silver_knife_marker():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert 'if (isNight || (gameState && gameState.phase === "night")) {' in html
     assert 'sprite.setPosition(targetPx, targetPy);' in html
-    assert "state.silver_knife_holder && state.silver_knife_holder === name" in html
-    assert "gameState.silver_knife_holder === name" in html
-    assert "silver-knife-test-marker" in html
+    assert "state.silver_knife_holder && state.silver_knife_holder === name" not in html
+    assert "gameState.silver_knife_holder === name" not in html
+    assert "silver-knife-test-marker" not in html
+    assert "🗡" not in html
+
+
+def test_agent_cards_hide_role_tags_and_debug_labels():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    update_start = html.index("function updateAgentList(state")
+    update_block = html[update_start:html.index("function selectAgent", update_start)]
+
+    assert "role-tag" not in update_block
+    assert "roleLabel" not in update_block
+    assert "roleClass" not in update_block
+    assert "knifeMarkerHtml" not in update_block
 
 
 def test_confirm_vote_result_success_hides_voting_panel():

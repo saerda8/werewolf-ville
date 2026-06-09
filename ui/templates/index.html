@@ -181,12 +181,6 @@ body.phase-locked #game-container { pointer-events: none; }
 .agent-card.dead { opacity: 0.4; }
 .agent-card.selected { border-color: #e94560; }
 .agent-card .name { font-weight: bold; font-size: 14px; }
-.agent-card .role-tag {
-  display: inline-block; padding: 1px 6px; border-radius: 3px;
-  font-size: 11px; margin-left: 6px;
-}
-.role-detective { background: #e6b83f; color: #fff; }
-.role-villager { background: #555; color: #ccc; }
 .agent-card .action { font-size: 12px; color: #aaa; margin-top: 4px; }
 
 /* 对话面板 */
@@ -605,7 +599,6 @@ body.phase-locked #game-container { pointer-events: none; }
     border-color: transparent;
     opacity: 0;
   }
-  .silver-knife-test-marker { color: #dfe8f8; margin-left: 3px; font-size: 12px; }
   #log-header span {
     color: #58a6ff;
   }
@@ -3467,24 +3460,7 @@ function updateAgentList(state, isDirectorSummaryViewed) {
       }, true);
     }
 
-    let roleVal = "villager";
-    if (name === "Crow") {
-      roleVal = "detective";
-    } else {
-      roleVal = p.public_role || p.role || "villager";
-    }
-
-    let roleClass = "role-villager";
-    let roleLabel = "村民";
-    if (roleVal === "detective" || roleVal === "侦探" || roleVal === "警长" || name === "Crow") {
-      roleClass = "role-detective";
-      roleLabel = "警长";
-    }
-
-    const modelName = p.model || "?";
     const displayName = getDisplayName(name, state);
-    const hasSilverKnifeMarker = !!(state.silver_knife_holder && state.silver_knife_holder === name && !state.silver_knife_used);
-    const knifeMarkerHtml = hasSilverKnifeMarker ? '<span class="silver-knife-test-marker" title="测试标记：银质小刀持有者">🗡</span>' : "";
 
     let chatsUsed = 0;
     if (p.chat_count !== undefined) {
@@ -3568,7 +3544,7 @@ function updateAgentList(state, isDirectorSummaryViewed) {
     const bulbHtml = showBulb ? `<span id="clue-bulb-${safeName}" class="clue-bulb" style="margin-left: 6px; font-size: 13px; filter: drop-shadow(0 0 3px #ffd700); cursor: help;" title="有新线索">💡</span>` : '';
 
     // Signature-based diffing to prevent hover flicker (include isPendingChat to update all cards when pending state shifts)
-    const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${locallyClearedHint}|${showBulb}|${roleVal}|${hasSilverKnifeMarker}|${modelName}|${modelFailed}|${selectedAgent === name}|${normalChatAvailable}|${deepDiveAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}|${isPendingChat}`;
+    const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${locallyClearedHint}|${showBulb}|${modelFailed}|${selectedAgent === name}|${normalChatAvailable}|${deepDiveAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}|${isPendingChat}`;
     const targetContainer = name === "Crow" ? crowList : list;
     if (card.dataset.renderSignature === signature) {
       if (card.parentElement !== targetContainer) {
@@ -3611,9 +3587,8 @@ function updateAgentList(state, isDirectorSummaryViewed) {
 
     card.innerHTML = `
       ${historyBtnHtml}
-      ${modelHealthHtml}<span class="name" style="color:${PERSONA_LABEL_COLORS[name] || '#fff'}">${displayName}</span>${knifeMarkerHtml}
+      ${modelHealthHtml}<span class="name" style="color:${PERSONA_LABEL_COLORS[name] || '#fff'}">${displayName}</span>
       ${bulbHtml}
-      <span class="role-tag ${roleClass}">${roleLabel}</span>
       ${actionButtonsHtml}
     `;
 
@@ -4387,7 +4362,7 @@ function showGameOver(data) {
     if (kicker) kicker.textContent = "VICTORY";
     text.textContent = "胜利";
     text.style.color = "#6dff8f";
-    sub.textContent = data.game_over_detail || "恭喜你消灭了所有的狼人，获得胜利。";
+    sub.textContent = data.game_over_detail || "恭喜你消灭了所有的狼人，获得胜利";
   } else {
     if (kicker) kicker.textContent = "DEFEAT";
     text.textContent = "游戏失败";
@@ -5308,7 +5283,7 @@ function update(time, delta) {
       // Create new corpse sprite
       if (isWerewolf) {
         corpseSprite = sceneRef.add.image(bx, by, "werewolf_corpse");
-        corpseSprite.setDisplaySize(TILE_W * 1.35, TILE_W * 1.35);
+        corpseSprite.setDisplaySize(TILE_W * 1.08, TILE_W * 1.08);
       } else {
         corpseSprite = sceneRef.physics.add.sprite(bx, by, textureKey, "down");
         corpseSprite.setSize(30, 40).setOffset(0, 24);
@@ -5323,14 +5298,14 @@ function update(time, delta) {
       corpseSprite.setPosition(bx, by);
       if (isWerewolf && corpseSprite.texture.key !== "werewolf_corpse") {
         corpseSprite.setTexture("werewolf_corpse");
-        corpseSprite.setDisplaySize(TILE_W * 1.35, TILE_W * 1.35);
+        corpseSprite.setDisplaySize(TILE_W * 1.08, TILE_W * 1.08);
         corpseSprite.clearTint();
         corpseSprite.setAngle(0);
       } else if (!isWerewolf && corpseSprite.texture.key !== textureKey) {
         corpseSprite.setTexture(textureKey, "down");
       }
       if (isWerewolf) {
-        corpseSprite.setDisplaySize(TILE_W * 1.35, TILE_W * 1.35);
+        corpseSprite.setDisplaySize(TILE_W * 1.08, TILE_W * 1.08);
         corpseSprite.clearTint();
       } else {
         corpseSprite.setTint(0x777777);
@@ -5464,8 +5439,7 @@ function update(time, delta) {
     nameLabels[name].y = cy - 44;
     nameLabels[name].setVisible(true);
     const displayName = getDisplayName(name, gameState);
-    const knifeMarker = gameState && gameState.silver_knife_holder === name && !gameState.silver_knife_used ? " 🗡" : "";
-    nameLabels[name].setText(displayName + knifeMarker);
+    nameLabels[name].setText(displayName);
     nameLabels[name].setStyle({ fill: PERSONA_LABEL_COLORS[name] || "#66c2ff" });
 
     // Active play should not show model names above NPCs.

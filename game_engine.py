@@ -4453,6 +4453,58 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
+    def _clear_agent_runtime_for_death(self, target_name: str) -> None:
+        """Remove a newly dead resident from all live interaction state."""
+        target = self.agents.get(target_name)
+        if not target:
+            return
+
+        partner_name = getattr(target, "in_conversation_with", None)
+        if partner_name and hasattr(self, "_clear_conversation_pair"):
+            self._clear_conversation_pair(target_name, partner_name)
+        elif partner_name:
+            partner = self.agents.get(partner_name)
+            if partner and getattr(partner, "in_conversation_with", None) == target_name:
+                partner.in_conversation_with = None
+                partner._conversation_started_at = 0
+                if getattr(partner, "is_alive", False) and partner_name not in self._jailed:
+                    partner.runtime_state = "idle"
+
+        for other_name, other in self.agents.items():
+            if other_name == target_name:
+                continue
+            if getattr(other, "in_conversation_with", None) == target_name:
+                other.in_conversation_with = None
+                other._conversation_started_at = 0
+                if getattr(other, "is_alive", False) and other_name not in self._jailed:
+                    other.runtime_state = "idle"
+            pending = getattr(other, "_pending_action", None)
+            if isinstance(pending, dict) and pending.get("target_person") == target_name:
+                other._pending_action = None
+                other.current_action = ""
+                other.current_action_type = ""
+                other.current_emoji = ""
+                if getattr(other, "is_alive", False) and other_name not in self._jailed:
+                    other.runtime_state = "idle"
+                self.agent_paths.pop(other_name, None)
+                other.target_x, other.target_y = other.x, other.y
+
+        detective = self.agents.get(self.detective_name)
+        if detective and getattr(detective, "in_conversation_with", None) == target_name:
+            detective.in_conversation_with = None
+            detective._conversation_started_at = 0
+        if getattr(self, "_detective_chat_active_target", None) == target_name:
+            self._detective_chat_active_target = None
+        if getattr(self, "_detective_chat_pending_target", None) == target_name:
+            self._detective_chat_pending_target = None
+        self.chat_bubbles.pop(target_name, None)
+        thought_bubbles = getattr(self, "thought_bubbles", None)
+        if isinstance(thought_bubbles, dict):
+            thought_bubbles.pop(target_name, None)
+
+
+
+
     def _silver_kill_target(self, target_name: str, actor_name: str, method: str) -> dict:
 
         target = self.agents.get(target_name)
@@ -4468,6 +4520,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
+
+        self._clear_agent_runtime_for_death(target_name)
 
         target.is_alive = False
 
@@ -4588,7 +4642,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self.winner = "villagers"
             self.game_over_reason = "all_wolves_eliminated"
-            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
+            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利"
 
             self.phase = GamePhase.GAME_OVER
 
@@ -4632,7 +4686,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             return self._finish_game(
                 "villagers",
                 "all_wolves_eliminated",
-                "恭喜你消灭了所有的狼人，获得胜利。",
+                "恭喜你消灭了所有的狼人，获得胜利",
                 "所有狼人已被消灭。小镇居民获胜。",
             )
         detective = self.agents.get(self.detective_name)
@@ -4689,7 +4743,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self._finish_game(
                 "villagers",
                 "all_wolves_eliminated",
-                "恭喜你消灭了所有的狼人，获得胜利。",
+                "恭喜你消灭了所有的狼人，获得胜利",
                 "🏆 第4天黄昏投票结束，所有狼人已被排除！小镇居民获胜！",
             )
             return "game_over"
@@ -4848,6 +4902,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._log("🗡️ 银质小刀行动完成。", "system")
 
     def _choose_silver_knife_target(self, holder_name: str, candidates: list[str]) -> str:
+        if self.day <= 1:
+            living_wolf_candidates = [
+                name for name in self.werewolf_names
+                if name in candidates
+                and name in self.agents
+                and self.agents[name].is_alive
+                and name not in self._jailed
+            ]
+            if living_wolf_candidates:
+                return living_wolf_candidates[0]
+
         clue_targets = [
             clue.related_person for clue in getattr(self, "clues", [])
             if clue.related_person in candidates
@@ -5012,6 +5077,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             getattr(holder, "target_x", holder.x),
             getattr(holder, "target_y", holder.y),
         ):
+            if abs(holder.x - target.x) + abs(holder.y - target.y) > 1:
+                self._complete_silver_knife_action("path_ended_not_adjacent")
+                return
             result = self.use_silver_knife(holder_name, target_name)
             if result.get("success"):
                 self._silver_knife_target_tonight = target_name
@@ -5182,7 +5250,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 body.location = INITIAL_BODY_SITE["location"]
                 label = display_name_for_person(body.victim_name)
                 if getattr(body, "is_werewolf_corpse", False):
-                    label = f"{label}（狼人尸体）"
+                    warning = f"发现{label}是狼人，但可能还有狼人活着"
+                    label = f"{label}（狼人尸体，{warning}）"
                 body_parts.append(f"{label}，地点：{self._destination_label_zh(body.location)}")
 
             self._log(
@@ -5312,7 +5381,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self.winner = "villagers"
             self.game_over_reason = "all_wolves_eliminated"
-            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
+            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利"
 
             self.phase = GamePhase.GAME_OVER
 
@@ -6210,6 +6279,22 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._mark_action_started(agent, time.time())
         self._clear_action_status_bubble(name)
 
+    def _release_pending_detective_target(self, target_name: str | None = None) -> None:
+        pending_target = target_name or getattr(self, "_detective_chat_pending_target", None)
+        if not pending_target:
+            return
+        if getattr(self, "_detective_chat_active_target", None) == pending_target:
+            return
+        target = self.agents.get(pending_target)
+        if target and getattr(target, "in_conversation_with", None) == self.detective_name:
+            target.in_conversation_with = None
+            target._conversation_started_at = 0
+            target._detective_chat_release_at = 0
+            if target.is_alive and pending_target not in self._jailed:
+                target.runtime_state = "idle"
+        if getattr(self, "_detective_chat_pending_target", None) == pending_target:
+            self._detective_chat_pending_target = None
+
     def _clear_action_status_bubble(self, name: str) -> None:
         bubble = self.chat_bubbles.get(name)
         if isinstance(bubble, dict) and bubble.get("kind") == "action_status":
@@ -6233,6 +6318,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             target = self.agents.get(target_person)
             threshold = 1 if target_person == self.detective_name else 2
             if target and target.is_alive and self._agent_distance(agent, target) <= threshold:
+                ok, busy_reason = self._target_available_for_approach(name, target_person)
+                if not ok and target_person != self.detective_name:
+                    busy_group = {target_person}
+                    partner_name = getattr(target, "in_conversation_with", None)
+                    if partner_name:
+                        busy_group.add(partner_name)
+                    self._redirect_away_from_conversation(name, busy_group, busy_reason)
+                    return
                 if target_person != self.detective_name and getattr(target, "in_conversation_with", None) is not None:
                     self._redirect_to_visible_continue_current(name, agent, "对方正在交谈，先避开等待")
                     return
@@ -7809,6 +7902,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         "common room table", "common room sofa",
 
+        "cabinet", "cupboard", "dresser", "wardrobe", "bookshelf",
+
+        "chair", "seat", "seating", "bench", "stool",
+
+        "flower", "flowers", "flowerbed", "flower bed", "flower patch",
+
+        "mushroom", "mushrooms", "plant", "potted plant", "bush", "shrub",
+
     ]
 
 
@@ -8462,6 +8563,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         """BFS寻路移动（每tick移1格），寻路失败直接传送；到达后进入acting状态"""
 
         now = time.time()
+        self._enforce_conversation_privacy()
 
         for name, agent in self.agents.items():
 
@@ -8809,7 +8911,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                                 f"但对方正在与{display_name_for_person(detective.in_conversation_with)}聊天，稍候再试",
                                 "action",
                             )
-                            self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
+                            self._redirect_away_from_conversation(
+                                name,
+                                {self.detective_name, detective.in_conversation_with},
+                                "克罗正在交谈，暂不插话",
+                            )
                             agent._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
                             return
 
@@ -8818,7 +8924,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         agent.current_action = ""
                         agent.current_action_type = ""
                         if not self._trigger_npc_to_detective_chat(name, action, expected_result):
-                            self._redirect_to_visible_continue_current(name, agent, "克罗正在交谈，暂不插话")
+                            self._redirect_away_from_conversation(
+                                name,
+                                {self.detective_name} | ({getattr(self, "_detective_chat_active_target", None)} - {None}),
+                                "克罗正在交谈，暂不插话",
+                            )
                             return
                         agent._pending_action = None
                         agent.add_memory(
@@ -8834,7 +8944,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                             f"但对方正在与{display_name_for_person(target_agent.in_conversation_with)}聊天，稍候再试",
                             "action",
                         )
-                        self._redirect_to_visible_continue_current(name, agent, "对方正在交谈，先避开等待")
+                        self._redirect_away_from_conversation(
+                            name,
+                            {target_person, target_agent.in_conversation_with},
+                            "对方正在交谈，先避开等待",
+                        )
                         agent._next_llm_retry_time = time.time() + CONFIG.get("llm", {}).get("retry_delay_seconds", 5)
                         return
                     self._log(
@@ -8985,7 +9099,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if getattr(self, "_body_burial", None):
                 return False
-            self._detective_chat_pending_target = None
+            self._release_pending_detective_target()
             if self.phase == GamePhase.DUSK_DISCUSSION:
                 return False
             if self.phase not in (GamePhase.DAY, GamePhase.DUSK_DISCUSSION) or self.game_over or getattr(self, "_gathering_active", False):
@@ -9129,6 +9243,24 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 detective.current_action = "investigating"
                 detective.current_emoji = "🔍"
                 self._detective_chat_pending_target = target_name
+                target.in_conversation_with = self.detective_name
+                target._conversation_started_at = time.time()
+                target._detective_chat_release_at = 0
+                target.target_x = target.x
+                target.target_y = target.y
+                target.runtime_state = "acting"
+                target.current_thought = ""
+                target.current_thought_time = 0
+                target.current_action = ""
+                target.current_action_type = ""
+                target.current_emoji = ""
+                target._pending_action = None
+                target._last_decision = {}
+                target._last_raw_response = ""
+                target._is_thinking = False
+                target._is_reflecting = False
+                self.agent_paths.pop(target_name, None)
+                self._clear_action_status_bubble(target_name)
                 self._log(f"[开始行动] {self.detective_name}: 前往 {location}，接近 {target_name}", "action")
                 return True
 
@@ -9354,6 +9486,132 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 return False
 
         return True
+
+    def _active_conversation_groups(self) -> list[set[str]]:
+        groups: list[set[str]] = []
+        seen: set[frozenset[str]] = set()
+        active_target = getattr(self, "_detective_chat_active_target", None)
+        pending_target = getattr(self, "_detective_chat_pending_target", None)
+        for target_name in (active_target, pending_target):
+            if target_name and target_name in self.agents:
+                group = frozenset({self.detective_name, target_name})
+                if group not in seen:
+                    seen.add(group)
+                    groups.append(set(group))
+
+        for name, agent in self.agents.items():
+            partner_name = getattr(agent, "in_conversation_with", None)
+            if not partner_name or partner_name not in self.agents:
+                continue
+            group = frozenset({name, partner_name})
+            if group in seen:
+                continue
+            seen.add(group)
+            groups.append(set(group))
+        return groups
+
+    def _social_group_distance(self, agent, group: set[str]) -> int:
+        distances = []
+        for participant_name in group:
+            participant = self.agents.get(participant_name)
+            if participant:
+                distances.append(abs(agent.x - participant.x) + abs(agent.y - participant.y))
+        return min(distances) if distances else 9999
+
+    def _choose_conversation_avoidance_target(self, name: str, group: set[str], radius: int = 2):
+        agent = self.agents.get(name)
+        if not agent:
+            return None
+        start = (agent.x, agent.y)
+        blocked = self._occupied_tiles({name})
+        best = None
+        for dist in range(1, 9):
+            for dx in range(-dist, dist + 1):
+                for dy in range(-dist, dist + 1):
+                    if abs(dx) + abs(dy) != dist:
+                        continue
+                    tx, ty = agent.x + dx, agent.y + dy
+                    if (tx, ty) in blocked:
+                        continue
+                    if not self._is_tile_free_of_blocking_objects(tx, ty):
+                        continue
+                    if any(
+                        participant
+                        and abs(tx - participant.x) + abs(ty - participant.y) <= radius
+                        for participant_name in group
+                        for participant in [self.agents.get(participant_name)]
+                    ):
+                        continue
+                    path = self._find_navigation_path(start, (tx, ty), blocked=blocked)
+                    if path is None:
+                        continue
+                    score = (len(path), abs(tx - agent.x) + abs(ty - agent.y), tx, ty)
+                    if best is None or score < best[0]:
+                        best = (score, tx, ty, path)
+            if best:
+                _, tx, ty, path = best
+                return tx, ty, path
+        return None
+
+    def _redirect_away_from_conversation(self, name: str, group: set[str], reason: str = "") -> bool:
+        agent = self.agents.get(name)
+        if not agent or not agent.is_alive or name in self._jailed or name in group:
+            return False
+        target = self._choose_conversation_avoidance_target(name, group)
+        if not target:
+            self._redirect_to_visible_continue_current(name, agent, reason or "旁边有人正在交谈，先避开")
+            pending = getattr(agent, "_pending_action", {}) or {}
+            if isinstance(pending, dict):
+                pending["action_type"] = "avoid_conversation"
+                pending["target_person"] = ""
+            return True
+        tx, ty, path = target
+        self.agent_paths[name] = path
+        agent.target_x, agent.target_y = tx, ty
+        agent.current_location = self._reverse_lookup_location(tx, ty) or agent.current_location or "附近空地"
+        agent.current_action = "回避正在交谈的人群"
+        agent.current_action_type = "avoid_conversation"
+        agent.current_emoji = "↘"
+        agent._pending_action = {
+            "action_type": "avoid_conversation",
+            "target_location": agent.current_location,
+            "target_object": "",
+            "target_person": "",
+            "action": "回避正在交谈的人群",
+            "action_status": "避开交谈圈",
+            "thought": reason or "旁边有人正在交谈，先避开",
+            "expected_result": "离开交谈占用圈",
+        }
+        agent.runtime_state = "moving" if path else "starting_action"
+        agent.current_thought = ""
+        agent.current_thought_time = 0
+        agent._last_decision = {}
+        agent._last_raw_response = ""
+        agent._is_thinking = False
+        self._bump_agent_action_generation(agent)
+        self._clear_action_status_bubble(name)
+        return True
+
+    def _enforce_conversation_privacy(self, radius: int = 2) -> bool:
+        moved = False
+        for group in self._active_conversation_groups():
+            live_group = {
+                participant_name for participant_name in group
+                if participant_name in self.agents and self.agents[participant_name].is_alive
+            }
+            if len(live_group) < 2:
+                continue
+            for name, agent in self.agents.items():
+                if name in live_group or not agent.is_alive or name in self._jailed:
+                    continue
+                if self._social_group_distance(agent, live_group) > radius:
+                    continue
+                moved = self._redirect_away_from_conversation(
+                    name,
+                    live_group,
+                    "旁边有人正在交谈，先避开不插话",
+                ) or moved
+        return moved
 
 
 
@@ -10262,7 +10520,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self.winner = "villagers" if is_correct else "werewolf"
             self.game_over_reason = "all_wolves_eliminated" if is_correct else "wrong_detective_announcement"
             self.game_over_detail = (
-                "恭喜你消灭了所有的狼人，获得胜利。"
+                "恭喜你消灭了所有的狼人，获得胜利"
                 if is_correct
                 else "警长指认错误，狼人趁机掌控局势，村民阵营失败。"
             )
@@ -11414,8 +11672,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "silver_bullet_crafted": self._silver_bullet_crafted,
 
                 "silver_bullet_used": self._silver_bullet_used,
-                "silver_knife_holder": getattr(self, "_silver_knife_holder", ""),
-                "silver_knife_used": getattr(self, "_silver_knife_used", False),
 
                 "night_progress": self._public_night_progress_status(),
                 "pending_silver_shot": self.phase == GamePhase.PENDING_SILVER_SHOT,

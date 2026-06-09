@@ -236,7 +236,6 @@ def test_jane_persona_is_park_groundkeeper_not_pub_worker():
         for rel in [
             "personas/Jane_Moreno/soul.md",
             "personas/Jane_Moreno/agent.md",
-            "personas/Jane_Moreno/scratch.json",
         ]
     )
     assert "约翰逊公园" in text or "Johnson Park" in text

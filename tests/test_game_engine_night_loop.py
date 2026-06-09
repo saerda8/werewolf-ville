@@ -185,7 +185,7 @@ def test_silver_knife_kills_after_reaching_target(monkeypatch):
     assert engine._night_progress["knife_complete"] is True
 
 
-def test_silver_knife_forces_kill_when_path_ends_after_target_moves(monkeypatch):
+def test_silver_knife_does_not_force_kill_when_path_ends_after_target_moves(monkeypatch):
     engine = _start_hunt(monkeypatch)
     holder_name = engine._silver_knife_holder
     holder = engine.agents[holder_name]
@@ -219,8 +219,10 @@ def test_silver_knife_forces_kill_when_path_ends_after_target_moves(monkeypatch)
 
     engine._advance_silver_knife_action()
 
-    assert target_name in engine.dead_list
-    assert engine.bodies[-1].victim_name == target_name
+    assert target_name not in engine.dead_list
+    assert target.is_alive is True
     assert engine._night_progress["knife_complete"] is True
+    assert engine._silver_knife_action["complete"] is True
+    assert engine._silver_knife_action["reason"] == "path_ended_not_adjacent"
     assert holder_name not in engine.agent_paths
     assert holder.runtime_state == "idle"
