@@ -109,6 +109,23 @@ def test_night_waits_for_player_confirmation_before_dawn(monkeypatch):
     assert engine.phase == game_engine.GamePhase.DAY
 
 
+def test_night_ends_in_defeat_if_detective_is_killed(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.NIGHT
+    engine.day = 3
+    engine._night_progress = {"complete": True, "wolf_complete": True, "knife_complete": True}
+    engine.agents["Crow"].is_alive = False
+
+    result = engine.confirm_night_transition()
+
+    assert result["success"] is True
+    assert result["game_over"] is True
+    assert engine.game_over is True
+    assert engine.winner == "werewolf"
+    assert engine.game_over_reason == "detective_killed_at_night"
+    assert engine.phase == game_engine.GamePhase.GAME_OVER
+
+
 def test_silver_knife_phase_does_not_run_before_wolf_phase(monkeypatch):
     engine = _start_hunt(monkeypatch)
     calls = []
@@ -120,6 +137,22 @@ def test_silver_knife_phase_does_not_run_before_wolf_phase(monkeypatch):
     engine._advance_night_hunt(now=engine.night_hunt.deadline_at)
     engine._night_tick()
     assert calls == ["knife"]
+
+
+def test_day3_night_crafts_silver_bullet_and_exposes_status(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.day = 3
+    engine._silver_bullet_acquired = True
+    engine._silver_jewelry_acquired = True
+    engine._silver_bullet_crafted = False
+
+    engine._transition_to_night()
+    status = engine._public_night_progress_status()
+
+    assert engine._silver_bullet_crafted is True
+    assert status["silver_bullet_crafting"] is True
+    assert status["silver_bullet_crafting_complete"] is True
+    assert "银质子弹" in status["silver_bullet_crafting_message"]
 
 
 def test_silver_knife_kills_after_reaching_target(monkeypatch):

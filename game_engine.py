@@ -824,7 +824,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "silver_jewelry_acquired": True,
             }
         if self._silver_task_done_today:
-            return "我要考虑一下，你明天再来吧。", {
+            return "今天拿不下了，明天再过来拿吧。", {
                 "blocked_by_daily_silver_limit": True,
                 "silver_task_done_today": self._silver_task_done_today,
             }
@@ -4083,6 +4083,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if progress.get("wolf_complete") and progress.get("knife_complete"):
             progress.update({"active": False, "stage": "complete", "complete": True})
             self._night_progress = progress
+            self._maybe_finish_after_night_deaths()
             self._log("🌙 夜晚结束（真实夜间行动已完成）")
 
     def confirm_night_transition(self) -> dict:
@@ -4095,6 +4096,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 progress = getattr(self, "_night_progress", {})
             if not progress.get("complete"):
                 return {"success": False, "error": "夜晚尚未结束"}
+            if self._maybe_finish_after_night_deaths():
+                self._broadcast_state()
+                return {"success": True, "phase": self.phase.value, "day": self.day, "game_over": True}
             self._transition_to_day()
             self._broadcast_state()
             return {"success": True, "phase": self.phase.value, "day": self.day}
@@ -4122,7 +4126,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if self._silver_task_done_today:
 
-                return {"success": False, "error": "明天再来吧"}
+                return {"success": False, "error": "今天拿不下了，明天再过来拿吧"}
 
 
 
@@ -4196,7 +4200,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             if self._silver_task_done_today:
 
-                return {"success": False, "error": "我要考虑一下，你明天再来吧。"}
+                return {"success": False, "error": "今天拿不下了，明天再过来拿吧。"}
 
             if not holder or not holder.is_alive:
 
@@ -4490,6 +4494,43 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self._log("两名狼人都已被排除，小镇居民获胜。", "system")
 
+    def _maybe_finish_after_night_deaths(self) -> bool:
+        """Resolve game end immediately after anonymous night deaths."""
+        alive_wolves = [
+            n for n in self.werewolf_names
+            if n in self.agents and self.agents[n].is_alive and n not in self._jailed
+        ]
+        alive_good = [
+            n for n, agent in self.agents.items()
+            if n not in self.werewolf_names and agent.is_alive and n not in self._jailed
+        ]
+        if not alive_wolves:
+            self.game_over = True
+            self.winner = "villagers"
+            self.game_over_reason = "all_wolves_eliminated"
+            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
+            self.phase = GamePhase.GAME_OVER
+            self._log("夜晚结束后，所有狼人已被消灭。小镇居民获胜。", "system")
+            return True
+        detective = self.agents.get(self.detective_name)
+        if not detective or not detective.is_alive:
+            self.game_over = True
+            self.winner = "werewolf"
+            self.game_over_reason = "detective_killed_at_night"
+            self.game_over_detail = "警长克罗在夜晚被狼人杀死，已经无法继续调查和投票，狼人获胜。"
+            self.phase = GamePhase.GAME_OVER
+            self._log("夜晚结束后，警长克罗已死亡。狼人获胜。", "system")
+            return True
+        if not alive_good:
+            self.game_over = True
+            self.winner = "werewolf"
+            self.game_over_reason = "all_good_dead_at_night"
+            self.game_over_detail = "夜晚结束后，除狼人外已经没有好人存活，狼人获胜。"
+            self.phase = GamePhase.GAME_OVER
+            self._log("夜晚结束后，好人阵营已无人存活。狼人获胜。", "system")
+            return True
+        return False
+
 
 
     def _resolve_day4_after_vote(self) -> str:
@@ -4685,9 +4726,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             system_prompt = (
                 f"你是{display_name_for_person(holder_name)}。你秘密持有一次性的银质小刀。"
                 "现在是夜晚，你可以选择杀死一名可疑村民，也可以选择不用。"
+                "如果你已经有一个相对最可疑的人，应倾向于今晚使用；"
+                "因为继续保留可能会让你被狼人杀死、被白天投出，或让狼人继续杀人。"
+                "只有完全没有合理怀疑目标时才输出“不用”。"
                 "只输出一个可选名字，或输出“不用”。不要解释。"
             )
-            user_prompt = f"可选目标：{target_list}\n如果你没有把握，可以输出“不用”。"
+            user_prompt = (
+                f"可选目标：{target_list}\n"
+                "请优先选择你当前最怀疑的目标；只有没有任何合理嫌疑时才输出“不用”。"
+            )
             raw = chat_for_agent(holder_name, system_prompt, user_prompt, temperature=0.4, max_retries=0, priority=True)
             compact = str(raw or "").strip()
             if any(word in compact for word in ("不用", "放弃", "不杀", "跳过")):
@@ -4901,9 +4948,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             "complete": False,
             "wolf_complete": False,
             "knife_complete": False,
+            "silver_bullet_crafting": False,
+            "silver_bullet_crafting_complete": False,
+            "silver_bullet_crafting_message": "",
         }
 
-        self._log("夜幕降临...")
         if (
             self.day == 3
             and self._silver_bullet_acquired
@@ -4911,8 +4960,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             and not self._silver_bullet_crafted
         ):
             self._silver_bullet_crafted = True
+            self._night_progress["silver_bullet_crafting"] = True
+            self._night_progress["silver_bullet_crafting_complete"] = True
+            self._night_progress["silver_bullet_crafting_message"] = "正在制作银质子弹，今晚将完成。"
             self._log("🔨 你已经收集了银质项链和制造子弹的工具。今晚，克罗成功制造了一颗银质子弹。", "system")
 
+        self._log("夜幕降临...")
 
         self.agent_paths.clear()
 
@@ -5061,6 +5114,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         discovered_body = self._discover_latest_body()
 
+        if self._maybe_finish_after_night_deaths():
+            return
+
         self.day += 1
 
         self.phase = GamePhase.DAY
@@ -5076,6 +5132,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._daily_interviewed = set()  # 新一天重置每日采访追踪
 
         self._daily_normal_chats = {}    # 新一天重置每日正常对话追踪
+        detective = self.agents.get(self.detective_name)
+        if detective and hasattr(detective, "chat_count"):
+            detective.chat_count = {}
+        self._chat_round_count = {}
 
         self._reset_daily_deep_dive_quota()
 
@@ -9343,10 +9403,19 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
     def _release_conversation_for_expired_bubble(self, name: str, bubble: dict | None = None) -> None:
         bubble = bubble or self.chat_bubbles.get(name)
-        if isinstance(bubble, dict) and bubble.get("kind") == "conversation_pending":
-            return
         target_name = bubble.get("target") if isinstance(bubble, dict) else None
         if not target_name:
+            return
+        if (
+            isinstance(bubble, dict)
+            and bubble.get("kind") == "conversation_pending"
+            and (
+                name == self.detective_name
+                or target_name == self.detective_name
+                or getattr(self, "_detective_chat_active_target", None) in {name, target_name}
+                or getattr(self, "_detective_chat_pending_target", None) in {name, target_name}
+            )
+        ):
             return
         agent = self.agents.get(name)
         target = self.agents.get(target_name)
@@ -10668,6 +10737,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             "knife_complete": bool(progress.get("knife_complete")),
             "wolf_progress": wolf_progress,
             "knife_progress": knife_progress,
+            "silver_bullet_crafting": bool(progress.get("silver_bullet_crafting")),
+            "silver_bullet_crafting_complete": bool(progress.get("silver_bullet_crafting_complete")),
+            "silver_bullet_crafting_message": progress.get("silver_bullet_crafting_message", ""),
         }
 
 
@@ -10815,7 +10887,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 visual_moving = bool(self.agent_paths.get(name)) or (
                     agent.x != agent.target_x or agent.y != agent.target_y
                 ) or getattr(agent, 'runtime_state', 'idle') == "moving"
-                if suppress_action_fields:
+                if suppress_action_fields and not is_detective:
                     visual_moving = False
 
 

@@ -1255,7 +1255,6 @@ class EngineDuskMixin:
         target.runtime_state = "jailed"
         if walk:
             self.agent_paths[target_name] = path
-            target.runtime_state = "moving" if path else "jailed"
             if not path:
                 target.x, target.y = best_pt
                 target.target_x, target.target_y = best_pt

@@ -1252,6 +1252,14 @@ def test_night_progress_fills_for_wolf_and_knife():
     assert 'knifeFill.style.width = ' in html
 
 
+def test_night_ui_shows_silver_bullet_crafting_status():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'id="night-silver-bullet-crafting"' in html
+    assert 'sequence.silver_bullet_crafting' in html
+    assert '银质子弹正在制作，今晚已完成。' in html
+
+
 def test_crow_vote_disabled_submitting_lock():
     html = INDEX_HTML.read_text(encoding="utf-8")
 

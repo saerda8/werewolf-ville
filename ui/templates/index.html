@@ -902,6 +902,7 @@ body.phase-locked #game-container { pointer-events: none; }
       <div class="night-progress-label"><img src="/static/assets/effects/silver_knife_icon.png" alt="">银质小刀</div>
       <div class="night-progress-track"><div id="night-knife-progress-fill"></div></div>
     </div>
+    <div id="night-silver-bullet-crafting" style="display:none; margin-top:10px; color:#ffd45f; font-weight:700; font-size:14px;"></div>
     <div id="night-progress-text" style="margin-top:10px; color:#aebbd5;">夜间行动准备中</div>
     <button id="night-finish-confirm" onclick="confirmNightTransition()">确认天亮</button>
   </div>
@@ -2182,6 +2183,16 @@ function renderNightTransition(state) {
   if (legacyFill) legacyFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
   if (wolfFill) wolfFill.style.width = `${Math.max(0, Math.min(100, wolfProgress))}%`;
   if (knifeFill) knifeFill.style.width = `${Math.max(0, Math.min(100, knifeProgress))}%`;
+  const bulletCraftEl = document.getElementById("night-silver-bullet-crafting");
+  if (bulletCraftEl) {
+    const crafting = !!sequence.silver_bullet_crafting || !!sequence.silver_bullet_crafting_complete;
+    bulletCraftEl.style.display = crafting ? "block" : "none";
+    bulletCraftEl.textContent = crafting
+      ? (sequence.silver_bullet_crafting_complete
+          ? "银质子弹正在制作，今晚已完成。"
+          : (sequence.silver_bullet_crafting_message || "正在制作银质子弹。"))
+      : "";
+  }
   document.getElementById("night-stage-text").textContent = finished ? "夜晚结束" : displayStageLabel;
   document.getElementById("night-progress-text").textContent = finished ? "所有匿名行动已结束" : "只显示匿名进度，不展示目标与行动者";
 

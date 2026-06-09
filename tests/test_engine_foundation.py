@@ -2526,7 +2526,7 @@ def test_only_one_silver_objective_per_day(monkeypatch):
     engine.agents[holder].y = crow.y
     second = engine.acquire_silver_jewelry(holder)
     assert second["success"] is False
-    assert "明天再来" in second["error"]
+    assert "今天拿不下了，明天再过来拿吧" in second["error"]
 
 
 def test_silver_bullet_can_be_fired_once(monkeypatch):
@@ -3061,6 +3061,28 @@ def test_chat_available_respects_normal_chat_limit(monkeypatch):
 
     status = engine.get_status()
     assert status["personas"]["Arthur Burton"]["chat_available"] is False
+
+
+def test_daily_chat_count_resets_on_new_day(monkeypatch):
+    """Normal interview availability must reset every day, not stay used forever."""
+    engine = _make_engine(monkeypatch)
+    monkeypatch.setattr(engine, "_generate_daily_plans", lambda: None)
+    monkeypatch.setattr(game_engine.Agent, "compress_memory", lambda self, day: None)
+    detective = engine.agents["Crow"]
+    detective.chat_count = {"Arthur Burton": 1, "Isabella Rodriguez": 1}
+    engine._daily_interviewed = {"Arthur Burton", "Isabella Rodriguez"}
+    engine._daily_normal_chats = {"Crow": {"Arthur Burton", "Isabella Rodriguez"}}
+    engine._chat_round_count = {("Crow", "Arthur Burton"): 1}
+
+    engine._transition_to_day()
+    status = engine.get_status()
+
+    assert detective.chat_count == {}
+    assert engine._daily_interviewed == set()
+    assert engine._daily_normal_chats == {}
+    assert engine._chat_round_count == {}
+    assert status["personas"]["Arthur Burton"]["chat_available"] is True
+    assert status["personas"]["Isabella Rodriguez"]["chat_available"] is True
 
 
 def test_deep_dive_available_requires_normal_chat_done(monkeypatch):
