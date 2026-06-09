@@ -10,6 +10,7 @@ The player takes the role of the sheriff. During the day, the sheriff investigat
  
 ## Gameplay
 ![Gameplay Loop](assets/ScreenShot.png) 
+
 The town contains two hidden werewolves, a sheriff controlled by the player, ordinary villagers, and one special villager who owns a silver knife. Every day begins with normal town life. Residents move around, talk to each other, exchange information, develop suspicion, spread rumors, and search for signs of the werewolves.
  
 The sheriff can question NPCs directly. In addition to ordinary conversations, the sheriff has a deep-digging skill that allows more focused interrogation. Deep digging is used to pressure suspicious residents, follow contradictions, uncover hidden motives, and extract clues that may not appear in casual conversation.
