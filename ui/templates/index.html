@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -219,15 +219,26 @@ body.phase-locked #game-container { pointer-events: none; }
 /* 游戏结束遮罩 */
 #game-over-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.8); z-index: 1000;
+  background: rgba(3, 8, 18, 0.78); z-index: 1000;
   justify-content: center; align-items: center; flex-direction: column;
+  backdrop-filter: blur(2px);
 }
 #game-over-overlay.show { display: flex; }
-#game-over-text { font-size: 48px; font-weight: bold; margin-bottom: 20px; }
-#game-over-sub { font-size: 24px; margin-bottom: 30px; }
+#game-over-card {
+  width: min(520px, calc(100vw - 44px));
+  padding: 30px 34px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #10284c 0%, #0b1528 100%);
+  border: 1px solid rgba(140, 177, 230, 0.48);
+  box-shadow: 0 20px 70px rgba(0,0,0,0.55);
+  text-align: center;
+}
+#game-over-kicker { color: #8ea0c4; font-size: 12px; letter-spacing: 0.18em; margin-bottom: 10px; }
+#game-over-text { font-size: 40px; font-weight: 900; margin-bottom: 14px; }
+#game-over-sub { font-size: 18px; line-height: 1.55; margin-bottom: 22px; color: #dbe7ff; }
 #restart-btn {
-  padding: 12px 40px; background: #4a9eff; color: #fff; border: none;
-  border-radius: 8px; font-size: 18px; cursor: pointer;
+  padding: 11px 34px; background: #d8a928; color: #111827; border: none;
+  border-radius: 7px; font-size: 16px; cursor: pointer; font-weight: 900;
 }
 
 /* 鼠标坐标显示 */
@@ -865,9 +876,12 @@ body.phase-locked #game-container { pointer-events: none; }
 </div>
 
 <div id="game-over-overlay">
-  <div id="game-over-text"></div>
-  <div id="game-over-sub"></div>
-  <button id="restart-btn" onclick="restartGame()">再来一局</button>
+  <div id="game-over-card">
+    <div id="game-over-kicker">GAME OVER</div>
+    <div id="game-over-text"></div>
+    <div id="game-over-sub"></div>
+    <button id="restart-btn" onclick="restartGame()">再来一局</button>
+  </div>
 </div>
 
 <div id="night-transition-overlay" aria-live="polite">
@@ -2117,6 +2131,11 @@ function confirmNightTransition() {
 function renderNightTransition(state) {
   const overlay = document.getElementById("night-transition-overlay");
   if (!overlay) return;
+  if (state && state.game_over) {
+    overlay.classList.remove("show");
+    overlay.style.display = "none";
+    return;
+  }
   const sequence = state.night_transition || state.night_sequence || state.night_progress || {};
   const stage = String(sequence.stage || sequence.current_stage || sequence.status || "").toLowerCase();
   const finished = sequence.complete === true || sequence.can_confirm === true || sequence.completed === true || ["complete", "completed", "finished", "night_end"].includes(stage);
@@ -2178,6 +2197,13 @@ function renderNightTransition(state) {
 }
 
 function renderDuskVotingFlow(state) {
+  if (state && state.game_over) {
+    const discussionPanel = document.getElementById("dusk-statement-panel");
+    const votingPanel = document.getElementById("voting-panel");
+    if (discussionPanel) discussionPanel.style.display = "none";
+    if (votingPanel) votingPanel.style.display = "none";
+    return;
+  }
   const voteSummary = state.vote_summary || {};
   const stage = duskStage(state);
   if (stage !== "voting") {
@@ -3049,12 +3075,6 @@ function submitDeepDiveChat(name, msg) {
     if (state) {
       if (!state.chat_bubbles) state.chat_bubbles = {};
       state.chat_bubbles["Crow"] = { text: showMsg, time: Date.now() / 1000 };
-      if (typeof state.deep_dive_remaining === "number") {
-        state.deep_dive_remaining = Math.max(0, state.deep_dive_remaining - 1);
-      }
-      if (typeof state.deep_dive_used === "number") {
-        state.deep_dive_used += 1;
-      }
       updateUI(state);
     }
 
@@ -4254,6 +4274,10 @@ window.showRulesModal = showRulesModal;
 let selectedSilverShotTarget = null;
 
 function showSilverShotModal(state) {
+  if (state && state.game_over) {
+    closeSilverShotModal();
+    return;
+  }
   const modal = document.getElementById("silver-shot-modal");
   if (!modal) return;
   const targetsDiv = document.getElementById("silver-shot-targets");
@@ -4350,17 +4374,35 @@ function showGameOver(data) {
   const overlay = document.getElementById("game-over-overlay");
   const text = document.getElementById("game-over-text");
   const sub = document.getElementById("game-over-sub");
+  const kicker = document.getElementById("game-over-kicker");
+  ["dusk-statement-panel", "voting-panel", "night-transition-overlay", "silver-shot-modal", "deep-dive-modal"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  });
 
   if (data.winner === "villagers") {
-    text.textContent = "村民胜利！";
-    text.style.color = "#4a9eff";
-    sub.textContent = "警长正确指认了 " + (getWerewolfDisplayNames(data) || "狼人") + "！";
+    if (kicker) kicker.textContent = "VICTORY";
+    text.textContent = "胜利";
+    text.style.color = "#6dff8f";
+    sub.textContent = data.game_over_detail || "恭喜你消灭了所有的狼人，获得胜利。";
   } else {
-    text.textContent = "狼人获胜！";
+    if (kicker) kicker.textContent = "DEFEAT";
+    text.textContent = "游戏失败";
     text.style.color = "#e94560";
-    sub.textContent = "狼人 " + (getWerewolfDisplayNames(data) || "") + " 笑到了最后...";
+    sub.textContent = data.game_over_detail || gameOverReasonText(data.game_over_reason);
   }
   overlay.classList.add("show");
+}
+
+function gameOverReasonText(reason) {
+  const reasons = {
+    two_wolves_alive_after_day4_vote: "第四天投票后仍有两名狼人存活，警长无法一次消灭全部狼人，村民阵营失败。",
+    wolf_alive_without_silver_bullet: "第四天投票后仍有狼人存活，且警长没有可用的银质子弹，村民阵营失败。",
+    silver_bullet_missed: "银质子弹射错目标，最后的机会已经用尽，狼人获胜。",
+    wrong_detective_announcement: "警长指认错误，狼人趁机掌控局势，村民阵营失败。",
+    max_days_exceeded: "最终期限结束后仍有狼人存活，村民阵营失败。"
+  };
+  return reasons[reason] || "村民阵营未能在最终机会结束前消灭所有狼人，游戏失败。";
 }
 
 // ==================== PHASER GAME ====================
@@ -5307,6 +5349,13 @@ function update(time, delta) {
     const sprite = sprites[name];
     const p = gameState.personas[name];
     if (!sprite || !p) continue;
+
+    if (!p.alive && !p.jailed_corpse) {
+      sprite.setVisible(false);
+      if (nameLabels[name]) nameLabels[name].setVisible(false);
+      if (modelLabels[name]) modelLabels[name].setVisible(false);
+      continue;
+    }
 
     const targetPx = p.x * TILE_W;
     const targetPy = p.y * TILE_W;

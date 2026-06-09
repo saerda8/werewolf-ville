@@ -151,11 +151,11 @@ SHERIFF_AREA = {
     },
     "prison_cell_1": {
         "name": "监狱牢房1",
-        "anchor_points": [(20, 68), (21, 68), (20, 69)],
+        "anchor_points": [(31, 66), (31, 67), (31, 68)],
     },
     "prison_cell_2": {
         "name": "监狱牢房2",
-        "anchor_points": [(26, 68), (27, 68), (26, 69)],
+        "anchor_points": [(38, 65), (38, 66), (38, 67)],
     },
 }
 

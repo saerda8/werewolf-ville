@@ -58,7 +58,7 @@ def test_confirm_vote_result_returns_pending_and_starts_background_sequence(monk
     assert started == [(engine._run_vote_result_sequence, ("Arthur Burton",), True)]
 
 
-def test_sheriff_office_and_right_prison_cell_are_reachable_on_real_map():
+def test_sheriff_office_and_both_right_prison_cells_are_reachable_on_real_map():
     maze = load_collision_maze()
     plaza = (48, 46)
     office = (23, 66)
@@ -66,8 +66,9 @@ def test_sheriff_office_and_right_prison_cell_are_reachable_on_real_map():
     for start in (plaza, office):
         for point in SHERIFF_AREA["sheriff_office"]["anchor_points"]:
             assert bfs_path(maze, start, point) is not None
-        for point in SHERIFF_AREA["prison_cell_2"]["anchor_points"]:
-            assert bfs_path(maze, start, point) is not None
+        for cell_name in ("prison_cell_1", "prison_cell_2"):
+            for point in SHERIFF_AREA[cell_name]["anchor_points"]:
+                assert bfs_path(maze, start, point) is not None
 
 
 def test_silver_knife_path_exhaustion_without_adjacency_marks_phase_complete():
@@ -133,6 +134,6 @@ def test_dusk_vote_ui_hides_vote_totals_and_has_only_footer_abstain_before_resul
     assert "showVoteResults ? `${Math.trunc(Number(count.count) || 0)}" in block
     assert 'if (showVoteResults && abstainers.length)' in block
     assert 'footerAbstainBtn.id = "footer-abstain-btn";' in block
-    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.target));' in block
+    assert 'footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.currentTarget));' in block
     assert 'id="abstain-vote-button"' not in block
     assert "const abstainRow" not in block

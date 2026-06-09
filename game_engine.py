@@ -531,6 +531,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self.game_over = False
 
         self.winner = None
+        self.game_over_reason = ""
+        self.game_over_detail = ""
 
 
 
@@ -1431,7 +1433,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         import math as _math
 
-        alive = [n for n, a in self.agents.items() if a.is_alive]
+        alive = [n for n, a in self.agents.items() if a.is_alive and n not in self._jailed]
 
 
 
@@ -2865,6 +2867,21 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             role_hint = "\n⚠️ 重要：你是狼人！在白天你必须伪装成一个普通居民。绝不能暴露你是狼人。"
 
+        if self.day <= 1:
+            accusation_rule = "4. ❌ 禁止主动点名或指责其他居民，第一天第一轮不是互相指认环节。可以说”我看到有人路过”但不提具体是谁。"
+            investigation_rule = "第一天先交代自己的行踪和异常动静，不要闲聊吃饭、天气或无关日常。"
+        else:
+            accusation_rule = (
+                "4. ✅ 第二天以后必须进入推理讨论：可以并且应该点名你最怀疑的人；"
+                "如果和前面的人怀疑同一对象，必须给出你自己的新理由，不能跟风复读。"
+            )
+            investigation_rule = (
+                "第二天以后发言必须服务于找狼：说明昨晚动静、路线、矛盾、怀疑对象和理由。"
+                "不能避重就轻，不能聊吃饭、天气、普通日程，不能说“我没线索/先听别人”。"
+                "如果有人点名怀疑你，必须正面解释并反驳。"
+                "狼人要伪装成好人并主动误导，但不能集体跟风同一套说法。"
+            )
+
 
 
 
@@ -2907,6 +2924,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 - 本次发言角度：{focus_text}
 
+- 本轮硬要求：{investigation_rule}
+
 
 
 
@@ -2919,7 +2938,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 3. 只谈你昨晚的行踪、你现在的不安、你今天要做什么。
 
-4. ❌ 禁止主动点名或指责其他居民，第一轮不是互相指认环节。可以说”我看到有人路过”但不提具体是谁。
+{accusation_rule}
 
 5. ❌ 禁止分析伤口或讨论狼人作案手法。
 
@@ -3101,10 +3120,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         """第二圈发言：NPC说明离开理由，然后延迟片刻再去具体物件位置。"""
         if name.lower() == self.detective_name.lower() or name.lower() == "crow":
             with self._lock:
+                self._gathering_next_tick = time.time() + self._gathering_departure_gap_seconds()
                 self._gathering_left[name] = True
                 if self._gathering_queue:
                     self._gathering_speaker_idx = (self._gathering_speaker_idx + 1) % len(self._gathering_queue)
-                self._gathering_next_tick = time.time() + self._gathering_departure_gap_seconds()
                 self._gathering_busy = False
             return
 
@@ -3235,6 +3254,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         agent.runtime_state = "idle"
                         self._log(f"[聚集R2移动失败] {display_name} 无法到达 {self._destination_label_zh(leaving_to)}，留在原地", "system")
 
+                    self._gathering_next_tick = time.time() + self._gathering_departure_gap_seconds()
                     self._gathering_left[name] = True
                     agent.current_action = speech
                     agent.current_emoji = "🚶"
@@ -3253,7 +3273,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         f"### 第{self.day}天 早晨\n聚集讨论后离开。借口：{leaving_excuse}\n前往：{self._destination_label_zh(leaving_to)} / {leaving_object}"
                     )
                     _advance_queue_locked()
-                    self._gathering_next_tick = time.time() + self._gathering_departure_gap_seconds()
                     self._gathering_busy = False
             except Exception as exc:
                 self._log(f"[聚集R2异常保底] {display_name}: {exc}", "system")
@@ -3273,6 +3292,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         agent.runtime_state = "moving"
                     else:
                         agent.runtime_state = "idle"
+                    self._gathering_next_tick = time.time() + self._gathering_departure_gap_seconds()
                     self._gathering_left[name] = True
                     self._gathering_speech_history.append({
                         "speaker": name,
@@ -3286,7 +3306,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     self._show_gathering_bubble(name, speech)
                     self._log(f"🚶 [聚集R2] {display_name}: {speech}", "action")
                     _advance_queue_locked()
-                    self._gathering_next_tick = time.time() + self._gathering_departure_gap_seconds()
                     self._gathering_busy = False
 
         threading.Thread(target=_do_speak, daemon=True).start()
@@ -3716,6 +3735,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self.game_over = False
 
         self.winner = None
+        self.game_over_reason = ""
+        self.game_over_detail = ""
 
         self.day_start_time = None
 
@@ -4437,6 +4458,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             "game_over": self.game_over,
 
+            "game_over_reason": getattr(self, "game_over_reason", ""),
+
+            "game_over_detail": localize_visible_character_names(getattr(self, "game_over_detail", "")),
+
         }
 
 
@@ -4453,33 +4478,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         ]
 
-        alive_good = [
-
-            n for n, a in self.agents.items()
-
-            if a.is_alive and n not in self.werewolf_names and n not in self._jailed
-
-        ]
-
         if not alive_wolves:
 
             self.game_over = True
 
             self.winner = "villagers"
+            self.game_over_reason = "all_wolves_eliminated"
+            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
 
             self.phase = GamePhase.GAME_OVER
 
             self._log("两名狼人都已被排除，小镇居民获胜。", "system")
-
-        elif len(alive_wolves) >= len(alive_good):
-
-            self.game_over = True
-
-            self.winner = "werewolf"
-
-            self.phase = GamePhase.GAME_OVER
-
-            self._log("狼人已取得人数优势，狼人获胜。", "system")
 
 
 
@@ -4501,6 +4510,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if not alive_wolves:
             self.game_over = True
             self.winner = "villagers"
+            self.game_over_reason = "all_wolves_eliminated"
+            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
             self.phase = GamePhase.GAME_OVER
             self._log("🏆 第4天黄昏投票结束，所有狼人已被排除！小镇居民获胜！", "system")
             return "game_over"
@@ -4508,6 +4519,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if len(alive_wolves) >= 2:
             self.game_over = True
             self.winner = "werewolf"
+            self.game_over_reason = "two_wolves_alive_after_day4_vote"
+            self.game_over_detail = "第四天投票后仍有两名狼人存活，警长即使拥有银质子弹也只能击杀一只狼人，村民阵营失败。"
             self.phase = GamePhase.GAME_OVER
             self._log("🏆 第4天黄昏投票结束，双狼均存活，狼人获胜！", "system")
             return "game_over"
@@ -4532,6 +4545,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             else:
                 self.game_over = True
                 self.winner = "werewolf"
+                self.game_over_reason = "wolf_alive_without_silver_bullet"
+                self.game_over_detail = "第四天投票后仍有狼人存活，且警长没有可用的银质子弹，村民阵营失败。"
                 self.phase = GamePhase.GAME_OVER
                 self._log("🏆 第4天黄昏投票结束，剩下一个狼人且无银子弹可用，狼人获胜！", "system")
                 return "game_over"
@@ -4573,6 +4588,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     self._silver_bullet_used = True
                     self.game_over = True
                     self.winner = "villagers"
+                    self.game_over_reason = "all_wolves_eliminated"
+                    self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
                     self.phase = GamePhase.GAME_OVER
                     self._log("🎯 银子弹命中狼人！小镇居民获胜！", "system")
                     result["day4_silver_shot"] = True
@@ -4587,6 +4604,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     self._silver_bullet_used = True
                     self.game_over = True
                     self.winner = "werewolf"
+                    self.game_over_reason = "silver_bullet_missed"
+                    self.game_over_detail = f"银质子弹射中了无辜的{display_name_for_person(target_name)}，最后的机会已经用尽，狼人获胜。"
                     self.phase = GamePhase.GAME_OVER
                     self._log(f"💔 银子弹命中了无辜的 {display_name_for_person(target_name)}！狼人获胜！", "system")
                     result["day4_silver_shot"] = True
@@ -5068,21 +5087,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-        # 检查胜负：两只狼人都死亡则好人获胜；存活狼人数量 >= 存活好人数量则狼人获胜
+        # 检查胜负：白天开始时只允许“狼人全灭”立即胜利。
+        # 不能用人数比例提前判负；警长 1.5 票和银质子弹仍可能翻盘。
 
         # Jailed wolves count as removed; jailed villagers count as removed from active play
 
         alive_wolves = [n for n in self.werewolf_names if n in self.agents and self.agents[n].is_alive and n not in self._jailed]
-
-        alive_good = [n for n, a in self.agents.items()
-
-                      if a.is_alive and n not in self.werewolf_names and n not in self._jailed]
 
         if not alive_wolves:
 
             self.game_over = True
 
             self.winner = "villagers"
+            self.game_over_reason = "all_wolves_eliminated"
+            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
 
             self.phase = GamePhase.GAME_OVER
 
@@ -5090,27 +5108,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             return
 
-        if len(alive_wolves) >= len(alive_good):
-
-            self.game_over = True
-
-            self.winner = "werewolf"
-
-            self.phase = GamePhase.GAME_OVER
-
-            self._log("狼人数量已达半数以上，狼人胜利！")
-
-            return
-
-
-
-
-
         if self.day > CONFIG["game"]["max_days"]:
 
             self.game_over = True
 
             self.winner = "werewolf"
+            self.game_over_reason = "max_days_exceeded"
+            self.game_over_detail = f"超过{CONFIG['game']['max_days']}天后仍有狼人存活，村民阵营失败。"
 
             self.phase = GamePhase.GAME_OVER
 
@@ -5124,7 +5128,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         # 记忆压缩
 
-        alive_names = [name for name, agent in self.agents.items() if agent.is_alive]
+        alive_names = [name for name, agent in self.agents.items() if agent.is_alive and name not in self._jailed]
 
         def _compress_memory_async(names: list[str], day: int):
             for name in names:
@@ -9604,19 +9608,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 return {"error": f"警长正在与{display_name_for_person(active_target)}交谈，请稍后"}
 
 
-            # 对话轮数上限检查
-
+            # 对话轮数只在有效回复后提交；这里仅做上限预检。
             if not hasattr(self, '_chat_round_count'):
-
                 self._chat_round_count = {}
-
             key = (self.detective_name, target_name)
-
-            self._chat_round_count[key] = self._chat_round_count.get(key, 0) + 1
-
             max_rounds = CONFIG["conversation"]["max_rounds_per_side"]
-
-            if self._chat_round_count[key] > max_rounds:
+            if self._chat_round_count.get(key, 0) >= max_rounds:
 
                 return {"error": f"与{target_name}的对话轮数已达上限({max_rounds}轮)"}
 
@@ -9686,7 +9683,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     "警长已经来到你面前。请你主动向警长说明昨晚的行踪、"
 
-                    "你知道的线索或当前怀疑。语气严肃，100字以内。"
+                    "你知道的线索或当前怀疑。只能用中文，不要夹杂英文或内部线索标题。语气严肃，100字以内。"
 
                 )
 
@@ -9700,27 +9697,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                     "请直接回答这两个问题：一是你为什么不可能是凶手，二是你目前怀疑谁以及原因。"
 
-                    "语气要像真实小镇居民，紧张、克制，不要开心，不要聊无关人物。100字以内。"
+                    "语气要像真实小镇居民，紧张、克制，不要开心，不要聊无关人物。"
+                    "只能用中文，不要夹杂英文或内部线索标题。100字以内。"
 
                 )
 
 
-
-            # 玩家交互先落账，不能等模型返回；迟到/失败回复只影响NPC回答，不回滚玩家动作。
-
-            detective.record_chat(target_name, is_deep_dive)
-
-            if target_name != self.detective_name:
-
-                if not is_deep_dive:
-
-                    self._daily_interviewed.add(target_name)
-
-                if self.detective_name not in self._daily_normal_chats:
-
-                    self._daily_normal_chats[self.detective_name] = set()
-
-                self._daily_normal_chats[self.detective_name].add(target_name)
 
             if is_deep_dive:
                 special_response, silver_deep_dive_result = self._resolve_silver_jewelry_deep_dive(
@@ -9877,6 +9859,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     "deep_dive_remaining": detective.deep_dive_quota - detective.deep_dive_used,
                     "delivered_clues": [],
                 }
+            detective.record_chat(target_name, is_deep_dive)
+            self._chat_round_count[key] = self._chat_round_count.get(key, 0) + 1
+            if target_name != self.detective_name:
+                if not is_deep_dive:
+                    self._daily_interviewed.add(target_name)
+                if self.detective_name not in self._daily_normal_chats:
+                    self._daily_normal_chats[self.detective_name] = set()
+                self._daily_normal_chats[self.detective_name].add(target_name)
+
             delivered_clues = self._deliver_pending_clues_to_crow(target_name)
             if is_deep_dive or delivered_clues:
                 pending_action = getattr(target, "_pending_action", None)
@@ -9887,12 +9878,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 if isinstance(last_decision, dict):
                     last_decision.pop("has_detective_hint", None)
                     last_decision.pop("has_visible_clue_hint", None)
-
-            if delivered_clues:
-
-                clue_text = "\n".join(f"- {clue.summary}" for clue in delivered_clues)
-
-                response = f"{response}\n\n[New factual clues]\n{clue_text}"
 
             if hasattr(target, "record_dialogue"):
 
@@ -10044,6 +10029,12 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self.game_over = True
 
             self.winner = "villagers" if is_correct else "werewolf"
+            self.game_over_reason = "all_wolves_eliminated" if is_correct else "wrong_detective_announcement"
+            self.game_over_detail = (
+                "恭喜你消灭了所有的狼人，获得胜利。"
+                if is_correct
+                else "警长指认错误，狼人趁机掌控局势，村民阵营失败。"
+            )
 
             self._log(f"警长宣布{werewolf_guess}是狼人！{'正确！' if is_correct else '错误！'}", "chat")
 
@@ -11126,6 +11117,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "day": self.day,
 
                 "phase": self.phase.value,
+
+                "winner": self.winner,
+
+                "game_over": self.game_over,
+
+                "game_over_reason": getattr(self, "game_over_reason", ""),
+
+                "game_over_detail": localize_visible_character_names(getattr(self, "game_over_detail", "")),
 
                 "game_hour": round(self.game_hour, 1),
 

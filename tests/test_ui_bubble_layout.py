@@ -171,7 +171,7 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert "function mergePendingChatTargetWaitBubble(state)" in html
 
 
-def test_deep_dive_submit_decrements_remaining_optimistically():
+def test_deep_dive_submit_does_not_decrement_until_backend_success():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert 'function deepDiveRemaining(state)' in html
@@ -180,8 +180,9 @@ def test_deep_dive_submit_decrements_remaining_optimistically():
     assert 'const ddLeftReal = deepDiveRemaining(state);' in html
     assert 'function submitDeepDiveChat(name, msg)' in html
     assert 'setPendingChat(name, "waiting");' in html
-    assert 'state.deep_dive_remaining = Math.max(0, state.deep_dive_remaining - 1);' in html
-    assert 'state.deep_dive_used += 1;' in html
+    submit_block = html[html.index("function submitDeepDiveChat"):html.index("socket.emit(\"detective_chat\"", html.index("function submitDeepDiveChat"))]
+    assert 'state.deep_dive_remaining = Math.max(0, state.deep_dive_remaining - 1);' not in submit_block
+    assert 'state.deep_dive_used += 1;' not in submit_block
     assert 'updateUI(state);' in html
 
 
@@ -1098,6 +1099,29 @@ def test_new_dusk_camera_and_waiting_behavior():
     assert 'const site = gameState.initial_gathering_site;' in html
     assert 'sceneRef.cameras.main.pan((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2), 2000);' in html
     assert 'sceneRef.cameras.main.centerOn((site.x * TILE_W) + (TILE_W / 2), (site.y * TILE_W) + (TILE_W / 2));' in html
+
+
+def test_dead_non_jailed_persona_sprite_is_hidden_to_avoid_duplicate_body():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    update_start = html.index("function update")
+    update_block = html[update_start:html.index("// Call global bubble resolver", update_start)]
+
+    assert "if (!p.alive && !p.jailed_corpse)" in update_block
+    assert "sprite.setVisible(false);" in update_block
+    assert "nameLabels[name].setVisible(false);" in update_block
+    assert "modelLabels[name].setVisible(false);" in update_block
+
+
+def test_game_over_ui_uses_reason_detail_and_closes_phase_modals():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    show_start = html.index("function showGameOver(data)")
+    show_block = html[show_start:html.index("function gameOverReasonText", show_start)]
+
+    assert 'id="game-over-card"' in html
+    assert 'data.game_over_detail || "恭喜你消灭了所有的狼人，获得胜利。"' in show_block
+    assert "data.game_over_detail || gameOverReasonText(data.game_over_reason)" in show_block
+    assert '"dusk-statement-panel", "voting-panel", "night-transition-overlay", "silver-shot-modal"' in show_block
+    assert "function gameOverReasonText(reason)" in html
 
 
 def test_dev_complete_interviews_button_exists():

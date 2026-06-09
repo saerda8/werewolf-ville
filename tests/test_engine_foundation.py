@@ -2641,7 +2641,7 @@ def test_detective_chat_records_and_locks_before_slow_npc_reply(monkeypatch):
     t.start()
     assert started.wait(timeout=1)
 
-    assert detective.deep_dive_used == 1
+    assert detective.deep_dive_used == 0
     assert target.in_conversation_with == "Crow"
     assert engine.chat_bubbles["Crow"]["target"] == "Arthur Burton"
     assert "你再想想细节" in engine.chat_bubbles["Crow"]["text"]
@@ -2649,6 +2649,7 @@ def test_detective_chat_records_and_locks_before_slow_npc_reply(monkeypatch):
 
     release.set()
     t.join(timeout=2)
+    assert detective.deep_dive_used == 1
     assert result_holder["deep_dive_remaining"] == 2
     assert target.in_conversation_with == "Crow"
     assert detective.in_conversation_with is None
@@ -2844,6 +2845,82 @@ def test_detective_chat_empty_response_keeps_lock_for_retry_window(monkeypatch):
     bubble = engine.chat_bubbles["Arthur Burton"]
     assert bubble.get("kind") == "conversation_pending"
     assert bubble.get("target") == "Crow"
+    assert detective.chat_count.get("Arthur Burton", 0) == 0
+    assert "Arthur Burton" not in engine._daily_interviewed
+
+
+def test_detective_chat_retries_empty_model_reply_until_valid_response(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    engine._running = True
+    detective = engine.agents["Crow"]
+    target = engine.agents["Arthur Burton"]
+    responses = iter(["", "", "我昨晚一直在店里，愿意接受追问。"])
+
+    target.generate_response = lambda speaker, msg, day: next(responses)
+
+    result = engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)
+
+    assert result["response"] == "我昨晚一直在店里，愿意接受追问。"
+    assert detective.chat_count.get("Arthur Burton", 0) == 1
+    assert "Arthur Burton" in engine._daily_interviewed
+    assert target.in_conversation_with == "Crow"
+    assert getattr(target, "_detective_chat_release_at", 0) == 0
+
+
+def test_day3_morning_does_not_end_on_wolf_parity(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.day = 2
+    engine.werewolf_names = ["Arthur Burton", "Isabella Rodriguez"]
+    for name, agent in engine.agents.items():
+        agent.is_alive = name in {"Crow", "Maria Lopez", "Arthur Burton", "Isabella Rodriguez"}
+    engine._jailed.clear()
+    body = BodyRecord(
+        body_id="body_day3",
+        victim_name="Sam Moore",
+        location="Johnson Park",
+        x=48,
+        y=46,
+        created_day=2,
+        discovered=False,
+    )
+    called = {"place": False, "gather": False}
+    monkeypatch.setattr(engine, "_discover_latest_body", lambda: body)
+    monkeypatch.setattr(engine, "_place_alive_agents_near_body", lambda b: called.__setitem__("place", True))
+    monkeypatch.setattr(engine, "_init_gathering", lambda: called.__setitem__("gather", True))
+    monkeypatch.setattr(engine, "_generate_daily_plans", lambda: None)
+
+    engine._transition_to_day()
+
+    assert engine.day == 3
+    assert engine.phase == game_engine.GamePhase.DAY
+    assert engine.game_over is False
+    assert engine.winner is None
+    assert called == {"place": True, "gather": True}
+
+
+def test_prison_cells_are_right_of_sheriff_office():
+    office_x = min(x for x, _ in SHERIFF_AREA["sheriff_office"]["anchor_points"])
+    cell_1_x = min(x for x, _ in SHERIFF_AREA["prison_cell_1"]["anchor_points"])
+    cell_2_x = min(x for x, _ in SHERIFF_AREA["prison_cell_2"]["anchor_points"])
+
+    assert cell_1_x > office_x
+    assert cell_2_x > cell_1_x
+
+
+def test_prison_fallback_never_leaves_target_at_original_position(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    target = engine.agents["Arthur Burton"]
+    original = (target.x, target.y)
+    monkeypatch.setattr(engine, "_nearest_reachable_path", lambda *args, **kwargs: None)
+
+    engine._jailed.add("Arthur Burton")
+    engine._place_in_prison("Arthur Burton", walk=True)
+
+    assert (target.x, target.y) != original
+    assert (target.x, target.y) in SHERIFF_AREA[target._prison_cell]["anchor_points"]
+    assert target._jailed_corpse is True
 
 
 def test_busy_detective_redirects_third_party_talk_path(monkeypatch):

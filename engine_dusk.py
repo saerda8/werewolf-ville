@@ -96,7 +96,17 @@ class EngineDuskMixin:
                 not target
                 or (target.x, target.y) == (target.target_x, target.target_y)
             )
-            if crow and target_arrived and (crow.x, crow.y) == (crow.target_x, crow.target_y):
+            if target:
+                if target_arrived:
+                    self.agent_paths.pop(target_name, None)
+                    target.runtime_state = "jailed"
+                    target.current_action = "被拘留中"
+                    target.current_action_type = ""
+                    target.current_emoji = ""
+                    target._jailed_corpse = True
+                    self._transition_to_night()
+                return
+            if crow and (crow.x, crow.y) == (crow.target_x, crow.target_y):
                 self._transition_to_night()
             return
 
@@ -471,9 +481,9 @@ class EngineDuskMixin:
         ]
         role_instruction = (
             "你实际是狼人。发言时必须伪装成好人，自证清白，把怀疑甩给一个具体非狼人对象；"
-            "不要承认狼人身份，不要显得在保护同伴。"
+            "不要承认狼人身份，不要显得在保护同伴。必须主动制造误导，但不要和其他狼人使用同一角度。"
             if agent.role == "werewolf"
-            else "你是好人。发言时必须自证清白，指出一个具体怀疑对象，并提醒大家下一步该查什么。"
+            else "你是好人。发言时必须自证清白，指出一个具体怀疑对象，并提醒大家下一步该查什么。不能为了安全而避重就轻。"
         )
         if accused_by:
             role_instruction += (
@@ -487,7 +497,11 @@ class EngineDuskMixin:
             f"前面大家的发言：{prior_text}。可怀疑对象：{suspect_text}。{role_instruction}"
             "发言要像狼人杀讨论：先用自己的行踪/观察/记忆自证，再点名一个具体怀疑对象，"
             "再基于尸体、讨论或公开线索给出推理理由。"
+            "不能跟风：如果你怀疑的人和前面的人相同，必须给出你自己的新观察、新矛盾或不同推理链；"
+            "如果没有新理由，就换一个角度质疑、辩护或提出具体问题。"
+            "每句话都要服务于找狼或伪装找狼，不能聊吃饭、天气、普通日常、无关工作。"
             "禁止说“我没意见”“先听警长/克罗”“等大家说完”“暂时没有线索”等划水句；"
+            "只能输出中文；如果线索里有英文，只能用中文转述，不要夹杂英文。"
             "不要使用固定格式开头；每个人都要根据自己的职业、记忆和怀疑对象说出不同重点。"
             "不要投票，不要要求马上拘留。80字以内，必须只说角色本人会说的话。"
         )
@@ -1230,7 +1244,7 @@ class EngineDuskMixin:
             _, chosen_cell, best_pt, path = best
         else:
             chosen_cell = preferred_cells[0]
-            best_pt = (target.x, target.y)
+            best_pt = SHERIFF_AREA[chosen_cell]["anchor_points"][0]
             path = []
 
         setattr(target, '_prison_cell', chosen_cell)
@@ -1243,6 +1257,8 @@ class EngineDuskMixin:
             self.agent_paths[target_name] = path
             target.runtime_state = "moving" if path else "jailed"
             if not path:
+                target.x, target.y = best_pt
+                target.target_x, target.target_y = best_pt
                 target._jailed_corpse = True
             return
         target.x, target.y = best_pt
