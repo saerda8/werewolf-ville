@@ -1,5 +1,6 @@
 Werewolf Ville
 English | 简体中文
+
 Werewolf Ville is a browser-based social deduction game built from the Stanford Smallville simulation resources. It transforms a generative-agent town simulation into a playable Werewolf-style mystery game: a living town where residents talk, observe, suspect, remember, reflect, and make decisions through large language models.
 The player takes the role of the sheriff. During the day, the sheriff investigates the town, talks to residents, collects clues, and tries to understand who can be trusted. At dusk, the town votes. At night, the werewolves move.
 Gameplay
