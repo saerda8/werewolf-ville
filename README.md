@@ -49,10 +49,6 @@ However, the small cast is only a practical limit for the current demo, not a de
  
 The goal of Werewolf Ville is to turn a generative-agent town simulation into a playable social deduction game. Instead of solving a fixed mystery script, the player investigates a living town where every resident can speak, remember, suspect, lie, misunderstand, reflect, and change over time.
  
-## Current Status
- 
-This project is currently in early demo development. The first goal is to build a stable playable loop: daytime simulation, sheriff investigation, dusk voting, nighttime attacks, NPC reflection, silver bullet progression, and a final confrontation with the werewolves.
- 
 ## How to Run
 
 Werewolf Ville is a Python + Flask browser game. The backend runs the game simulation, NPC logic, day-night cycle, voting, memory, and LLM calls. The frontend is served in the browser at `http://127.0.0.1:5000/`.
