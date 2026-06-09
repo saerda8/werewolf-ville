@@ -720,3 +720,33 @@ Verification:
 - `PYTHONPATH=. pytest -q tests/test_game_engine_night_loop.py -k "silver_knife"`: 3 passed
 - `PYTHONPATH=. pytest -q tests/test_full_game_completion.py -k "silver_knife or two_corpses or corpse or day3_night_auto_crafts_silver_bullet"`: 11 passed
 - `PYTHONPATH=. pytest -q tests/test_vote_flow.py -k "dusk_discussion or crow_input or discussion_replaces_filler"`: 8 passed
+
+## 2026-06-09 Restart/night UI, real chat reliability, morning gathering, corpse and silver wording
+
+Status: Fixed
+
+Symptoms:
+- After game over, clicking restart and entering night could fail to show the night transition UI.
+- Detective-to-NPC chat could feel like it failed: Crow's bubble appeared, the NPC listening state disappeared, and no visible NPC reply arrived reliably.
+- Day2/Day3 morning gathering teleported Crow/NPCs to the plaza, making night movement look like it leaked into morning.
+- Multiple corpses could overlap, and werewolf corpses rendered much larger than residents.
+- NPCs without the silver jewelry could hallucinate fake silver objects such as silver scissors.
+- Morning/dusk/final-word speeches could keep treating dead or jailed people as active suspects.
+- The intelligent-agent log panel resize target was too small, making the panel feel fixed.
+
+Fix:
+- Restart now clears stale phase UI state, and night transition rendering restores the overlay display when phase is `night`.
+- Real detective chat now retries empty model replies during the 30s lock window; if the model still produces no valid reply, the NPC gives a visible fallback response and the interview advances instead of failing silently.
+- Frontend detective chat range is widened to 3 tiles.
+- Morning gathering keeps generated paths and clears only action/bubble text, so participants walk to the plaza instead of snapping there.
+- Newly discovered multiple bodies are placed on adjacent tiles, and werewolf corpses are display-sized near normal character scale.
+- Silver jewelry keyword handling now includes silver goods/scissors-style wording; non-holders are intercepted before the model can invent fake silver items.
+- Morning, dusk, vote, and final-word prompts now constrain active suspects to living non-jailed people.
+- Log panel resize can start from the header as well as the top handle.
+
+Verification:
+- `python -m py_compile game_engine.py engine_dusk.py ui/app.py tests/test_engine_foundation.py tests/test_ui_bubble_layout.py`
+- `PYTHONPATH=. pytest -q tests/test_ui_bubble_layout.py`: 94 passed
+- Targeted detective-chat/silver tests: 4 passed
+- Targeted morning-gathering/silver-knife/day3 parity tests: 5 passed
+- Local service restarted; `http://127.0.0.1:5000/` returns 200 and contains version `74`.

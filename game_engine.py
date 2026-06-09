@@ -388,6 +388,15 @@ SILVER_JEWELRY_KEYWORDS = (
     "银首饰",
     "银项链",
     "银制首饰",
+    "银制品",
+    "银质",
+    "银制",
+    "银器",
+    "银剪刀",
+    "银刀",
+    "银戒指",
+    "银手链",
+    "银项坠",
     "首饰",
     "项链",
 )
@@ -833,7 +842,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             return None, {}
         holder_name = getattr(self, "_silver_jewelry_holder", "")
         if target_name != holder_name:
-            return "我身上没有那件银制首饰。", {
+            return "我身上没有银制首饰，也没有能交给你的银制品。", {
                 "silver_jewelry_not_holder": True,
                 "silver_jewelry_acquired": self._silver_jewelry_acquired,
             }
@@ -857,6 +866,21 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             "silver_jewelry_acquired": True,
             "silver_task_done_today": self._silver_task_done_for_today(),
         }
+
+    def _detective_chat_fallback_response(self, target_name: str, incoming_message: str, is_deep_dive: bool) -> str:
+        """Visible fallback after the model exhausts the real 30s retry window."""
+        target = self.agents.get(target_name)
+        label = display_name_for_person(target_name)
+        location = self._destination_label_zh(getattr(target, "current_location", "") or "unknown") if target else "镇上"
+        if self._mentions_silver_jewelry(incoming_message):
+            holder_name = getattr(self, "_silver_jewelry_holder", "")
+            if target_name != holder_name:
+                return "我身上没有银制首饰，也没有能交给你的银制品。"
+            if not is_deep_dive:
+                return "这件事需要你认真追问；如果你要银制首饰，请用深度追问跟我说。"
+        if is_deep_dive:
+            return f"我听清楚了。关于你追问的事，我现在能确认的是：我昨晚主要在{location}附近，没有看到能直接定罪的新线索。"
+        return f"我听清楚了。我昨晚主要在{location}附近，没有接近尸体；现在最该查清谁夜里靠近过案发地。"
 
 
 
@@ -2573,22 +2597,32 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         bodies = [b for b in getattr(self, "bodies", []) if getattr(b, "discovered", False)]
 
         victim = "镇上的一名居民"
-
         location = "约翰逊公园东侧空地"
+        wolf_body_note = ""
 
         if bodies:
 
-            body = max(bodies, key=lambda b: getattr(b, "created_day", 0))
+            latest_day = max(getattr(b, "created_day", 0) for b in bodies)
+            latest_bodies = [b for b in bodies if getattr(b, "created_day", 0) == latest_day]
+            body = latest_bodies[-1]
 
-            victim = display_name_for_person(body.victim_name)
+            victim_names = []
+            for item in latest_bodies:
+                label = display_name_for_person(item.victim_name)
+                if getattr(item, "is_werewolf_corpse", False):
+                    label = f"{label}（狼人尸体）"
+                victim_names.append(label)
+            victim = "、".join(victim_names) if victim_names else display_name_for_person(body.victim_name)
 
             location = self._destination_label_zh(getattr(body, "location", "") or location)
+            if any(getattr(item, "is_werewolf_corpse", False) for item in latest_bodies):
+                wolf_body_note = "其中有一具尸体显露出狼人特征，这说明有人杀中了狼人，但镇上可能还有狼人活着。"
 
         return [
 
             f"我是克罗，本镇警长。昨夜{victim}在{location}遇害，今早我们才发现。",
 
-            "伤口像是野兽撕咬和抓伤，但现场还没查清，附近的痕迹我也要逐一确认。",
+            wolf_body_note or "伤口像是野兽撕咬和抓伤，但现场还没查清，附近的痕迹我也要逐一确认。",
 
             "现在先别急着猜凶手。请按顺序说清昨晚在哪、见过谁、听见过什么异常。",
 
@@ -2876,6 +2910,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             history_lines.append(f"{display_name_for_person(entry['speaker'])} 说：\"{entry['speech'][:120]}\"")
 
         history_text = "\n".join(history_lines) if history_lines else "(还没人说话，你是第一个)"
+        discovered_bodies = [b for b in getattr(self, "bodies", []) if getattr(b, "discovered", False)]
+        latest_body_facts = []
+        if discovered_bodies:
+            latest_day = max(getattr(b, "created_day", 0) for b in discovered_bodies)
+            for body in discovered_bodies:
+                if getattr(body, "created_day", 0) != latest_day:
+                    continue
+                label = display_name_for_person(body.victim_name)
+                if getattr(body, "is_werewolf_corpse", False):
+                    label += "是一具狼人尸体"
+                else:
+                    label += "遇害"
+                latest_body_facts.append(label)
+        body_fact_text = "；".join(latest_body_facts) if latest_body_facts else "镇上发现尸体"
 
 
 
@@ -2913,6 +2961,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 {active_town_people_rule()}
 
 当前场景：现在是早晨，所有居民聚集在尸体附近。大家正在轮流发言，每人说一小段话。镇上刚发现命案，气氛应当严肃、紧张、克制。
+
+今天清晨的公开事实：{body_fact_text}。如果出现狼人尸体，必须承认这件事并据此推理：可能有人用银器杀中了狼人，但镇上仍可能有其他狼人。
 
 
 
@@ -4600,7 +4650,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "除狼人外已经没有好人存活，狼人获胜。",
                 "好人阵营已无人存活。狼人获胜。",
             )
-        if len(alive_good) <= len(alive_wolves):
+        sheriff_alone_against_wolves = len(alive_good) == 1 and alive_good[0] == self.detective_name
+        wolves_have_decisive_numbers = len(alive_good) < len(alive_wolves) or sheriff_alone_against_wolves
+        if wolves_have_decisive_numbers:
             if self._has_available_silver_bullet():
                 self.phase = GamePhase.PENDING_SILVER_SHOT
                 self._pending_silver_wolf = alive_wolves[0]
@@ -5122,9 +5174,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         if new_bodies:
             body_parts = []
-            for body in new_bodies:
-                body.x = INITIAL_BODY_SITE["x"]
-                body.y = INITIAL_BODY_SITE["y"]
+            body_offsets = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1)]
+            for idx, body in enumerate(new_bodies):
+                ox, oy = body_offsets[idx % len(body_offsets)]
+                body.x = INITIAL_BODY_SITE["x"] + ox
+                body.y = INITIAL_BODY_SITE["y"] + oy
                 body.location = INITIAL_BODY_SITE["location"]
                 label = display_name_for_person(body.victim_name)
                 if getattr(body, "is_werewolf_corpse", False):
@@ -5178,10 +5232,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 agent = self.agents.get(name)
                 if not agent:
                     continue
-                agent.x = agent.target_x
-                agent.y = agent.target_y
-                self.agent_paths.pop(name, None)
-                agent.runtime_state = "idle"
+                if self.agent_paths.get(name):
+                    agent.runtime_state = "moving"
+                else:
+                    agent.runtime_state = "idle"
                 agent.current_action = ""
                 agent.current_action_type = ""
                 agent.current_emoji = ""
@@ -9826,7 +9880,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
-            incoming_message = str(message or "").strip()
+            original_message = str(message or "").strip()
+            incoming_message = original_message
 
             npc_opening_chat = not is_deep_dive
 
@@ -9871,11 +9926,39 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 
 
+            silver_check_message = original_message or incoming_message
+
             if is_deep_dive:
                 special_response, silver_deep_dive_result = self._resolve_silver_jewelry_deep_dive(
                     target_name,
-                    incoming_message,
+                    silver_check_message,
                 )
+            elif self._mentions_silver_jewelry(silver_check_message):
+                holder_name = getattr(self, "_silver_jewelry_holder", "")
+                if target_name != holder_name:
+                    special_response = "我身上没有银制首饰，也没有能交给你的银制品。"
+                    silver_deep_dive_result = {
+                        "silver_jewelry_not_holder": True,
+                        "silver_jewelry_acquired": self._silver_jewelry_acquired,
+                    }
+                else:
+                    special_response = "这件事需要你认真追问；如果你要银制首饰，请用深度追问跟我说。"
+                    silver_deep_dive_result = {
+                        "silver_jewelry_requires_deep_dive": True,
+                        "silver_jewelry_acquired": self._silver_jewelry_acquired,
+                    }
+
+            if self._mentions_silver_jewelry(silver_check_message):
+                holder_name = getattr(self, "_silver_jewelry_holder", "")
+                if target_name != holder_name:
+                    prompt_message += (
+                        "\n硬性规则：你没有任何银制品、银首饰、银剪刀、银器或银项链。"
+                        "绝不能声称自己有银制物品，绝不能编造能交给克罗的银器。"
+                    )
+                else:
+                    prompt_message += (
+                        "\n硬性规则：你只可能持有规则中的银制首饰，不要编造银剪刀、银刀或其他银器。"
+                    )
 
 
 
@@ -10003,29 +10086,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     }
                 detail = get_last_error_for_agent(target_name) or "模型返回为空"
                 self._log(
-                    f"[模型等待失败/空结果，结束等待] {display_name_for_person(target_name)} 回复警长：{detail}",
+                    f"[模型等待失败/空结果，使用可见兜底回复] {display_name_for_person(target_name)} 回复警长：{detail}",
                     "system",
                 )
-                bubble = self.chat_bubbles.get(target_name)
-                if isinstance(bubble, dict) and bubble.get("kind") == "conversation_pending":
-                    self.chat_bubbles.pop(target_name, None)
-                target.in_conversation_with = None
-                target._conversation_started_at = 0
-                target.runtime_state = "idle"
-                target._detective_chat_release_at = 0
-                detective.in_conversation_with = None
-                detective._conversation_started_at = 0
-                self._detective_chat_active_target = None
-                self._detective_chat_pending_target = None
-                self._broadcast_state()
-                return {
-                    "no_response": True,
-                    "response": "",
-                    "remaining_chats": CONFIG["conversation"]["detective_normal_chat_limit"]
-                    - detective.chat_count.get(target_name, 0),
-                    "deep_dive_remaining": detective.deep_dive_quota - detective.deep_dive_used,
-                    "delivered_clues": [],
-                }
+                response = self._detective_chat_fallback_response(target_name, incoming_message, is_deep_dive)
             detective.record_chat(target_name, is_deep_dive)
             self._chat_round_count[key] = self._chat_round_count.get(key, 0) + 1
             if target_name != self.detective_name:

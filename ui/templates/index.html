@@ -542,7 +542,7 @@ body.phase-locked #game-container { pointer-events: none; }
     top: 0;
     left: 0;
     right: 0;
-    height: 4px;
+    height: 10px;
     cursor: ns-resize;
     z-index: 110;
   }
@@ -1053,6 +1053,7 @@ let nightTransitionConfirming = false;
 let voteResultConfirming = false;
 let duskVoteCountdownTimer = null;
 let duskCameraPanKey = "";
+const DETECTIVE_CHAT_RANGE_TILES = 3;
 const SHERIFF_NORMAL_QUESTION = "我得把昨晚的时间线核清楚。你说说，为什么你不可能是凶手？另外，现在你最不放心谁，为什么？";
 const BUBBLE_LIFETIME_SECONDS = 6;
 let thoughtBubbleCache = {};
@@ -1785,7 +1786,17 @@ function resetAgentLog() {
   locallyClearedHintTargets.clear();
   lastCheckedDay = null;
   nightCameraLocked = false;
+  nightTransitionConfirming = false;
+  isNight = false;
+  isDusk = false;
   pendingDeepDiveTarget = null;
+  const nightTransitionEl = document.getElementById("night-transition-overlay");
+  if (nightTransitionEl) {
+    nightTransitionEl.classList.remove("show");
+    nightTransitionEl.style.display = "";
+  }
+  const gameOverEl = document.getElementById("game-over-overlay");
+  if (gameOverEl) gameOverEl.classList.remove("show");
 
   // Clear old gameState and director summary to prevent carrying over old roles
   gameState = null;
@@ -2145,6 +2156,7 @@ function renderNightTransition(state) {
   const stage = String(sequence.stage || sequence.current_stage || sequence.status || "").toLowerCase();
   const finished = sequence.complete === true || sequence.can_confirm === true || sequence.completed === true || ["complete", "completed", "finished", "night_end"].includes(stage);
   const active = state.phase === "night";
+  overlay.style.display = active ? "flex" : "none";
   overlay.classList.toggle("show", active);
   if (!active) {
     nightTransitionConfirming = false;
@@ -2580,7 +2592,7 @@ function updateUI(state) {
       const isGathering = state.primary_cta === "gathering";
 
       const isPendingChat = !!pendingChatTarget;
-      if (dist <= 2 && !isGathering && !isPendingChat) {
+      if (dist <= DETECTIVE_CHAT_RANGE_TILES && !isGathering && !isPendingChat) {
         // Close enough! Enable input and send, hide approach button
         if (chatInput) {
           chatInput.disabled = false;
@@ -2999,7 +3011,7 @@ function maybeTriggerPendingAutoChat(state) {
     return;
   }
   const dist = Math.abs(crow.x - target.x) + Math.abs(crow.y - target.y);
-  if (dist <= 2) {
+  if (dist <= DETECTIVE_CHAT_RANGE_TILES) {
     requestNpcOpeningChat(pendingAutoChatTarget);
   }
 }
@@ -3018,7 +3030,7 @@ function invokeChat(name, isDeep, event) {
   if (!crow || !target || !target.alive) return;
 
   const dist = Math.abs(crow.x - target.x) + Math.abs(crow.y - target.y);
-  if (dist > 2) {
+  if (dist > DETECTIVE_CHAT_RANGE_TILES) {
     if (socket && socket.connected) {
       if (!isDeep) {
         pendingAutoChatTarget = name;
@@ -5269,6 +5281,7 @@ function update(time, delta) {
   const bodies = gameState.bodies || [];
   const currentBodyIds = new Set();
   const bodyTileCounts = {};
+  const bodyOffsets = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
 
   for (const body of bodies) {
     if (body.buried) continue;
@@ -5280,10 +5293,9 @@ function update(time, delta) {
     const tileKey = `${body.x},${body.y}`;
     const bodyTileIndex = bodyTileCounts[tileKey] || 0;
     bodyTileCounts[tileKey] = bodyTileIndex + 1;
-    const offsetX = (bodyTileIndex % 2) * 12 - Math.floor(bodyTileIndex / 2) * 6;
-    const offsetY = Math.floor(bodyTileIndex / 2) * 10;
-    const bx = body.x * TILE_W + offsetX;
-    const by = body.y * TILE_W + offsetY;
+    const bodyOffset = bodyOffsets[bodyTileIndex % bodyOffsets.length];
+    const bx = (Number(body.x) + bodyOffset[0]) * TILE_W;
+    const by = (Number(body.y) + bodyOffset[1]) * TILE_W;
 
     const isWerewolf = body.kind === "werewolf" ||
                        body.corpse_kind === "werewolf" ||
@@ -5296,7 +5308,7 @@ function update(time, delta) {
       // Create new corpse sprite
       if (isWerewolf) {
         corpseSprite = sceneRef.add.image(bx, by, "werewolf_corpse");
-        corpseSprite.setScale(0.7);
+        corpseSprite.setDisplaySize(TILE_W * 1.35, TILE_W * 1.35);
       } else {
         corpseSprite = sceneRef.physics.add.sprite(bx, by, textureKey, "down");
         corpseSprite.setSize(30, 40).setOffset(0, 24);
@@ -5311,13 +5323,14 @@ function update(time, delta) {
       corpseSprite.setPosition(bx, by);
       if (isWerewolf && corpseSprite.texture.key !== "werewolf_corpse") {
         corpseSprite.setTexture("werewolf_corpse");
-        corpseSprite.setScale(0.7);
+        corpseSprite.setDisplaySize(TILE_W * 1.35, TILE_W * 1.35);
         corpseSprite.clearTint();
         corpseSprite.setAngle(0);
       } else if (!isWerewolf && corpseSprite.texture.key !== textureKey) {
         corpseSprite.setTexture(textureKey, "down");
       }
       if (isWerewolf) {
+        corpseSprite.setDisplaySize(TILE_W * 1.35, TILE_W * 1.35);
         corpseSprite.clearTint();
       } else {
         corpseSprite.setTint(0x777777);
@@ -5517,15 +5530,19 @@ function onLogResizeMove(e) {
 
 function initLogPanelResize() {
   const handle = document.getElementById("log-resize-handle");
+  const header = document.getElementById("log-header");
   const panel = document.getElementById("log-panel");
   if (!handle || !panel) return;
 
-  handle.addEventListener("mousedown", (e) => {
+  const startResize = (e) => {
     isDraggingLog = true;
     startLogY = e.clientY;
     startLogHeight = panel.offsetHeight;
     e.preventDefault();
-  });
+  };
+
+  handle.addEventListener("mousedown", startResize);
+  if (header) header.addEventListener("mousedown", startResize);
 
   document.addEventListener("mousemove", onLogResizeMove);
 

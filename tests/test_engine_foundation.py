@@ -2579,12 +2579,28 @@ def test_silver_jewelry_deep_dive_non_holder_cannot_hallucinate_yes_no(monkeypat
     detective.deep_dive_used = 0
     target.generate_response = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called for non-holder silver deep dive"))
 
-    result = engine.detective_chat(target_name, "你有银质首饰吗？", is_deep_dive=True)
+    result = engine.detective_chat(target_name, "你有银制品或银剪刀吗？", is_deep_dive=True)
 
-    assert result["response"] == "我身上没有那件银制首饰。"
+    assert result["response"] == "我身上没有银制首饰，也没有能交给你的银制品。"
     assert result["silver_jewelry_not_holder"] is True
     assert engine._silver_jewelry_acquired is False
     assert detective.deep_dive_used == 1
+
+
+def test_silver_jewelry_normal_chat_non_holder_cannot_claim_fake_silver(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DAY
+    target_name = "Isabella Rodriguez"
+    if engine._silver_jewelry_holder == target_name:
+        target_name = "Maria Lopez"
+    target = engine.agents[target_name]
+    target.generate_response = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM should not invent fake silver goods"))
+
+    result = engine.detective_chat(target_name, "你有没有银制品，比如银剪刀？", is_deep_dive=False)
+
+    assert result["response"] == "我身上没有银制首饰，也没有能交给你的银制品。"
+    assert result["silver_jewelry_not_holder"] is True
+    assert engine._silver_jewelry_acquired is False
 
 
 def test_silver_bullet_can_be_fired_once(monkeypatch):
@@ -2949,8 +2965,9 @@ def test_detective_chat_empty_response_keeps_lock_for_retry_window(monkeypatch):
     assert "Arthur Burton" not in engine._daily_interviewed
     target._detective_chat_release_at = time.time() - 0.01
     t.join(timeout=2)
-    assert result_holder.get("no_response") is True
-    assert target.in_conversation_with is None
+    assert result_holder.get("response")
+    assert "昨晚" in result_holder["response"]
+    assert target.in_conversation_with == "Crow"
 
 
 def test_detective_chat_retries_empty_model_reply_until_valid_response(monkeypatch):
@@ -2971,6 +2988,25 @@ def test_detective_chat_retries_empty_model_reply_until_valid_response(monkeypat
     assert "Arthur Burton" in engine._daily_interviewed
     assert target.in_conversation_with == "Crow"
     assert getattr(target, "_detective_chat_release_at", 0) == 0
+
+
+def test_detective_chat_falls_back_after_retry_window_instead_of_failing(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.phase = game_engine.GamePhase.DAY
+    target = engine.agents["Arthur Burton"]
+
+    def empty_and_expire(speaker, msg, day, **kwargs):
+        target._detective_chat_release_at = time.time() - 0.01
+        return ""
+
+    target.generate_response = empty_and_expire
+
+    result = engine.detective_chat("Arthur Burton", "你昨晚在哪里？", is_deep_dive=False)
+
+    assert result["response"]
+    assert result.get("no_response") is not True
+    assert "Arthur Burton" in engine._daily_interviewed
 
 
 def test_day3_morning_does_not_end_on_wolf_parity(monkeypatch):
@@ -5361,6 +5397,23 @@ def test_morning_gathering_does_not_publish_normal_action_text(monkeypatch):
             assert agent.current_action == ""
             assert agent.current_action_type == ""
             assert agent.current_emoji == ""
+
+
+def test_morning_gathering_keeps_paths_instead_of_teleporting(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.day = 2
+    target_name = "Arthur Burton"
+    agent = engine.agents[target_name]
+    agent.x, agent.y = 10, 10
+    original = (agent.x, agent.y)
+
+    engine._place_alive_agents_near_body(object())
+
+    assert (agent.x, agent.y) == original
+    assert engine.agent_paths.get(target_name)
+    assert agent.runtime_state == "moving"
+    assert agent.current_action == ""
 
 
 def test_morning_gathering_arrival_timeout_cannot_deadlock(monkeypatch):

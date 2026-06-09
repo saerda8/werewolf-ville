@@ -277,7 +277,9 @@ def test_short_display_names_and_auto_chat_arrival_behaviour():
     assert '"Maria Lopez": "玛利亚"' in html
     assert '"Sam Moore": "山姆"' in html
     assert "深度挖掘次数（可选）" in html
-    assert "if (dist <= 2)" in html
+    assert "const DETECTIVE_CHAT_RANGE_TILES = 3;" in html
+    assert "if (dist <= DETECTIVE_CHAT_RANGE_TILES)" in html
+    assert "if (dist > DETECTIVE_CHAT_RANGE_TILES)" in html
     assert 'isMoving && p.path_len > 0' in html
 
 
@@ -476,8 +478,8 @@ def test_gathering_disables_chat_and_clickable_conn_indicator():
 
     # Disable chat and NPC action buttons during gathering
     assert 'isGathering = state.primary_cta === "gathering";' in html
-    assert 'chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? "disabled" : "";' in html
-    assert 'ddBtnDisabled = (!deepDiveAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? "disabled" : "";' in html
+    assert 'chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingChat || isGathering) ? "disabled" : "";' in html
+    assert 'ddBtnDisabled = (!deepDiveAvailable || isNight || isDusk || isPendingChat || isGathering) ? "disabled" : "";' in html
     assert 'chatInput.placeholder = isGathering' in html
     assert '"聚集讨论中，无法私聊..."' in html
     assert '"靠近后才能交谈..."' in html
@@ -1077,6 +1079,8 @@ def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
     assert 'body.corpse_kind === "werewolf" ||' in html
     assert 'body.is_werewolf_corpse === true' in html
     assert '"werewolf_corpse"' in html
+    assert "const bodyOffsets = [[0, 0], [1, 0], [-1, 0]" in html
+    assert "setDisplaySize(TILE_W * 1.35, TILE_W * 1.35)" in html
 
     # 4) Check Day 4 silver shot triggers pending_silver_shot or silver_shot_available
     assert 'state.phase === "pending_silver_shot"' in html
@@ -1136,6 +1140,22 @@ def test_game_over_ui_uses_reason_detail_and_closes_phase_modals():
     assert "data.game_over_detail || gameOverReasonText(data.game_over_reason)" in show_block
     assert '"dusk-statement-panel", "voting-panel", "night-transition-overlay", "silver-shot-modal"' in show_block
     assert "function gameOverReasonText(reason)" in html
+
+
+def test_restart_restores_night_overlay_and_log_panel_drag_area():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    reset_start = html.index("function resetAgentLog()")
+    reset_block = html[reset_start:html.index("function startGame()", reset_start)]
+    night_start = html.index("function renderNightTransition(state)")
+    night_block = html[night_start:html.index("function renderDuskVotingFlow", night_start)]
+    resize_start = html.index("function initLogPanelResize()")
+    resize_block = html[resize_start:html.index("// ==================== INIT", resize_start)]
+
+    assert 'nightTransitionEl.style.display = "";' in reset_block
+    assert 'overlay.style.display = active ? "flex" : "none";' in night_block
+    assert "const header = document.getElementById(\"log-header\");" in resize_block
+    assert 'if (header) header.addEventListener("mousedown", startResize);' in resize_block
+    assert "height: 10px;" in html
 
 
 def test_dev_complete_interviews_button_exists():
