@@ -1148,6 +1148,8 @@ def test_dev_complete_interviews_button_exists():
     assert "opacity: 0;" in html
     assert "color: transparent;" in html
     assert "cursor: default;" in html
+    assert "#test-complete-interviews-btn:hover" in html
+    assert "cursor: default !important;" in html
     assert 'title="测试用：直接完成今日所有NPC交谈"' not in html
     assert "pointer-events: auto;" in html
     assert "function completeDailyInterviewsForTest()" in html

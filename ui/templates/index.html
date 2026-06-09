@@ -578,7 +578,10 @@ body.phase-locked #game-container { pointer-events: none; }
     align-items: center;
     gap: 8px;
   }
-  #test-complete-interviews-btn {
+  #test-complete-interviews-btn,
+  #test-complete-interviews-btn:hover,
+  #test-complete-interviews-btn:active,
+  #test-complete-interviews-btn:focus {
     position: fixed;
     left: 10px;
     bottom: calc(var(--log-panel-height) + 8px);
@@ -590,7 +593,7 @@ body.phase-locked #game-container { pointer-events: none; }
     padding: 3px 8px;
     font-size: 12px;
     font-weight: bold;
-    cursor: default;
+    cursor: default !important;
     opacity: 0;
     text-shadow: none;
     box-shadow: none;
