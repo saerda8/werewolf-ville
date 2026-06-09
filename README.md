@@ -1,13 +1,15 @@
 # Werewolf Ville
  
 [English](README.md) | [简体中文](README.zh-CN.md)
+
+![Werewolf Ville Cover](assets/werewolf-ville-cover.png)
  
 Werewolf Ville is a browser-based social deduction game built from the Stanford Smallville simulation resources. It transforms a generative-agent town simulation into a playable Werewolf-style mystery game: a living town where residents talk, observe, suspect, remember, reflect, and make decisions through large language models.
  
 The player takes the role of the sheriff. During the day, the sheriff investigates the town, talks to residents, collects clues, and tries to understand who can be trusted. At dusk, the town votes. At night, the werewolves move.
  
 ## Gameplay
- 
+![Gameplay Loop](assets/ScreenShot.png) 
 The town contains two hidden werewolves, a sheriff controlled by the player, ordinary villagers, and one special villager who owns a silver knife. Every day begins with normal town life. Residents move around, talk to each other, exchange information, develop suspicion, spread rumors, and search for signs of the werewolves.
  
 The sheriff can question NPCs directly. In addition to ordinary conversations, the sheriff has a deep-digging skill that allows more focused interrogation. Deep digging is used to pressure suspicious residents, follow contradictions, uncover hidden motives, and extract clues that may not appear in casual conversation.
@@ -23,6 +25,8 @@ The sheriff also has a long-term objective. On the second and third days, the sh
 All town residents are driven by large language models. Their speech, social behavior, suspicion, memory, and decisions are not simple fixed scripts. The system follows the spirit of Stanford Smallville's generative agents: residents observe the world, think about what happened, form plans, take actions, talk to others, and reflect at night.
  
 Each NPC can participate in the social life of the town. They may share information, hide information, misunderstand events, lie, accuse others, defend themselves, or change their attitude as the game progresses. Nightly reflection allows residents to update their memories, goals, suspicions, and future behavior.
+
+![Gameplay Loop](assets/werewolf-ville-gameplay-loop.png)
  
 ## Scale and Expansion
  
