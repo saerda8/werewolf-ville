@@ -53,7 +53,75 @@ The goal of Werewolf Ville is to turn a generative-agent town simulation into a 
  
 This project is currently in early demo development. The first goal is to build a stable playable loop: daytime simulation, sheriff investigation, dusk voting, nighttime attacks, NPC reflection, silver bullet progression, and a final confrontation with the werewolves.
  
-## License
- 
-License to be decided.
- 
+## How to Run
+
+Werewolf Ville is a Python + Flask browser game. The backend runs the game simulation, NPC logic, day-night cycle, voting, memory, and LLM calls. The frontend is served in the browser at `http://127.0.0.1:5000/`.
+
+### Requirements
+
+- Python 3.10+
+- pip
+- A Chat2API-compatible local model service
+- Required Python packages from `requirements.txt`
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Configuration
+
+The main configuration file is `config.yaml`.
+
+By default, the game UI runs on:
+
+```text
+http://127.0.0.1:5000/
+```
+
+The NPC model provider is configured in `config.yaml`:
+
+```yaml
+llm:
+  api_base: http://127.0.0.1:8000/v1
+  api_key: ${CHAT2API_API_KEY}
+```
+
+Before running the game, make sure your Chat2API service is already running and the required API key is available as an environment variable:
+
+```bash
+set CHAT2API_API_KEY=your_api_key_here
+```
+
+On macOS/Linux:
+
+```bash
+export CHAT2API_API_KEY=your_api_key_here
+```
+
+### Start the Game
+
+On Windows, you can use:
+
+```bat
+restart.bat
+```
+
+Or start manually:
+
+```bash
+python main.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5000/
+```
+
+### Notes
+
+The game currently depends on live LLM responses for NPC behavior, conversation, suspicion, planning, and reflection. If the model service is not running, NPC behavior may be incomplete or delayed.
+
+The current demo keeps the number of residents limited for performance reasons, but the town structure is designed to support more residents and more complex social interactions in future versions.
