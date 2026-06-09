@@ -368,8 +368,6 @@ class EngineDuskMixin:
 
     def _finish_dusk_discussion_sequence(self) -> None:
         self._generate_dusk_discussion_statements()
-        if getattr(self, "_running", False):
-            time.sleep(_DUSK_AFTER_FINAL_NPC_PAUSE_SECONDS)
         with self._lock:
             if self.phase != type(self.phase).DUSK_DISCUSSION:
                 return
@@ -378,6 +376,14 @@ class EngineDuskMixin:
             for name in list(self.chat_bubbles.keys()):
                 if name != self.detective_name:
                     self.chat_bubbles.pop(name, None)
+            self._broadcast_state()
+        if getattr(self, "_running", False):
+            time.sleep(_DUSK_AFTER_FINAL_NPC_PAUSE_SECONDS)
+        with self._lock:
+            if self.phase != type(self.phase).DUSK_DISCUSSION:
+                return
+            if getattr(self, "_dusk_stage", "") not in {"npc_discussion", "discussion"}:
+                return
             self._dusk_stage = "crow_statement"
             self._log("请克罗总结发言。克罗发言后，居民再进入投票。", "system")
             self._broadcast_state()
@@ -502,6 +508,8 @@ class EngineDuskMixin:
             "再基于尸体、讨论或公开线索给出推理理由。"
             "不能跟风：如果你怀疑的人和前面的人相同，必须给出你自己的新观察、新矛盾或不同推理链；"
             "如果没有新理由，就换一个角度质疑、辩护或提出具体问题。"
+            "不要因为第一个人点名了某人就跟着点名；你要根据自己的记忆和线索独立判断。"
+            "如果你认为前面的人在带节奏、跟风或甩锅，要直接指出并质疑他的动机。"
             "每句话都要服务于找狼或伪装找狼，不能聊吃饭、天气、普通日常、无关工作。"
             "禁止说“我没意见”“先听警长/克罗”“等大家说完”“暂时没有线索”等划水句；"
             "只能输出中文；如果线索里有英文，只能用中文转述，不要夹杂英文。"

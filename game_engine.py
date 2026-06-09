@@ -4772,6 +4772,22 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         action["complete"] = True
         if reason:
             action["reason"] = reason
+        holder_name = action.get("holder", "")
+        holder = self.agents.get(holder_name) if holder_name else None
+        if holder:
+            self.agent_paths.pop(holder_name, None)
+            holder.target_x = holder.x
+            holder.target_y = holder.y
+            holder.runtime_state = "idle"
+            holder.current_action = ""
+            holder.current_action_type = ""
+            holder.current_emoji = ""
+            holder._pending_action = None
+            holder._is_thinking = False
+            holder._is_reflecting = False
+            holder._action_status_visible_at = 0
+            holder._action_start_visible_until = 0
+            holder._action_move_ready_at = 0
         self._silver_knife_action = action
         progress = getattr(self, "_night_progress", {}) or {}
         progress["knife_complete"] = True
@@ -4944,7 +4960,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             getattr(holder, "target_x", holder.x),
             getattr(holder, "target_y", holder.y),
         ):
-            self._complete_silver_knife_action("unreachable_after_move")
+            result = self.use_silver_knife(holder_name, target_name)
+            if result.get("success"):
+                self._silver_knife_target_tonight = target_name
+                if target_name in self.werewolf_names:
+                    self._silver_knife_killed_werewolf_tonight = True
+                    for body in reversed(self.bodies):
+                        if body.victim_name == target_name:
+                            body.is_werewolf_corpse = True
+                            break
+            self._complete_silver_knife_action("forced_after_path_end")
             return
 
         if abs(holder.x - target.x) + abs(holder.y - target.y) <= 1:
@@ -5153,9 +5178,19 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 agent = self.agents.get(name)
                 if not agent:
                     continue
+                agent.x = agent.target_x
+                agent.y = agent.target_y
+                self.agent_paths.pop(name, None)
+                agent.runtime_state = "idle"
                 agent.current_action = ""
                 agent.current_action_type = ""
                 agent.current_emoji = ""
+                agent._pending_action = None
+                agent._is_thinking = False
+                agent._is_reflecting = False
+                agent._action_status_visible_at = 0
+                agent._action_start_visible_until = 0
+                agent._action_move_ready_at = 0
             return
 
         self.agent_paths.clear()

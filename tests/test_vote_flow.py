@@ -183,6 +183,31 @@ def test_dusk_discussion_waits_three_seconds_after_every_npc_statement(monkeypat
     assert len(engine._dusk_discussion_statements) == len(eligible)
 
 
+def test_crow_input_waits_three_seconds_after_last_npc_bubble_clears(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._running = True
+    engine.phase = game_engine.GamePhase.DUSK_DISCUSSION
+    engine._dusk_stage = "npc_discussion"
+    engine.chat_bubbles["Jane Moreno"] = {"text": "我最后发言", "time": time.time()}
+    snapshots = []
+    sleeps = []
+
+    monkeypatch.setattr(engine, "_generate_dusk_discussion_statements", lambda: None)
+    monkeypatch.setattr(engine_dusk.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(
+        engine,
+        "_broadcast_state",
+        lambda: snapshots.append((engine._dusk_stage, dict(engine.chat_bubbles))),
+    )
+
+    engine._finish_dusk_discussion_sequence()
+
+    assert snapshots[0][0] == "npc_discussion"
+    assert "Jane Moreno" not in snapshots[0][1]
+    assert sleeps == [3.0]
+    assert engine._dusk_stage == "crow_statement"
+
+
 def test_crow_dusk_statement_unlocks_npc_votes(monkeypatch):
     """Crow's typed dusk statement is the gate between discussion and voting. # covers REQ-040 REQ-041"""
     engine = _make_engine(monkeypatch)

@@ -1,3 +1,5 @@
+import time
+
 import game_engine
 
 
@@ -181,3 +183,44 @@ def test_silver_knife_kills_after_reaching_target(monkeypatch):
     assert target_name in engine.dead_list
     assert engine.bodies[-1].victim_name == target_name
     assert engine._night_progress["knife_complete"] is True
+
+
+def test_silver_knife_forces_kill_when_path_ends_after_target_moves(monkeypatch):
+    engine = _start_hunt(monkeypatch)
+    holder_name = engine._silver_knife_holder
+    holder = engine.agents[holder_name]
+    target_name = next(
+        name for name, agent in engine.agents.items()
+        if name not in {holder_name, "Crow"} and agent.is_alive
+    )
+    target = engine.agents[target_name]
+
+    holder.x = holder.target_x = 20
+    holder.y = holder.target_y = 20
+    target.x = target.target_x = 70
+    target.y = target.target_y = 70
+    engine._silver_knife_night_checked = True
+    engine._silver_knife_action = {
+        "status": "moving",
+        "complete": False,
+        "holder": holder_name,
+        "target": target_name,
+        "initial_path_len": 1,
+        "started_at": 1.0,
+        "deadline_at": time.time() + 60.0,
+    }
+    engine._night_progress = {
+        "active": True,
+        "stage": "silver_knife",
+        "complete": False,
+        "wolf_complete": True,
+        "knife_complete": False,
+    }
+
+    engine._advance_silver_knife_action()
+
+    assert target_name in engine.dead_list
+    assert engine.bodies[-1].victim_name == target_name
+    assert engine._night_progress["knife_complete"] is True
+    assert holder_name not in engine.agent_paths
+    assert holder.runtime_state == "idle"

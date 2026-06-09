@@ -691,3 +691,32 @@ Verification:
 - `python -m py_compile game_engine.py engine_dusk.py tests/test_engine_foundation.py tests/test_ui_bubble_layout.py`
 - `python -m pytest -q tests/test_engine_foundation.py -k "first_night_silver_knife_ignores_decline_for_testing or silver_knife_killed_werewolf_is_dead_body_not_talkable_or_voteable or silver_jewelry_deep_dive_non_holder_cannot_hallucinate_yes_no"`
 - `python -m pytest -q tests/test_ui_bubble_layout.py -k "pending_detective_chat_locks_button_and_suppresses_bubbles or short_display_names_and_auto_chat_arrival_behaviour or active_ui_does_not_render_werewolf_role_tags"`
+
+## 2026-06-09 Silver knife path-end kill and dusk final-speaker delay
+
+Status: Fixed
+
+Symptoms:
+- After the first-night silver knife was forced for testing, Day2 could show no extra corpse even though the knife phase had completed.
+- A living NPC could remain chat/vote eligible but appear missing from the visible scene because the night/morning transition carried stale movement/action state into the next day.
+- The dusk player statement input appeared too soon: the last NPC's white bubble could still be visible when Crow's input opened.
+- Dusk speakers still tended to follow the first accusation without enough independent reasoning.
+
+Root causes:
+- If the knife holder reached the planned adjacent tile but the target had moved, `_advance_silver_knife_action()` marked the knife phase complete as `unreachable_after_move` without killing the selected target.
+- `_complete_silver_knife_action()` did not clear the holder's night path/action target state.
+- Morning body gathering reused plaza routing but left participants on paths; this could visually carry night movement across the dawn transition.
+- `_finish_dusk_discussion_sequence()` waited three seconds before clearing the final NPC bubble, so the wait started from speech completion rather than bubble disappearance.
+
+Fix:
+- A path-ended silver knife action now force-resolves against the already selected target, matching the rule that timeout/path completion should system-complete the kill.
+- Silver knife completion clears holder path, target, action text, emoji, pending action, and thinking/reflecting flags.
+- Morning body gathering snaps living participants to plaza slots and clears paths/action bubbles so nobody slides or keeps night action UI.
+- Dusk sequence clears NPC bubbles, broadcasts that clear state, then waits three seconds before opening Crow's input.
+- Dusk discussion prompt now explicitly forbids following the first accusation and asks NPCs to challenge bandwagoning/甩锅.
+
+Verification:
+- `python -m py_compile game_engine.py engine_dusk.py tests/test_game_engine_night_loop.py tests/test_vote_flow.py`
+- `PYTHONPATH=. pytest -q tests/test_game_engine_night_loop.py -k "silver_knife"`: 3 passed
+- `PYTHONPATH=. pytest -q tests/test_full_game_completion.py -k "silver_knife or two_corpses or corpse or day3_night_auto_crafts_silver_bullet"`: 11 passed
+- `PYTHONPATH=. pytest -q tests/test_vote_flow.py -k "dusk_discussion or crow_input or discussion_replaces_filler"`: 8 passed
