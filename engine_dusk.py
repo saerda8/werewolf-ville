@@ -32,6 +32,7 @@ _CROW_DISCUSSION_TEXT = (
 _CROW_START_VOTE_TEXT = "现在开始投票。"
 _DUSK_FINAL_WORDS_HOLD_SECONDS = 6.0
 _DUSK_SPEAKER_HOLD_SECONDS = 3.0
+_DUSK_AFTER_FINAL_NPC_PAUSE_SECONDS = 1.0
 
 _DUSK_FILLER_PATTERNS = (
     "我没意见",
@@ -367,6 +368,8 @@ class EngineDuskMixin:
 
     def _finish_dusk_discussion_sequence(self) -> None:
         self._generate_dusk_discussion_statements()
+        if getattr(self, "_running", False):
+            time.sleep(_DUSK_AFTER_FINAL_NPC_PAUSE_SECONDS)
         with self._lock:
             if self.phase != type(self.phase).DUSK_DISCUSSION:
                 return

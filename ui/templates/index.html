@@ -186,7 +186,6 @@ body.phase-locked #game-container { pointer-events: none; }
   font-size: 11px; margin-left: 6px;
 }
 .role-detective { background: #e6b83f; color: #fff; }
-.role-werewolf { background: #e94560; color: #fff; }
 .role-villager { background: #555; color: #ccc; }
 .agent-card .action { font-size: 12px; color: #aaa; margin-top: 4px; }
 
@@ -584,19 +583,26 @@ body.phase-locked #game-container { pointer-events: none; }
     left: 10px;
     bottom: calc(var(--log-panel-height) + 8px);
     z-index: 140;
-    background: #26364f;
-    color: #c9d1d9;
-    border: 1px solid #3f5b86;
+    background: transparent;
+    color: transparent;
+    border: 1px solid transparent;
     border-radius: 4px;
     padding: 3px 8px;
     font-size: 12px;
     font-weight: bold;
     cursor: pointer;
+    opacity: 0;
+    text-shadow: none;
+    box-shadow: none;
+    pointer-events: auto;
   }
   #test-complete-interviews-btn:hover {
-    background: #31527d;
-    color: #fff;
+    background: transparent;
+    color: transparent;
+    border-color: transparent;
+    opacity: 0;
   }
+  .silver-knife-test-marker { color: #dfe8f8; margin-left: 3px; font-size: 12px; }
   #log-header span {
     color: #58a6ff;
   }
@@ -1011,10 +1017,7 @@ function getDisplayName(name, state) {
 }
 
 function getWerewolfDisplayNames(data) {
-  const names = Array.isArray(data.werewolf_names) && data.werewolf_names.length > 0
-    ? data.werewolf_names
-    : (data.werewolf_name ? [data.werewolf_name] : []);
-  return names.map(n => getDisplayName(n, data)).join("、");
+  return "";
 }
 
 let socket = null;
@@ -1567,9 +1570,7 @@ function updateProviderFields() {
     if (isAnthropicStyle) wireEl.value = "chat_completions";
   }
   if (reasoningEl) {
-    const usesResponses = wireEl && wireEl.value === "responses" && !isAnthropicStyle;
-    reasoningEl.disabled = !usesResponses;
-    if (!usesResponses) reasoningEl.value = "";
+    reasoningEl.disabled = false;
   }
   setLlmTestStatus("", "");
 }
@@ -1790,7 +1791,7 @@ function resetAgentLog() {
   const werewolfEl = document.getElementById("director-werewolf");
   if (werewolfEl) {
     werewolfEl.style.display = "none";
-    werewolfEl.innerHTML = '🐺 狼人: <span style="color: #e94560; font-weight: bold;">-</span>';
+    werewolfEl.innerHTML = "";
   }
   const modelsEl = document.getElementById("director-models");
   if (modelsEl) {
@@ -2520,28 +2521,10 @@ function updateUI(state) {
   if (dirSummary) {
     let showSummary = false;
 
-    // Werewolf Name(s)
-    const werewolfNames = state.werewolf_names;
     const werewolfEl = document.getElementById("director-werewolf");
-    let displayStr = "";
-    if (Array.isArray(werewolfNames) && werewolfNames.length > 0) {
-      showSummary = true;
-      displayStr = werewolfNames.map(n => getDisplayName(n, state)).join(", ");
-    } else {
-      const werewolfName = state.werewolf_name || "";
-      if (werewolfName) {
-        showSummary = true;
-        displayStr = getDisplayName(werewolfName, state);
-      }
-    }
-
-    if (displayStr) {
-      if (werewolfEl) {
-        werewolfEl.style.display = "block";
-        werewolfEl.innerHTML = `🐺 狼人: <span style="color: #e94560; font-weight: bold;">${displayStr}</span>`;
-      }
-    } else if (werewolfEl) {
+    if (werewolfEl) {
       werewolfEl.style.display = "none";
+      werewolfEl.innerHTML = "";
     }
 
     // Model Assignments
@@ -3472,12 +3455,8 @@ function updateAgentList(state, isDirectorSummaryViewed) {
     let roleVal = "villager";
     if (name === "Crow") {
       roleVal = "detective";
-    } else if (Array.isArray(state.werewolf_names) && state.werewolf_names.includes(name)) {
-      roleVal = "werewolf";
-    } else if (isDirectorSummaryViewed) {
-      roleVal = p.true_role || p.role || "villager";
     } else {
-      roleVal = p.role || p.public_role || "villager";
+      roleVal = p.public_role || p.role || "villager";
     }
 
     let roleClass = "role-villager";
@@ -3485,13 +3464,12 @@ function updateAgentList(state, isDirectorSummaryViewed) {
     if (roleVal === "detective" || roleVal === "侦探" || roleVal === "警长" || name === "Crow") {
       roleClass = "role-detective";
       roleLabel = "警长";
-    } else if (roleVal === "werewolf" || roleVal === "狼人") {
-      roleClass = "role-werewolf";
-      roleLabel = "狼人";
     }
 
     const modelName = p.model || "?";
     const displayName = getDisplayName(name, state);
+    const hasSilverKnifeMarker = !!(state.silver_knife_holder && state.silver_knife_holder === name && !state.silver_knife_used);
+    const knifeMarkerHtml = hasSilverKnifeMarker ? '<span class="silver-knife-test-marker" title="测试标记：银质小刀持有者">🗡</span>' : "";
 
     let chatsUsed = 0;
     if (p.chat_count !== undefined) {
@@ -3575,7 +3553,7 @@ function updateAgentList(state, isDirectorSummaryViewed) {
     const bulbHtml = showBulb ? `<span id="clue-bulb-${safeName}" class="clue-bulb" style="margin-left: 6px; font-size: 13px; filter: drop-shadow(0 0 3px #ffd700); cursor: help;" title="有新线索">💡</span>` : '';
 
     // Signature-based diffing to prevent hover flicker
-    const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${locallyClearedHint}|${showBulb}|${roleVal}|${modelName}|${modelFailed}|${selectedAgent === name}|${normalChatAvailable}|${deepDiveAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}`;
+    const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${locallyClearedHint}|${showBulb}|${roleVal}|${hasSilverKnifeMarker}|${modelName}|${modelFailed}|${selectedAgent === name}|${normalChatAvailable}|${deepDiveAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}`;
     const targetContainer = name === "Crow" ? crowList : list;
     if (card.dataset.renderSignature === signature) {
       if (card.parentElement !== targetContainer) {
@@ -3618,7 +3596,7 @@ function updateAgentList(state, isDirectorSummaryViewed) {
 
     card.innerHTML = `
       ${historyBtnHtml}
-      ${modelHealthHtml}<span class="name" style="color:${PERSONA_LABEL_COLORS[name] || '#fff'}">${displayName}</span>
+      ${modelHealthHtml}<span class="name" style="color:${PERSONA_LABEL_COLORS[name] || '#fff'}">${displayName}</span>${knifeMarkerHtml}
       ${bulbHtml}
       <span class="role-tag ${roleClass}">${roleLabel}</span>
       <span class="model-tag" style="font-size:9px;color:#ffdd57;margin-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px;display:inline-block;vertical-align:middle;" title="${modelName}">${modelName}</span>
@@ -5401,7 +5379,12 @@ function update(time, delta) {
       const effectiveIsMoving = !isWaitingReply && isMoving;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist > 1 && !isWaitingReply) {
+      if (isNight || (gameState && gameState.phase === "night")) {
+        sprite.setPosition(targetPx, targetPy);
+        sprite.anims.stop();
+        sprite.lastDir = "down";
+        sprite.setTexture(key, "down-walk.000");
+      } else if (dist > 1 && !isWaitingReply) {
         // 有距离差，播放walk动画并插值移动
         if (Math.abs(dx) > Math.abs(dy)) {
           if (dx > 0) {
@@ -5465,20 +5448,12 @@ function update(time, delta) {
     nameLabels[name].y = cy - 44;
     nameLabels[name].setVisible(true);
     const displayName = getDisplayName(name, gameState);
-    nameLabels[name].setText(displayName);
+    const knifeMarker = gameState && gameState.silver_knife_holder === name && !gameState.silver_knife_used ? " 🗡" : "";
+    nameLabels[name].setText(displayName + knifeMarker);
     nameLabels[name].setStyle({ fill: PERSONA_LABEL_COLORS[name] || "#66c2ff" });
 
-    // 模型名标签（显示在角色名下方一行）
-    const modelName = p.model || "";
-    if (modelName) {
-      modelLabels[name].setVisible(true);
-      modelLabels[name].setText(modelName);
-      modelLabels[name].x = cx;
-      modelLabels[name].y = cy - 30;
-      modelLabels[name].setStyle({ fill: "#ffdd57" });
-    } else {
-      modelLabels[name].setVisible(false);
-    }
+    // Active play should not show model names above NPCs.
+    modelLabels[name].setVisible(false);
   }
 
   // Call global bubble resolver to position and resolve overlaps

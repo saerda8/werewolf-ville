@@ -527,12 +527,12 @@ def test_status_exposes_night_progress(monkeypatch):
     assert status["night_progress"]["stage"] == "werewolf"
 
 
-def test_status_hides_silver_knife_secret_fields(monkeypatch):
-    """get_status must not leak holder, target, use, or outcome of silver knife."""
+def test_status_only_exposes_temporary_silver_knife_holder_marker(monkeypatch):
+    """get_status may expose holder for temporary testing, but not night target/outcome."""
     engine = _start_night(monkeypatch)
     status = engine.get_status()
-    assert "silver_knife_holder" not in status
-    assert "silver_knife_used" not in status
+    assert status["silver_knife_holder"] == engine._silver_knife_holder
+    assert status["silver_knife_used"] is False
     assert "silver_knife_phase_started_at" not in status
     assert "silver_knife_phase_duration" not in status
     assert "silver_knife_scrapped_tonight" not in status

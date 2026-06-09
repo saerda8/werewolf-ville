@@ -1,4 +1,4 @@
-import io
+﻿import io
 import threading
 import time
 
@@ -2351,6 +2351,24 @@ def test_daily_tasks_day2_has_silver_tasks(monkeypatch):
     assert silver_task[0]["complete"] is False
 
 
+def test_daily_tasks_day3_shows_only_remaining_silver_half(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._gathering_active = False
+    engine.day = 3
+    engine.phase = game_engine.GamePhase.DAY
+    engine._silver_bullet_acquired = True
+    engine._silver_jewelry_acquired = False
+
+    task = [t for t in engine.get_status()["daily_tasks"] if t["id"] == "silver_resource_choice"][0]
+    assert task["label"] == "通过深挖女性角色获得银质项链"
+    assert task["complete"] is False
+
+    engine._silver_bullet_acquired = False
+    engine._silver_jewelry_acquired = True
+    task = [t for t in engine.get_status()["daily_tasks"] if t["id"] == "silver_resource_choice"][0]
+    assert task["label"] == "去五金店找到制造子弹的工具"
+    assert task["complete"] is False
+
 def test_daily_tasks_day4_has_craft_task_when_both_acquired(monkeypatch):
     """Day 4 with both silver items exposes craft task."""
     engine = _make_engine(monkeypatch)
@@ -2527,6 +2545,27 @@ def test_only_one_silver_objective_per_day(monkeypatch):
     second = engine.acquire_silver_jewelry(holder)
     assert second["success"] is False
     assert "今天拿不下了，明天再过来拿吧" in second["error"]
+
+
+def test_silver_daily_limit_is_scoped_to_current_day(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.day = 3
+    engine.phase = game_engine.GamePhase.DAY
+    engine._silver_bullet_acquired = True
+    engine._silver_jewelry_acquired = False
+    engine._silver_task_done_today = "silver_bullet"
+    engine._silver_task_done_day = 2
+    holder = engine._silver_jewelry_holder
+    crow = engine.agents["Crow"]
+    engine.agents[holder].x = crow.x
+    engine.agents[holder].y = crow.y
+
+    result = engine.acquire_silver_jewelry(holder)
+
+    assert result["success"] is True
+    assert engine._silver_jewelry_acquired is True
+    assert engine._silver_task_done_today == "silver_jewelry"
+    assert engine._silver_task_done_day == 3
 
 
 def test_silver_bullet_can_be_fired_once(monkeypatch):
@@ -2832,10 +2871,14 @@ def test_detective_chat_empty_response_keeps_lock_for_retry_window(monkeypatch):
     target.generate_response = lambda speaker, msg, day: ""
 
     started_at = time.time()
-    result = engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)
+    result_holder = {}
+    t = threading.Thread(
+        target=lambda: result_holder.update(engine.detective_chat("Arthur Burton", "你好", is_deep_dive=False)),
+        daemon=True,
+    )
+    t.start()
+    time.sleep(0.2)
 
-    assert result.get("pending_response") is True
-    assert result.get("response", "") == ""
     assert target.in_conversation_with == "Crow"
     assert detective.in_conversation_with is None
     assert engine._detective_chat_active_target == "Arthur Burton"
@@ -2847,6 +2890,10 @@ def test_detective_chat_empty_response_keeps_lock_for_retry_window(monkeypatch):
     assert bubble.get("target") == "Crow"
     assert detective.chat_count.get("Arthur Burton", 0) == 0
     assert "Arthur Burton" not in engine._daily_interviewed
+    target._detective_chat_release_at = time.time() - 0.01
+    t.join(timeout=2)
+    assert result_holder.get("no_response") is True
+    assert target.in_conversation_with is None
 
 
 def test_detective_chat_retries_empty_model_reply_until_valid_response(monkeypatch):

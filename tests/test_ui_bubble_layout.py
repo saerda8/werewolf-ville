@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 
 INDEX_HTML = Path(__file__).parents[1] / "ui" / "templates" / "index.html"
@@ -133,7 +133,8 @@ def test_character_labels_float_above_object_labels():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert "nameLabels[name].y = cy - 44;" in html
-    assert "modelLabels[name].y = cy - 30;" in html
+    assert "modelLabels[name].setVisible(false);" in html
+    assert "modelLabels[name].setVisible(true);" not in html
     assert "}).setDepth(22).setOrigin(0.5).setVisible(false);" in html
     assert "}).setDepth(21).setOrigin(0.5).setVisible(false);" in html
     assert "sprite.setDepth(1.5);" in html
@@ -301,11 +302,13 @@ def test_rules_modal_and_button_exist():
     assert "银质小刀" in html
 
 
-def test_werewolf_role_tag_uses_status_werewolf_names():
+def test_active_ui_does_not_render_werewolf_role_tags():
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    assert "Array.isArray(state.werewolf_names) && state.werewolf_names.includes(name)" in html
-    assert 'roleVal = "werewolf";' in html
+    assert "Array.isArray(state.werewolf_names) && state.werewolf_names.includes(name)" not in html
+    assert 'roleVal = "werewolf";' not in html
+    assert 'roleClass = "role-werewolf";' not in html
+    assert ".role-werewolf" not in html
 
 
 def test_thought_bubble_uses_same_ttl_as_speech_bubble():
@@ -453,7 +456,7 @@ def test_crow_blue_bubble_suppression_robustness():
     assert 'fill: PERSONA_LABEL_COLORS[name] || "#ffffff"' in html
     assert 'nameLabels[name].setStyle({ fill: PERSONA_LABEL_COLORS[name] || "#66c2ff" });' in html
     assert 'nameLabels[name].setStyle({ fill: "#ffffff" });' not in html
-    assert 'modelLabels[name].setStyle({ fill: "#ffdd57" });' in html
+    assert 'modelLabels[name].setStyle({ fill: "#ffdd57" });' not in html
 
     # 5. Speech bubble styling guards (preventing blue styles)
     assert 'bubbleEl.classList.remove("thought-bubble");' in html
@@ -747,6 +750,16 @@ def test_chat2api_startup_runs_backend_llm_check():
     assert 'runtimeOptions.provider === "chat2api"' not in html
     assert "无需远程 API 检测" not in html
 
+
+
+def test_reasoning_effort_select_stays_clickable_for_all_providers():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    start = html.index("function updateProviderFields()")
+    body = html[start:html.index("function readLlmFieldDraft", start)]
+
+    assert "reasoningEl.disabled = false;" in body
+    assert "reasoningEl.disabled = !usesResponses;" not in body
+    assert "if (!usesResponses) reasoningEl.value = \"\";" not in body
 
 def test_new_bubble_behavior():
     html = INDEX_HTML.read_text(encoding="utf-8")
@@ -1130,6 +1143,10 @@ def test_dev_complete_interviews_button_exists():
     assert 'id="test-complete-interviews-btn"' in html
     assert "一键交谈完" in html
     assert "bottom: calc(var(--log-panel-height) + 8px);" in html
+    assert "#test-complete-interviews-btn" in html
+    assert "opacity: 0;" in html
+    assert "color: transparent;" in html
+    assert "pointer-events: auto;" in html
     assert "function completeDailyInterviewsForTest()" in html
     assert 'socket.emit("test_complete_daily_interviews")' in html
     assert 'test_complete_daily_interviews_result' in html
@@ -1383,6 +1400,16 @@ def test_dusk_discussion_forces_front_facing_sprites():
     assert "const liveDuskStage = gameState ? duskStage(gameState) : \"\";" in html
     assert "sprite.lastDir = \"down\";" in html
     assert 'sprite.setTexture(key, "down-walk.000");' in html
+
+
+def test_night_phase_snaps_sprites_and_marks_silver_knife_holder():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'if (isNight || (gameState && gameState.phase === "night")) {' in html
+    assert 'sprite.setPosition(targetPx, targetPy);' in html
+    assert "state.silver_knife_holder && state.silver_knife_holder === name" in html
+    assert "gameState.silver_knife_holder === name" in html
+    assert "silver-knife-test-marker" in html
 
 
 def test_confirm_vote_result_success_hides_voting_panel():

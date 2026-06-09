@@ -642,6 +642,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         # Track which silver objectives are completed today
 
         self._silver_task_done_today = None  # set to task key once per day
+        self._silver_task_done_day = None
 
         # Track per-day interview requirements
 
@@ -813,6 +814,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         text = str(message or "")
         return any(keyword in text for keyword in SILVER_JEWELRY_KEYWORDS)
 
+    def _silver_task_done_for_today(self) -> str | None:
+        done = getattr(self, "_silver_task_done_today", None)
+        if not done:
+            return None
+        if getattr(self, "_silver_task_done_day", None) == self.day:
+            return done
+        self._silver_task_done_today = None
+        self._silver_task_done_day = None
+        return None
+
+    def _mark_silver_task_done_today(self, task_key: str) -> None:
+        self._silver_task_done_today = task_key
+        self._silver_task_done_day = self.day
+
     def _resolve_silver_jewelry_deep_dive(self, target_name: str, message: str) -> tuple[str | None, dict]:
         if target_name != getattr(self, "_silver_jewelry_holder", ""):
             return None, {}
@@ -823,19 +838,20 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "already_acquired": True,
                 "silver_jewelry_acquired": True,
             }
-        if self._silver_task_done_today:
+        done_today = self._silver_task_done_for_today()
+        if done_today:
             return "今天拿不下了，明天再过来拿吧。", {
                 "blocked_by_daily_silver_limit": True,
-                "silver_task_done_today": self._silver_task_done_today,
+                "silver_task_done_today": done_today,
             }
 
         self._silver_jewelry_acquired = True
-        self._silver_task_done_today = "silver_jewelry"
+        self._mark_silver_task_done_today("silver_jewelry")
         holder_label = display_name_for_person(target_name)
         self._log(f"💍 Crow 通过深挖从{holder_label}处获得了银制首饰！", "action")
         return "你问到这一步，我也不再藏了。这件银制首饰交给你，希望它能保护镇上的人。", {
             "silver_jewelry_acquired": True,
-            "silver_task_done_today": self._silver_task_done_today,
+            "silver_task_done_today": self._silver_task_done_for_today(),
         }
 
 
@@ -3793,6 +3809,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._pending_silver_wolf = ""
 
         self._silver_task_done_today = None
+        self._silver_task_done_day = None
 
         self._detective_chat_active_target = None
         self._detective_chat_pending_target = None
@@ -4124,7 +4141,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 return {"success": True, "message": "银子弹工具已获取", "already_acquired": True}
 
-            if self._silver_task_done_today:
+            if self._silver_task_done_for_today():
 
                 return {"success": False, "error": "今天拿不下了，明天再过来拿吧"}
 
@@ -4152,7 +4169,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self._silver_bullet_acquired = True
 
-            self._silver_task_done_today = "silver_bullet"
+            self._mark_silver_task_done_today("silver_bullet")
 
             self._log("恭喜你获得制作子弹的工具", "action")
 
@@ -4198,7 +4215,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             holder = self.agents.get(holder_name)
 
-            if self._silver_task_done_today:
+            if self._silver_task_done_for_today():
 
                 return {"success": False, "error": "今天拿不下了，明天再过来拿吧。"}
 
@@ -4314,7 +4331,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self._silver_jewelry_acquired = True
 
-            self._silver_task_done_today = "silver_jewelry"
+            self._mark_silver_task_done_today("silver_jewelry")
 
             self._log(f"💍 Crow 从{display_name_for_person(holder_name)}处获得了银饰物！", "action")
 
@@ -4354,7 +4371,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
                 return {"success": False, "error": f"第{self.day}天还不能制作银子弹，需要第4天及以后"}
 
-            if self._silver_task_done_today:
+            if self._silver_task_done_for_today():
 
                 return {"success": False, "error": "今天已经完成过一项关键银器行动，明天再继续"}
 
@@ -4364,7 +4381,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self._silver_bullet_crafted = True
 
-            self._silver_task_done_today = "craft_silver_bullet"
+            self._mark_silver_task_done_today("craft_silver_bullet")
 
             self._log("🔨 Crow 制作了真正的银子弹！", "action")
 
@@ -4494,42 +4511,79 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             self._log("两名狼人都已被排除，小镇居民获胜。", "system")
 
-    def _maybe_finish_after_night_deaths(self) -> bool:
-        """Resolve game end immediately after anonymous night deaths."""
+    def _alive_wolf_names(self) -> list[str]:
         alive_wolves = [
             n for n in self.werewolf_names
             if n in self.agents and self.agents[n].is_alive and n not in self._jailed
         ]
+        return alive_wolves
+
+    def _alive_good_names(self) -> list[str]:
         alive_good = [
             n for n, agent in self.agents.items()
             if n not in self.werewolf_names and agent.is_alive and n not in self._jailed
         ]
+        return alive_good
+
+    def _has_available_silver_bullet(self) -> bool:
+        return (
+            bool(getattr(self, "_silver_bullet_acquired", False))
+            and bool(getattr(self, "_silver_jewelry_acquired", False))
+            and bool(getattr(self, "_silver_bullet_crafted", False))
+            and not bool(getattr(self, "_silver_bullet_used", False))
+        )
+
+    def _finish_game(self, winner: str, reason: str, detail: str, log_message: str) -> bool:
+        self.game_over = True
+        self.winner = winner
+        self.game_over_reason = reason
+        self.game_over_detail = detail
+        self.phase = GamePhase.GAME_OVER
+        self._log(log_message, "system")
+        return True
+
+    def _maybe_finish_after_population_balance(self, context: str = "night") -> bool:
+        alive_wolves = self._alive_wolf_names()
+        alive_good = self._alive_good_names()
         if not alive_wolves:
-            self.game_over = True
-            self.winner = "villagers"
-            self.game_over_reason = "all_wolves_eliminated"
-            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
-            self.phase = GamePhase.GAME_OVER
-            self._log("夜晚结束后，所有狼人已被消灭。小镇居民获胜。", "system")
-            return True
+            return self._finish_game(
+                "villagers",
+                "all_wolves_eliminated",
+                "恭喜你消灭了所有的狼人，获得胜利。",
+                "所有狼人已被消灭。小镇居民获胜。",
+            )
         detective = self.agents.get(self.detective_name)
         if not detective or not detective.is_alive:
-            self.game_over = True
-            self.winner = "werewolf"
-            self.game_over_reason = "detective_killed_at_night"
-            self.game_over_detail = "警长克罗在夜晚被狼人杀死，已经无法继续调查和投票，狼人获胜。"
-            self.phase = GamePhase.GAME_OVER
-            self._log("夜晚结束后，警长克罗已死亡。狼人获胜。", "system")
-            return True
+            return self._finish_game(
+                "werewolf",
+                "detective_killed_at_night",
+                "警长克罗已经死亡，无法继续调查和投票，狼人获胜。",
+                "警长克罗已死亡。狼人获胜。",
+            )
         if not alive_good:
-            self.game_over = True
-            self.winner = "werewolf"
-            self.game_over_reason = "all_good_dead_at_night"
-            self.game_over_detail = "夜晚结束后，除狼人外已经没有好人存活，狼人获胜。"
-            self.phase = GamePhase.GAME_OVER
-            self._log("夜晚结束后，好人阵营已无人存活。狼人获胜。", "system")
-            return True
+            return self._finish_game(
+                "werewolf",
+                "all_good_dead",
+                "除狼人外已经没有好人存活，狼人获胜。",
+                "好人阵营已无人存活。狼人获胜。",
+            )
+        if len(alive_good) <= len(alive_wolves):
+            if self._has_available_silver_bullet():
+                self.phase = GamePhase.PENDING_SILVER_SHOT
+                self._pending_silver_wolf = alive_wolves[0]
+                self._log("局势已经到达狼人数量优势边缘，克罗必须使用银质子弹做最后判断。", "system")
+                return True
+            return self._finish_game(
+                "werewolf",
+                f"wolf_parity_{context}",
+                "好人数量已经小于或等于狼人数量，且警长没有可用的银质子弹，狼人获胜。",
+                "好人数量已无法压过狼人，且没有银质子弹。狼人获胜。",
+            )
         return False
+
+    def _maybe_finish_after_night_deaths(self) -> bool:
+        """Resolve game end immediately after anonymous night deaths."""
+        return self._maybe_finish_after_population_balance("night")
 
 
 
@@ -4544,53 +4598,39 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         Returns the new phase value.
         """
-        alive_wolves = [
-            n for n in self.werewolf_names
-            if n in self.agents and self.agents[n].is_alive and n not in self._jailed
-        ]
+        alive_wolves = self._alive_wolf_names()
+        alive_good = self._alive_good_names()
         if not alive_wolves:
-            self.game_over = True
-            self.winner = "villagers"
-            self.game_over_reason = "all_wolves_eliminated"
-            self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
-            self.phase = GamePhase.GAME_OVER
-            self._log("🏆 第4天黄昏投票结束，所有狼人已被排除！小镇居民获胜！", "system")
-            return "game_over"
-
-        if len(alive_wolves) >= 2:
-            self.game_over = True
-            self.winner = "werewolf"
-            self.game_over_reason = "two_wolves_alive_after_day4_vote"
-            self.game_over_detail = "第四天投票后仍有两名狼人存活，警长即使拥有银质子弹也只能击杀一只狼人，村民阵营失败。"
-            self.phase = GamePhase.GAME_OVER
-            self._log("🏆 第4天黄昏投票结束，双狼均存活，狼人获胜！", "system")
-            return "game_over"
-
-        # Exactly one wolf alive
-        if len(alive_wolves) == 1:
-            has_silver_bullet = (
-                self._silver_bullet_acquired
-                and self._silver_jewelry_acquired
-                and self._silver_bullet_crafted
-                and not self._silver_bullet_used
+            self._finish_game(
+                "villagers",
+                "all_wolves_eliminated",
+                "恭喜你消灭了所有的狼人，获得胜利。",
+                "🏆 第4天黄昏投票结束，所有狼人已被排除！小镇居民获胜！",
             )
-            if has_silver_bullet:
-                self.phase = GamePhase.PENDING_SILVER_SHOT
-                self._pending_silver_wolf = alive_wolves[0]
-                self._log(
-                    "⚠️ 第4天黄昏投票结束，还剩一个狼人。"
-                    "克罗持有银子弹，需要在仍然存活的村民中做出最终射击选择。",
-                    "system",
-                )
-                return "pending_silver_shot"
-            else:
-                self.game_over = True
-                self.winner = "werewolf"
-                self.game_over_reason = "wolf_alive_without_silver_bullet"
-                self.game_over_detail = "第四天投票后仍有狼人存活，且警长没有可用的银质子弹，村民阵营失败。"
-                self.phase = GamePhase.GAME_OVER
-                self._log("🏆 第4天黄昏投票结束，剩下一个狼人且无银子弹可用，狼人获胜！", "system")
-                return "game_over"
+            return "game_over"
+
+        if self._has_available_silver_bullet():
+            self.phase = GamePhase.PENDING_SILVER_SHOT
+            self._pending_silver_wolf = alive_wolves[0]
+            self._log("⚠️ 第4天黄昏投票结束，仍有狼人存活。克罗必须使用银质子弹做最终判断。", "system")
+            return "pending_silver_shot"
+
+        if len(alive_good) <= len(alive_wolves):
+            self._finish_game(
+                "werewolf",
+                "wolf_parity_after_day4_vote",
+                "第四天投票后好人数量已经小于或等于狼人数量，且警长没有可用的银质子弹，狼人获胜。",
+                "🏆 第4天黄昏投票结束，好人数量无法压过狼人，狼人获胜！",
+            )
+            return "game_over"
+
+        self._finish_game(
+            "werewolf",
+            "wolf_alive_without_silver_bullet",
+            "第四天投票后仍有狼人存活，且警长没有可用的银质子弹，村民阵营失败。",
+            "🏆 第4天黄昏投票结束，仍有狼人且无银子弹可用，狼人获胜！",
+        )
+        return "game_over"
 
         return "unknown"
 
@@ -4621,38 +4661,31 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             # Check if this is a Day4 endgame silver shot
             if self.phase == GamePhase.PENDING_SILVER_SHOT:
                 is_wolf = target_name in self.werewolf_names
-                if is_wolf:
-                    # Kill the wolf with silver bullet
-                    result = self._silver_kill_target(target_name, self.detective_name, "银子弹")
-                    if not result.get("success"):
-                        return result
-                    self._silver_bullet_used = True
-                    self.game_over = True
-                    self.winner = "villagers"
-                    self.game_over_reason = "all_wolves_eliminated"
-                    self.game_over_detail = "恭喜你消灭了所有的狼人，获得胜利。"
-                    self.phase = GamePhase.GAME_OVER
-                    self._log("🎯 银子弹命中狼人！小镇居民获胜！", "system")
-                    result["day4_silver_shot"] = True
-                    result["hit_werewolf"] = True
+                result = self._silver_kill_target(target_name, self.detective_name, "银子弹")
+                if not result.get("success"):
+                    return result
+                self._silver_bullet_used = True
+                alive_wolves = self._alive_wolf_names()
+                alive_good = self._alive_good_names()
+                if is_wolf and (not alive_wolves or len(alive_good) > len(alive_wolves)):
+                    self._finish_game(
+                        "villagers",
+                        "silver_bullet_restored_advantage",
+                        "恭喜你消灭了关键狼人，获得胜利。",
+                        "🎯 银子弹命中狼人，好人数量重新压过狼人！小镇居民获胜！",
+                    )
                     result["winner"] = "villagers"
-                    return result
                 else:
-                    # Hit a villager → werewolves win
-                    result = self._silver_kill_target(target_name, self.detective_name, "银子弹")
-                    if not result.get("success"):
-                        return result
-                    self._silver_bullet_used = True
-                    self.game_over = True
-                    self.winner = "werewolf"
-                    self.game_over_reason = "silver_bullet_missed"
-                    self.game_over_detail = f"银质子弹射中了无辜的{display_name_for_person(target_name)}，最后的机会已经用尽，狼人获胜。"
-                    self.phase = GamePhase.GAME_OVER
-                    self._log(f"💔 银子弹命中了无辜的 {display_name_for_person(target_name)}！狼人获胜！", "system")
-                    result["day4_silver_shot"] = True
-                    result["hit_werewolf"] = False
+                    self._finish_game(
+                        "werewolf",
+                        "silver_bullet_failed_to_restore_advantage",
+                        f"银质子弹未能让好人数量压过狼人，最后的机会已经用尽，狼人获胜。",
+                        "💔 银子弹没能扭转人数局势。狼人获胜！",
+                    )
                     result["winner"] = "werewolf"
-                    return result
+                result["day4_silver_shot"] = True
+                result["hit_werewolf"] = is_wolf
+                return result
 
             result = self._silver_kill_target(target_name, self.detective_name, "银子弹")
             if result.get("success"):
@@ -4980,21 +5013,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     continue
 
                 cfg = AGENT_CONFIGS[name]
-
                 home_target = (cfg["home"]["x"], cfg["home"]["y"])
-                if not self._assign_reachable_target_near(
-                    agent,
-                    name,
+                target = self._nearest_walkable_tile(
                     home_target,
-                    radius=12,
                     blocked=self._occupied_tiles({name}),
-                ):
-                    target = self._nearest_walkable_tile(
-                        home_target,
-                        blocked=self._occupied_tiles({name}),
-                    )
-                    if target:
-                        agent.target_x, agent.target_y = target
+                ) or home_target
+                agent.x, agent.y = target
+                agent.target_x, agent.target_y = target
+                self.agent_paths.pop(name, None)
+                agent.runtime_state = "idle"
 
                 agent.current_action = "sleeping"
 
@@ -5140,6 +5167,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._reset_daily_deep_dive_quota()
 
         self._silver_task_done_today = None  # 新一天重置银器任务进度
+        self._silver_task_done_day = None
 
         # Note: jailed people stay jailed; they don't auto-release daily
 
@@ -9840,13 +9868,13 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 if response and response.strip():
                     break
 
-                if not getattr(self, "_running", False):
-                    break
-
                 if time.time() >= retry_deadline:
                     break
 
                 with self._lock:
+                    live_release_at = float(getattr(target, "_detective_chat_release_at", 0) or 0)
+                    if live_release_at:
+                        retry_deadline = min(retry_deadline, live_release_at)
                     if (
                         getattr(self, "_detective_chat_job_id", 0) != chat_job_id
                         or getattr(self, "_detective_chat_active_target", None) != target_name
@@ -11246,12 +11274,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "dusk_crow_statement": getattr(self, "_dusk_crow_statement", ""),
                 "silver_bullet_acquired": self._silver_bullet_acquired,
                 "silver_jewelry_acquired": self._silver_jewelry_acquired,
-                "silver_task_done_today": self._silver_task_done_today,
-                "silver_resource_available_today": not bool(self._silver_task_done_today),
+                "silver_task_done_today": self._silver_task_done_for_today(),
+                "silver_resource_available_today": not bool(self._silver_task_done_for_today()),
 
                 "silver_bullet_crafted": self._silver_bullet_crafted,
 
                 "silver_bullet_used": self._silver_bullet_used,
+                "silver_knife_holder": getattr(self, "_silver_knife_holder", ""),
+                "silver_knife_used": getattr(self, "_silver_knife_used", False),
 
                 "night_progress": self._public_night_progress_status(),
                 "pending_silver_shot": self.phase == GamePhase.PENDING_SILVER_SHOT,
