@@ -2568,6 +2568,25 @@ def test_silver_daily_limit_is_scoped_to_current_day(monkeypatch):
     assert engine._silver_task_done_day == 3
 
 
+def test_silver_jewelry_deep_dive_non_holder_cannot_hallucinate_yes_no(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DAY
+    detective = engine.agents[engine.detective_name]
+    target_name = "Isabella Rodriguez"
+    target = engine.agents[target_name]
+    engine._daily_interviewed.add(target_name)
+    detective.deep_dive_quota = 3
+    detective.deep_dive_used = 0
+    target.generate_response = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called for non-holder silver deep dive"))
+
+    result = engine.detective_chat(target_name, "你有银质首饰吗？", is_deep_dive=True)
+
+    assert result["response"] == "我身上没有那件银制首饰。"
+    assert result["silver_jewelry_not_holder"] is True
+    assert engine._silver_jewelry_acquired is False
+    assert detective.deep_dive_used == 1
+
+
 def test_silver_bullet_can_be_fired_once(monkeypatch):
     """Crafted silver bullet can kill one target and then becomes unavailable."""
     engine = _make_engine(monkeypatch)
@@ -2604,6 +2623,44 @@ def test_hidden_silver_knife_can_be_used_once_at_night(monkeypatch):
     second = engine.use_silver_knife(holder, engine.werewolf_names[1])
     assert second["success"] is False
     assert "已经使用过" in second["error"]
+
+
+def test_first_night_silver_knife_ignores_decline_for_testing(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    holder = engine._silver_knife_holder
+    candidates = [name for name in engine.agents if name not in {holder, engine.detective_name}]
+    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "不用")
+
+    engine.day = 1
+    target = engine._choose_silver_knife_target(holder, candidates)
+
+    assert target in candidates
+
+
+def test_silver_knife_killed_werewolf_is_dead_body_not_talkable_or_voteable(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    holder = engine._silver_knife_holder
+    victim = engine.werewolf_names[0]
+    engine.phase = game_engine.GamePhase.NIGHT
+
+    result = engine.use_silver_knife(holder, victim)
+
+    assert result["success"] is True
+    assert result["target_was_werewolf"] is True
+    assert engine.agents[victim].is_alive is False
+    assert victim in engine.dead_list
+    assert any(body.victim_name == victim and body.is_werewolf_corpse for body in engine.bodies)
+    status = engine.get_status()
+    assert status["personas"][victim]["alive"] is False
+    assert status["personas"][victim]["chat_available"] is False
+    assert status["personas"][victim]["deep_dive_available"] is False
+
+    engine.phase = game_engine.GamePhase.DUSK_DISCUSSION
+    engine._dusk_vote_active = True
+    engine._dusk_vote_deadline = time.time() + 30
+    summary = engine._build_vote_summary()
+    assert victim not in summary["eligible_participants"]
+    assert engine.submit_crow_vote(victim)["error"]
 
 
 # ============================================================================

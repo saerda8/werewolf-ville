@@ -672,3 +672,22 @@ Verification:
 - `python -m pytest -q tests/test_gathering_timeout.py tests/test_vote_flow.py tests/test_ui_bubble_layout.py`: 202 passed
 - Targeted daytime real-chat tests: 4 passed
 - Local service restarted; `http://127.0.0.1:5000/?cachebust=67` returns 200 and displays version 67.
+
+## 2026-06-09 Silver knife kill consistency / first-night test / hidden UI cleanup
+
+Status: Fixed
+
+Symptoms:
+- Silver knife kills could leave a target visually or interactively inconsistent: dead in bodies, but still appearing as chat/vote eligible in some UI paths.
+- The hidden silver knife holder could decline to use the knife on the first night, making testing hard to reproduce.
+- The right-side list still exposed model names, and the hidden test button could still give away its presence.
+
+Fix:
+- Silver knife death now clears the target's conversation/action residual state and keeps the corpse status aligned across interaction and vote paths.
+- First-night silver knife selection now ignores "不用/跳过" style declines and falls back to a real target for testing.
+- Right-side model names are no longer rendered; the hidden test button stays fully transparent and no longer uses a pointer cursor.
+
+Verification:
+- `python -m py_compile game_engine.py engine_dusk.py tests/test_engine_foundation.py tests/test_ui_bubble_layout.py`
+- `python -m pytest -q tests/test_engine_foundation.py -k "first_night_silver_knife_ignores_decline_for_testing or silver_knife_killed_werewolf_is_dead_body_not_talkable_or_voteable or silver_jewelry_deep_dive_non_holder_cannot_hallucinate_yes_no"`
+- `python -m pytest -q tests/test_ui_bubble_layout.py -k "pending_detective_chat_locks_button_and_suppresses_bubbles or short_display_names_and_auto_chat_arrival_behaviour or active_ui_does_not_render_werewolf_role_tags"`

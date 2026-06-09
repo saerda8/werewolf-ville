@@ -829,10 +829,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._silver_task_done_day = self.day
 
     def _resolve_silver_jewelry_deep_dive(self, target_name: str, message: str) -> tuple[str | None, dict]:
-        if target_name != getattr(self, "_silver_jewelry_holder", ""):
-            return None, {}
         if not self._mentions_silver_jewelry(message):
             return None, {}
+        holder_name = getattr(self, "_silver_jewelry_holder", "")
+        if target_name != holder_name:
+            return "我身上没有那件银制首饰。", {
+                "silver_jewelry_not_holder": True,
+                "silver_jewelry_acquired": self._silver_jewelry_acquired,
+            }
         if self._silver_jewelry_acquired:
             return "那件银制首饰我已经交给你了，希望它真的能派上用场。", {
                 "already_acquired": True,
@@ -4422,12 +4426,41 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             self.dead_list.append(target_name)
 
         self.agent_paths.pop(target_name, None)
+        target.target_x = target.x
+        target.target_y = target.y
+        target.in_conversation_with = None
+        target._conversation_started_at = 0
+        target._detective_chat_release_at = 0
 
         target.runtime_state = "dead"
 
         target.current_action = "死亡"
 
         target.current_emoji = "☠️"
+        target.current_thought = ""
+        target.current_thought_time = 0
+        target.current_action_type = ""
+        target._pending_action = None
+        target._last_decision = {}
+        target._is_thinking = False
+        target._is_reflecting = False
+        target._jailed_corpse = False
+        self.chat_bubbles.pop(target_name, None)
+        thought_bubbles = getattr(self, "thought_bubbles", None)
+        if isinstance(thought_bubbles, dict):
+            thought_bubbles.pop(target_name, None)
+        if getattr(self, "_detective_chat_active_target", None) == target_name:
+            self._detective_chat_active_target = None
+        if getattr(self, "_detective_chat_pending_target", None) == target_name:
+            self._detective_chat_pending_target = None
+        if hasattr(self, "_dusk_votes"):
+            self._dusk_votes.pop(target_name, None)
+            for voter, voted_target in list(self._dusk_votes.items()):
+                if voted_target == target_name:
+                    self._dusk_votes.pop(voter, None)
+                    self._dusk_vote_reasons.pop(voter, None)
+        if hasattr(self, "_dusk_vote_reasons"):
+            self._dusk_vote_reasons.pop(target_name, None)
 
 
 
@@ -4771,6 +4804,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             raw = chat_for_agent(holder_name, system_prompt, user_prompt, temperature=0.4, max_retries=0, priority=True)
             compact = str(raw or "").strip()
             if any(word in compact for word in ("不用", "放弃", "不杀", "跳过")):
+                if self.day <= 1:
+                    return fallback
                 return ""
             for visible, internal in target_names.items():
                 if visible and visible in compact:

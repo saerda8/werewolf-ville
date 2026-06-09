@@ -157,7 +157,7 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert "function mergePendingCrowBubble(state)" in html
     assert "mergePendingCrowBubble(state);" in html
     assert 'pendingPhase === "moving" ? "前往中..." : "等待回复..."' in html
-    assert "const chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingThisChat || isGathering) ? \"disabled\" : \"\";" in html
+    assert "const chatBtnDisabled = (!normalChatAvailable || isNight || isDusk || isPendingChat || isGathering) ? \"disabled\" : \"\";" in html
     assert "if (!isNight && gameState)" in html
     assert "const suppressChatDisplay = isChatSuppressedFor(name, bubblePayload);" in html
     assert 'const speechText = suppressChatDisplay ? "" : bubbleSpeechText(name, bubblePayload);' in html
@@ -170,6 +170,7 @@ def test_pending_detective_chat_locks_button_and_suppresses_bubbles():
     assert "你先说说，为什么你不可能是凶手？" not in html
     assert "function markPendingChatTargetWaiting(name, state)" in html
     assert "function mergePendingChatTargetWaitBubble(state)" in html
+    assert "|${pendingPhase}|${isGathering}|${isPendingChat}" in html
 
 
 def test_deep_dive_submit_does_not_decrement_until_backend_success():
@@ -276,7 +277,7 @@ def test_short_display_names_and_auto_chat_arrival_behaviour():
     assert '"Maria Lopez": "玛利亚"' in html
     assert '"Sam Moore": "山姆"' in html
     assert "深度挖掘次数（可选）" in html
-    assert "if (dist <= 3)" in html
+    assert "if (dist <= 2)" in html
     assert 'isMoving && p.path_len > 0' in html
 
 
@@ -1146,6 +1147,8 @@ def test_dev_complete_interviews_button_exists():
     assert "#test-complete-interviews-btn" in html
     assert "opacity: 0;" in html
     assert "color: transparent;" in html
+    assert "cursor: default;" in html
+    assert 'title="测试用：直接完成今日所有NPC交谈"' not in html
     assert "pointer-events: auto;" in html
     assert "function completeDailyInterviewsForTest()" in html
     assert 'socket.emit("test_complete_daily_interviews")' in html
