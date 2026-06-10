@@ -283,6 +283,13 @@ class EngineDuskMixin:
                 radius=10,
                 blocked=blocked_tiles,
             )
+            if not path_result:
+                path_result = self._nearest_reachable_path(
+                    (agent.x, agent.y),
+                    target,
+                    radius=14,
+                    blocked=self._occupied_tiles({name}),
+                )
             if path_result:
                 target_x, target_y, path = path_result
                 agent.target_x, agent.target_y = target_x, target_y
@@ -293,8 +300,9 @@ class EngineDuskMixin:
                 reserved_targets.discard(target)
                 reserved_targets.add((target_x, target_y))
             else:
-                agent.target_x, agent.target_y = target
+                agent.target_x, agent.target_y = agent.x, agent.y
                 self.agent_paths.pop(name, None)
+                self._log(f"[path blocked] {display_name_for_person(name)} could not reach morning/dusk plaza; kept current tile.", "system")
             agent.current_location = INITIAL_BODY_SITE["location"]
             agent.current_action = "前往广场参加黄昏讨论"
             agent.current_emoji = "🚶"
@@ -471,7 +479,9 @@ class EngineDuskMixin:
         possible_suspects = [
             display_name_for_person(name)
             for name, suspect in self.agents.items()
-            if name != speaker_name and suspect.is_alive and name not in self._jailed
+            if name != speaker_name
+            and suspect.is_alive
+            and name not in self._jailed
         ]
         suspect_text = "、".join(possible_suspects) or "暂无其他存活对象"
         prior_statements = list(getattr(self, "_dusk_discussion_statements", []) or [])
@@ -504,6 +514,8 @@ class EngineDuskMixin:
             f"最近死者：{recent_dead}。已知线索：{clue_text}。"
             f"你对白天经历的记忆：{memory_text}。你的当前判断：{cognition_text}。"
             f"前面大家的发言：{prior_text}。可怀疑对象：{suspect_text}。{role_instruction}"
+            "克罗是本镇警长、不是园丁或普通居民职业；"
+            "你可以怀疑克罗的判断或动机，但如果提到克罗，必须把他的身份说成警长，不能给他套用其他职业身份。"
             "硬性规则：只能把“可怀疑对象”里的存活未关押居民当作当前怀疑、攻击、投票目标；"
             "死者和被关押的人只能作为事实或线索来源，不能继续被怀疑、被踩或被号召投票。"
             "发言要像狼人杀讨论：先用自己的行踪/观察/记忆自证，再点名一个具体怀疑对象，"
@@ -1331,7 +1343,7 @@ class EngineDuskMixin:
         return fallback
 
 
-    def _build_vote_summary(self) -> dict:
+    def _build_vote_summary(self, reveal_private_votes: bool | None = None) -> dict:
         """Build a structured vote summary for get_status.
         Includes voter lists per target, deadline, Crow vote status (spec section 6)."""
         vote_counts = {}
@@ -1359,12 +1371,39 @@ class EngineDuskMixin:
                 "voter_displays": [display_name_for_person(v) for v in voter_list],
             })
 
+        if reveal_private_votes is None:
+            reveal_private_votes = (
+                not getattr(self, "_dusk_vote_active", False)
+                or bool(getattr(self, "_dusk_crow_voted", False))
+                or bool(getattr(self, "_dusk_jail_target", None))
+                or getattr(self, "_dusk_stage", "") in {
+                    "results",
+                    "result",
+                    "result_announcement_pending",
+                    "result_announcement",
+                    "final_words",
+                    "escorting",
+                    "escort",
+                    "complete",
+                }
+            )
+        exposed_votes = dict(self._dusk_votes) if reveal_private_votes else {}
+        exposed_reasons = dict(self._dusk_vote_reasons) if reveal_private_votes else {}
+        exposed_counts = count_entries if reveal_private_votes else []
+        exposed_voters_by_target = (
+            {t: list(vs) for t, vs in voters_by_target.items()}
+            if reveal_private_votes
+            else {}
+        )
+        exposed_abstain_count = abstain_count if reveal_private_votes else 0
+
         return {
-            "votes": dict(self._dusk_votes),
-            "reasons": dict(self._dusk_vote_reasons),
-            "counts": count_entries,
-            "voters_by_target": {t: list(vs) for t, vs in voters_by_target.items()},
-            "abstain_count": abstain_count,
+            "votes": exposed_votes,
+            "reasons": exposed_reasons,
+            "counts": exposed_counts,
+            "voters_by_target": exposed_voters_by_target,
+            "abstain_count": exposed_abstain_count,
+            "votes_hidden_until_crow_vote": bool(self._dusk_vote_active and not reveal_private_votes),
             "active": self._dusk_vote_active,
             "deadline": getattr(self, "_dusk_vote_deadline", None),
             "seconds_remaining": max(0, int((getattr(self, "_dusk_vote_deadline", 0) or 0) - time.time())),
@@ -1385,7 +1424,7 @@ class EngineDuskMixin:
 
 
     def _record_vote_history_snapshot(self, jail_target: str | None = None) -> None:
-        summary = self._build_vote_summary()
+        summary = self._build_vote_summary(reveal_private_votes=True)
         entry = {
             "day": self.day,
             "votes": summary["votes"],
@@ -1402,5 +1441,3 @@ class EngineDuskMixin:
 
 
     # ==================== 每日任务 & 银器进展 ====================
-
-

@@ -2593,11 +2593,39 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         if bodies:
 
-            body = max(bodies, key=lambda b: getattr(b, "created_day", 0))
-
+            latest_day = max(getattr(b, "created_day", 0) for b in bodies)
+            latest_bodies = [b for b in bodies if getattr(b, "created_day", 0) == latest_day]
+            if len(latest_bodies) > 1:
+                fact_text = self._public_morning_body_fact_text(latest_bodies)
+                if fact_text:
+                    return f"大家安静一下。{fact_text}请各位依次说明昨晚的行踪和异常动静。"
+                return "大家安静一下。昨晚镇上发生了命案，请各位依次说明昨晚的行踪和异常动静。"
+            body = latest_bodies[-1]
             return f"大家安静一下。昨晚{display_name_for_person(body.victim_name)}遇害，请各位依次说明昨晚的行踪和异常动静。"
 
         return "大家安静一下。昨晚镇上发生了命案，请各位依次说明昨晚的行踪和异常动静。"
+
+
+
+
+
+    def _public_morning_body_fact_text(self, bodies: list | None = None) -> str:
+
+        discovered = bodies if bodies is not None else [
+            b for b in getattr(self, "bodies", []) if getattr(b, "discovered", False)
+        ]
+
+        if not discovered:
+            return ""
+
+        latest_day = max(getattr(b, "created_day", 0) for b in discovered)
+        latest_bodies = [b for b in discovered if getattr(b, "created_day", 0) == latest_day]
+
+        if len(latest_bodies) > 1:
+            names = "、".join(display_name_for_person(body.victim_name) for body in latest_bodies)
+            return f"昨晚{names}都死了，其中一人身上有抓伤和咬痕，另一人身上有刺伤。"
+
+        return ""
 
 
 
@@ -2609,7 +2637,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         victim = "镇上的一名居民"
         location = "约翰逊公园东侧空地"
-        wolf_body_note = ""
+        fact_text = ""
+        wound_text = "伤口像是野兽撕咬和抓伤，但现场还没查清，附近的痕迹我也要逐一确认。"
 
         if bodies:
 
@@ -2617,23 +2646,26 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             latest_bodies = [b for b in bodies if getattr(b, "created_day", 0) == latest_day]
             body = latest_bodies[-1]
 
-            victim_names = []
-            for item in latest_bodies:
-                label = display_name_for_person(item.victim_name)
-                if getattr(item, "is_werewolf_corpse", False):
-                    label = f"{label}（狼人尸体）"
-                victim_names.append(label)
-            victim = "、".join(victim_names) if victim_names else display_name_for_person(body.victim_name)
-
+            if len(latest_bodies) > 1:
+                fact_text = self._public_morning_body_fact_text(latest_bodies)
+                if not fact_text:
+                    fact_text = "昨夜镇上发生了命案。"
+                wound_text = "伤痕看起来一重一轻，但现场还没查清，附近的痕迹我也要逐一确认。"
+            else:
+                victim = display_name_for_person(body.victim_name)
             location = self._destination_label_zh(getattr(body, "location", "") or location)
-            if any(getattr(item, "is_werewolf_corpse", False) for item in latest_bodies):
-                wolf_body_note = "其中有一具尸体显露出狼人特征，这说明有人杀中了狼人，但镇上可能还有狼人活着。"
+
+        intro_line = (
+            f"我是克罗，本镇警长。{fact_text}地点就在{location}。"
+            if fact_text
+            else f"我是克罗，本镇警长。昨夜{victim}在{location}遇害，今早我们才发现。"
+        )
 
         return [
 
-            f"我是克罗，本镇警长。昨夜{victim}在{location}遇害，今早我们才发现。",
+            intro_line,
 
-            wolf_body_note or "伤口像是野兽撕咬和抓伤，但现场还没查清，附近的痕迹我也要逐一确认。",
+            wound_text,
 
             "现在先别急着猜凶手。请按顺序说清昨晚在哪、见过谁、听见过什么异常。",
 
@@ -2922,19 +2954,18 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         history_text = "\n".join(history_lines) if history_lines else "(还没人说话，你是第一个)"
         discovered_bodies = [b for b in getattr(self, "bodies", []) if getattr(b, "discovered", False)]
-        latest_body_facts = []
         if discovered_bodies:
             latest_day = max(getattr(b, "created_day", 0) for b in discovered_bodies)
-            for body in discovered_bodies:
-                if getattr(body, "created_day", 0) != latest_day:
-                    continue
-                label = display_name_for_person(body.victim_name)
-                if getattr(body, "is_werewolf_corpse", False):
-                    label += "是一具狼人尸体"
-                else:
-                    label += "遇害"
-                latest_body_facts.append(label)
-        body_fact_text = "；".join(latest_body_facts) if latest_body_facts else "镇上发现尸体"
+            latest_bodies = [b for b in discovered_bodies if getattr(b, "created_day", 0) == latest_day]
+            if len(latest_bodies) > 1:
+                body_fact_text = self._public_morning_body_fact_text(latest_bodies)
+                if not body_fact_text:
+                    body_fact_text = "镇上发现尸体"
+            else:
+                body = latest_bodies[-1]
+                body_fact_text = f"{display_name_for_person(body.victim_name)}遇害"
+        else:
+            body_fact_text = "镇上发现尸体"
 
 
 
@@ -2973,7 +3004,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
 当前场景：现在是早晨，所有居民聚集在尸体附近。大家正在轮流发言，每人说一小段话。镇上刚发现命案，气氛应当严肃、紧张、克制。
 
-今天清晨的公开事实：{body_fact_text}。如果出现狼人尸体，必须承认这件事并据此推理：可能有人用银器杀中了狼人，但镇上仍可能有其他狼人。
+今天清晨的公开事实：{body_fact_text}。只根据公开能看到的尸体和痕迹推理，不要把隐藏信息直接说出来。
 
 
 
@@ -4927,9 +4958,9 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             system_prompt = (
                 f"你是{display_name_for_person(holder_name)}。你秘密持有一次性的银质小刀。"
                 "现在是夜晚，你可以选择杀死一名可疑村民，也可以选择不用。"
-                "如果你已经有一个相对最可疑的人，应倾向于今晚使用；"
+                "强烈鼓励你尽早使用：只要已经有一个相对最可疑的人，就应倾向于今晚使用，确定后赶紧行动；"
                 "因为继续保留可能会让你被狼人杀死、被白天投出，或让狼人继续杀人。"
-                "只有完全没有合理怀疑目标时才输出“不用”。"
+                "不要等到证据完全确定；只有完全没有合理怀疑目标时才输出“不用”。"
                 "只输出一个可选名字，或输出“不用”。不要解释。"
             )
             user_prompt = (
@@ -5005,8 +5036,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             blocked=self._occupied_tiles({holder_name, target_name}),
         )
         if not approach:
-            self._silver_knife_action = {"status": "skipped", "complete": True, "reason": "unreachable"}
-            self._complete_silver_knife_action("unreachable")
+            result = self.use_silver_knife(holder_name, target_name)
+            if result.get("success"):
+                self._silver_knife_target_tonight = target_name
+                if target_name in self.werewolf_names:
+                    self._silver_knife_killed_werewolf_tonight = True
+                    for body in reversed(self.bodies):
+                        if body.victim_name == target_name:
+                            body.is_werewolf_corpse = True
+                            break
+            self._complete_silver_knife_action("forced_unreachable")
             return
 
         adj_x, adj_y, path = approach
@@ -5088,7 +5127,16 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             getattr(holder, "target_y", holder.y),
         ):
             if abs(holder.x - target.x) + abs(holder.y - target.y) > 1:
-                self._complete_silver_knife_action("path_ended_not_adjacent")
+                result = self.use_silver_knife(holder_name, target_name)
+                if result.get("success"):
+                    self._silver_knife_target_tonight = target_name
+                    if target_name in self.werewolf_names:
+                        self._silver_knife_killed_werewolf_tonight = True
+                        for body in reversed(self.bodies):
+                            if body.victim_name == target_name:
+                                body.is_werewolf_corpse = True
+                                break
+                self._complete_silver_knife_action("forced_after_path_end")
                 return
             result = self.use_silver_knife(holder_name, target_name)
             if result.get("success"):
@@ -5099,7 +5147,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         if body.victim_name == target_name:
                             body.is_werewolf_corpse = True
                             break
-            self._complete_silver_knife_action("forced_after_path_end")
+            self._complete_silver_knife_action("arrived")
             return
 
         if abs(holder.x - target.x) + abs(holder.y - target.y) <= 1:
@@ -5259,9 +5307,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 body.y = INITIAL_BODY_SITE["y"] + oy
                 body.location = INITIAL_BODY_SITE["location"]
                 label = display_name_for_person(body.victim_name)
-                if getattr(body, "is_werewolf_corpse", False):
-                    warning = f"发现{label}是狼人，但可能还有狼人活着"
-                    label = f"{label}（狼人尸体，{warning}）"
                 body_parts.append(f"{label}，地点：{self._destination_label_zh(body.location)}")
 
             self._log(
@@ -5274,8 +5319,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
             for body in new_bodies:
                 body_text = f"发现尸体：{display_name_for_person(body.victim_name)}，地点：{self._destination_label_zh(body.location)}。"
-                if getattr(body, "is_werewolf_corpse", False):
-                    body_text += "尸体呈现明显狼人特征。"
                 self._record_observation_event(
                     event_type="body_discovered",
                     subject=body.victim_name,

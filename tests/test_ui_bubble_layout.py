@@ -284,7 +284,8 @@ def test_short_display_names_and_auto_chat_arrival_behaviour():
     assert "const DETECTIVE_CHAT_RANGE_TILES = 3;" in html
     assert "if (dist <= DETECTIVE_CHAT_RANGE_TILES)" in html
     assert "if (dist > DETECTIVE_CHAT_RANGE_TILES)" in html
-    assert 'isMoving && p.path_len > 0' in html
+    assert "const isScriptedPathMove" in html
+    assert "Number(p.path_len || 0) > 0" in html
 
 
 def test_bubble_horizontal_boundary_clamping():
@@ -1076,12 +1077,12 @@ def test_night_silver_knife_multiple_corpses_and_silver_shot_ui():
     assert "target_name" not in night_fn_content
     assert "holder_name" not in night_fn_content
 
-    # 3) Check bodies array rendering with multiple bodies and werewolf corpse identification
+    # 3) Check bodies array rendering with multiple bodies and no public werewolf corpse reveal
     assert "const bodies = gameState.bodies || [];" in html
     assert "for (const body of bodies) {" in html
-    assert 'body.kind === "werewolf" ||' in html
-    assert 'body.corpse_kind === "werewolf" ||' in html
-    assert 'body.is_werewolf_corpse === true' in html
+    assert 'body.kind === "werewolf" ||' not in html
+    assert 'body.corpse_kind === "werewolf" ||' not in html
+    assert 'body.is_werewolf_corpse === true' not in html
     assert '"werewolf_corpse"' in html
     assert "const bodyOffsets = [[0, 0], [1, 0], [-1, 0]" in html
     assert "setDisplaySize(TILE_W * 1.35, TILE_W * 1.35)" not in html
@@ -1452,9 +1453,16 @@ def test_agent_cards_hide_role_tags_and_debug_labels():
     assert "roleLabel" not in update_block
     assert "roleClass" not in update_block
     assert "knifeMarkerHtml" not in update_block
+    assert "silver-knife-test-marker" not in update_block
     assert "silverTags" not in update_block
     assert "silver_knife_holder" not in update_block
     assert "silver_jewelry_holder" not in update_block
+
+
+def test_silver_tool_marker_has_large_click_area():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "marker.setSize(140, 110);" in html
+    assert "new Phaser.Geom.Rectangle(-70, -52, 140, 118)" in html
 
 
 def test_confirm_vote_result_success_hides_voting_panel():

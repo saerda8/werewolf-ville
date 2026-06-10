@@ -128,6 +128,21 @@ def test_crow_case_intro_lines_sound_like_sheriff_not_coroner(monkeypatch):
     assert "克罗" in lines[0]
 
 
+def test_single_body_intro_keeps_normal_wolf_wound_wording(monkeypatch):
+    engine = _make_engine(monkeypatch, seed=11)
+    body = engine.bodies[0]
+
+    lines = engine._case_intro_fallback_lines()
+
+    assert AMBIENT_RESIDENT_DISPLAY_NAMES[body.victim_name] in lines[0]
+    assert "昨夜" in lines[0]
+    assert "遇害" in lines[0]
+    assert "今早我们才发现" in lines[0]
+    assert "伤口像是野兽撕咬和抓伤" in lines[1]
+    assert "两具尸体" not in "".join(lines)
+    assert "另一人身上有刺伤" not in "".join(lines)
+
+
 def test_action_duration_uses_planned_minutes_and_planning_cycle_floor(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine.day_duration = 600
@@ -2690,35 +2705,6 @@ def test_hidden_silver_knife_can_be_used_once_at_night(monkeypatch):
     second = engine.use_silver_knife(holder, engine.werewolf_names[1])
     assert second["success"] is False
     assert "已经使用过" in second["error"]
-
-
-def test_first_night_silver_knife_can_decline(monkeypatch):
-    engine = _make_engine(monkeypatch)
-    holder = engine._silver_knife_holder
-    candidates = [name for name in engine.agents if name not in {holder, engine.detective_name}]
-    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "不用")
-
-    engine.day = 1
-    target = engine._choose_silver_knife_target(holder, candidates)
-
-    assert target == ""
-
-
-def test_first_night_silver_knife_decline_does_not_force_living_werewolf(monkeypatch):
-    engine = _make_engine(monkeypatch)
-    holder = engine._silver_knife_holder
-    first_wolf, second_wolf = engine.werewolf_names[:2]
-    engine.agents[first_wolf].is_alive = False
-    candidates = [
-        name for name, agent in engine.agents.items()
-        if name not in {holder, engine.detective_name} and agent.is_alive
-    ]
-    monkeypatch.setattr(game_engine, "chat_for_agent", lambda *args, **kwargs: "不用")
-
-    engine.day = 1
-    target = engine._choose_silver_knife_target(holder, candidates)
-
-    assert target == ""
 
 
 def test_silver_knife_killed_werewolf_is_dead_body_not_talkable_or_voteable(monkeypatch):

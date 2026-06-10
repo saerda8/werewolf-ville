@@ -288,8 +288,49 @@ def test_morning_discovers_and_announces_multiple_bodies(monkeypatch):
     latest_log = engine.game_log[-1]["message"]
     assert game_engine.display_name_for_person("Arthur Burton") in latest_log
     assert game_engine.display_name_for_person(engine.werewolf_names[0]) in latest_log
-    assert "狼人尸体" in latest_log
-    assert f"发现{game_engine.display_name_for_person(engine.werewolf_names[0])}是狼人，但可能还有狼人活着" in latest_log
+    assert "狼人尸体" not in latest_log
+    assert "可能还有狼人活着" not in latest_log
+    public_fact = engine._public_morning_body_fact_text()
+    assert game_engine.display_name_for_person("Arthur Burton") in public_fact
+    assert game_engine.display_name_for_person(engine.werewolf_names[0]) in public_fact
+    assert "都死了" in public_fact
+    assert "一人身上有抓伤和咬痕" in public_fact
+    assert "另一人身上有刺伤" in public_fact
+    intro = engine._case_intro_text()
+    assert "一人身上有抓伤和咬痕" in intro
+    assert "另一人身上有刺伤" in intro
+    assert game_engine.display_name_for_person("Arthur Burton") in intro
+    assert game_engine.display_name_for_person(engine.werewolf_names[0]) in intro
+    assert "银质小刀" not in intro
+    assert "可能还有狼人" not in intro
+
+
+def test_two_public_bodies_report_claw_and_stab_without_identity_assignment(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    first = BodyRecord(
+        body_id="body_test_first",
+        victim_name="Arthur Burton",
+        location="Harvey Oak Supply Store",
+        x=10,
+        y=10,
+        created_day=1,
+        discovered=True,
+    )
+    second = BodyRecord(
+        body_id="body_test_second",
+        victim_name="Sam Moore",
+        location="The Rose and Crown Pub",
+        x=11,
+        y=10,
+        created_day=1,
+        discovered=True,
+        is_werewolf_corpse=False,
+    )
+    engine.bodies = [first, second]
+
+    public_fact = engine._public_morning_body_fact_text()
+
+    assert public_fact == "昨晚亚瑟、山姆都死了，其中一人身上有抓伤和咬痕，另一人身上有刺伤。"
 
 
 def test_day3_night_auto_crafts_silver_bullet(monkeypatch):
