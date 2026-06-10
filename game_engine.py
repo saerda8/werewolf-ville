@@ -1,4 +1,4 @@
-﻿"""
+"""
 
 游戏引擎 - 时间系统 / 状态调度 / 位置管理
 
@@ -555,13 +555,14 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         self.tick_interval = CONFIG["game"]["tick_interval_seconds"]
 
-        self.gathering_per_speaker_timeout = max(
-
-            30,
-
-            int(CONFIG.get("llm", {}).get("request_timeout_seconds", 60)) // 2,
-
-        )
+        gathering_timeout_override = CONFIG.get("game", {}).get("gathering_per_speaker_timeout_seconds")
+        if gathering_timeout_override is not None:
+            self.gathering_per_speaker_timeout = max(1, int(gathering_timeout_override))
+        else:
+            self.gathering_per_speaker_timeout = max(
+                30,
+                int(CONFIG.get("llm", {}).get("request_timeout_seconds", 60)) // 2,
+            )
 
         self.gathering_turn_timeout = max(
 
@@ -620,6 +621,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         # _silver_jewelry_holder: one random non-werewolf female NPC who holds silver jewelry
 
         # _silver_knife_holder: random non-Crow, non-werewolf resident who has a hidden silver knife
+        # Temporary QA rule: keep the knife holder different from the jewelry holder.
 
         non_crow_all = [k for k in ACTIVE_CHARACTERS.keys() if k != "Crow"]
 
@@ -627,7 +629,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         non_crow_non_wolf = [k for k in non_crow_all if k not in self.werewolf_names]
 
-        self._silver_knife_holder = self._rng.choice(non_crow_non_wolf) if non_crow_non_wolf else None
+        self._silver_knife_holder = self._choose_silver_knife_holder()
 
         self._silver_bullet_acquired = False   # bullet-making tool from the hardware shelf
 
@@ -816,6 +818,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 name for name in ACTIVE_CHARACTERS
                 if name != self.detective_name and name not in self.werewolf_names
             ]
+        return self._rng.choice(candidates) if candidates else ""
+
+    def _choose_silver_knife_holder(self) -> str:
+        candidates = [
+            name for name in ACTIVE_CHARACTERS
+            if name != self.detective_name
+            and name not in self.werewolf_names
+            and name != getattr(self, "_silver_jewelry_holder", "")
+        ]
         return self._rng.choice(candidates) if candidates else ""
 
     @staticmethod
@@ -3960,7 +3971,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         non_crow_non_wolf = [n for n in non_crow if n not in self.werewolf_names]
 
-        self._silver_knife_holder = self._rng.choice(non_crow_non_wolf) if non_crow_non_wolf else None
+        self._silver_knife_holder = self._choose_silver_knife_holder()
 
         # Clear and re-init agents
 
@@ -4196,6 +4207,8 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 return {"success": True, "message": "银子弹工具已获取", "already_acquired": True}
 
             if self._silver_task_done_for_today():
+
+                self._log("今天拿不下了，明天再过来拿吧", "action")
 
                 return {"success": False, "error": "今天拿不下了，明天再过来拿吧"}
 
@@ -4902,17 +4915,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._log("🗡️ 银质小刀行动完成。", "system")
 
     def _choose_silver_knife_target(self, holder_name: str, candidates: list[str]) -> str:
-        if self.day <= 1:
-            living_wolf_candidates = [
-                name for name in self.werewolf_names
-                if name in candidates
-                and name in self.agents
-                and self.agents[name].is_alive
-                and name not in self._jailed
-            ]
-            if living_wolf_candidates:
-                return living_wolf_candidates[0]
-
         clue_targets = [
             clue.related_person for clue in getattr(self, "clues", [])
             if clue.related_person in candidates
@@ -4936,9 +4938,17 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             )
             raw = chat_for_agent(holder_name, system_prompt, user_prompt, temperature=0.4, max_retries=0, priority=True)
             compact = str(raw or "").strip()
-            if any(word in compact for word in ("不用", "放弃", "不杀", "跳过")):
-                if self.day <= 1:
-                    return fallback
+            decline_words = (
+                "\u4e0d\u7528",  # 不用
+                "\u653e\u5f03",  # 放弃
+                "\u4e0d\u6740",  # 不杀
+                "\u8df3\u8fc7",  # 跳过
+                "涓嶇敤",
+                "鏀惧純",
+                "涓嶆潃",
+                "璺宠繃",
+            )
+            if any(word in compact for word in decline_words):
                 return ""
             for visible, internal in target_names.items():
                 if visible and visible in compact:
@@ -11169,6 +11179,15 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
     def get_status(self) -> dict:
 
         with self._lock:
+            version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "FRONTEND_VERSION")
+            frontend_version = "0"
+            try:
+                with open(version_file, "r", encoding="utf-8") as f:
+                    v = f.read().strip()
+                    if v:
+                        frontend_version = v
+            except Exception:
+                pass
 
             elapsed_day = 0
 
@@ -11602,7 +11621,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 item["message"] = localize_visible_character_names(item.get("message", ""))
                 recent_log.append(item)
 
-            return {
+            status_data = {
                 "director_view": True,
                 "observation_mode": True,
 
@@ -11682,6 +11701,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 ),
                 "day4_no_free_activity": getattr(self, "_day4_no_free_activity", False),
                 "primary_cta": primary_cta,
+                "silver_knife_holder": getattr(self, "_silver_knife_holder", ""),
+                "silver_knife_holder_display": display_name_for_person(getattr(self, "_silver_knife_holder", "")) if getattr(self, "_silver_knife_holder", "") else "",
+                "silver_jewelry_holder": getattr(self, "_silver_jewelry_holder", ""),
+                "silver_jewelry_holder_display": display_name_for_person(getattr(self, "_silver_jewelry_holder", "")) if getattr(self, "_silver_jewelry_holder", "") else "",
 
                 "bodies": [self._body_status(b) for b in getattr(self, "bodies", []) if not getattr(b, "buried", False)],
 
@@ -11699,4 +11722,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 "night_hunt": hunt_status,
 
                 "recent_log": recent_log,
+                "frontend_version": frontend_version,
             }
+            return status_data

@@ -83,7 +83,7 @@ ACTIVE_CHARACTERS = {
         "role": "resident",
         "job": "park gardener/groundskeeper",
         "primary_location": "Johnson Park",
-        "home": {"x": 72, "y": 74},
+        "home": {"x": 78, "y": 74},
     },
     "Mei Lin": {
         "role": "resident",

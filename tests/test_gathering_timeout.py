@@ -688,7 +688,7 @@ def test_gathering_per_speaker_timeout_configured(monkeypatch):
     """Engine must expose gathering_per_speaker_timeout for tuning."""
     engine = _make_engine(monkeypatch)
     assert hasattr(engine, "gathering_per_speaker_timeout")
-    assert engine.gathering_per_speaker_timeout >= 30
+    assert engine.gathering_per_speaker_timeout == 30
 
 
 def test_gathering_speech_uses_priority_llm_requests(monkeypatch):

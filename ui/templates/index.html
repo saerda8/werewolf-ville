@@ -1351,7 +1351,7 @@ function shouldShowSilverToolMarker(state) {
 }
 
 function currentSilverToolMarkerLabel(state) {
-  if (silverToolAcquirePending) return "处理中...";
+  if (silverToolAcquirePending) return "银弹工具";
   if (silverToolMarkerFeedback && Date.now() < silverToolMarkerFeedbackUntil) return silverToolMarkerFeedback;
   return isCrowNearSupplyStore(state) ? "点击获取工具" : "靠近五金店";
 }
@@ -1462,7 +1462,6 @@ async function acquireSilverBulletToolFromShelf(pointer, localX, localY, event) 
   if (silverToolAcquirePending || !gameState || !shouldShowSilverToolMarker(gameState)) return;
 
   silverToolAcquirePending = true;
-  setSilverToolMarkerFeedback("处理中...", 3000);
   try {
     const resp = await fetch("/api/acquire_silver_bullet", { method: "POST" });
     const result = await resp.json();
@@ -1949,6 +1948,22 @@ function hasCrowVoted(voteSummary) {
   return Object.prototype.hasOwnProperty.call(votes, "Crow") || Object.prototype.hasOwnProperty.call(votes, "克罗");
 }
 
+function crowVoteIsAbstain(voteSummary) {
+  if (!voteSummary) return false;
+  if (Object.prototype.hasOwnProperty.call(voteSummary, "crow_vote")) {
+    return isAbstainVoteTarget(voteSummary.crow_vote);
+  }
+  const votes = voteSummary.votes || {};
+  if (Object.prototype.hasOwnProperty.call(votes, "Crow")) return isAbstainVoteTarget(votes.Crow);
+  if (Object.prototype.hasOwnProperty.call(votes, "克罗")) return isAbstainVoteTarget(votes["克罗"]);
+  return false;
+}
+
+function isAbstainVoteTarget(vote) {
+  const target = typeof vote === "string" ? vote : (vote && (vote.target || vote.target_name || vote.voted_for));
+  return !target || ["none", "null", "abstain"].includes(String(target).toLowerCase());
+}
+
 function normalizeVoteCounts(voteSummary) {
   const result = {};
   const rawCounts = voteSummary.counts || {};
@@ -1972,7 +1987,7 @@ function normalizeVoteCounts(voteSummary) {
   if (Object.keys(result).length) return result;
   Object.entries(voteSummary.votes || {}).forEach(([voter, vote]) => {
     const target = typeof vote === "string" ? vote : (vote && (vote.target || vote.target_name || vote.voted_for));
-    if (!target || ["none", "null", "abstain"].includes(String(target).toLowerCase())) return;
+    if (isAbstainVoteTarget(vote)) return;
     if (!result[target]) result[target] = {count: 0, voters: []};
     result[target].count += 1;
     result[target].voters.push(voter);
@@ -2000,7 +2015,8 @@ function refreshDuskVoteCountdownOnly() {
   }
   const waitingEl = document.querySelector("#jail-buttons .dusk-vote-waiting");
   if (waitingEl) {
-    waitingEl.textContent = `已投票，等待居民投票完成或倒计时结束（${secondsLeft}秒）。`;
+    const voteLabel = crowVoteIsAbstain(voteSummary) ? "已弃票" : "已投票";
+    waitingEl.textContent = `${voteLabel}，等待居民投票完成或倒计时结束（${secondsLeft}秒）。`;
   }
 }
 
@@ -2028,7 +2044,7 @@ function hideDuskVoteActionsAfterClick() {
   if (footerAbstainBtn) footerAbstainBtn.remove();
   const actions = document.getElementById("jail-buttons");
   if (actions) {
-    actions.innerHTML = `<div class="dusk-vote-waiting">已投票，等待居民投票完成或倒计时结束。</div>`;
+    actions.innerHTML = `<div class="dusk-vote-waiting">${name ? "已投票" : "已弃票"}，等待居民投票完成或倒计时结束。</div>`;
   }
 }
 
@@ -2410,7 +2426,8 @@ function renderDuskVotingFlow(state) {
       footerAbstainBtn.addEventListener("click", (e) => submitCrowVote("", e.currentTarget));
       actions.appendChild(footerAbstainBtn);
     } else if (stage === "voting" && crowHasVoted) {
-      actions.innerHTML = `<div class="dusk-vote-waiting">已投票，等待居民投票完成或倒计时结束（${secondsLeft}秒）。</div>`;
+      const voteLabel = crowVoteIsAbstain(voteSummary) ? "已弃票" : "已投票";
+      actions.innerHTML = `<div class="dusk-vote-waiting">${voteLabel}，等待居民投票完成或倒计时结束（${secondsLeft}秒）。</div>`;
     }
   }
 }
@@ -2441,6 +2458,13 @@ function renderVoteHistory(state) {
 // ==================== UI UPDATES ====================
 function updateUI(state) {
   if (!state || state.error) return;
+
+  if (state.frontend_version) {
+    const badge = document.getElementById("app-version-badge");
+    if (badge) {
+      badge.textContent = "版本 " + state.frontend_version;
+    }
+  }
 
   if (lastCheckedDay !== null && lastCheckedDay !== state.day) {
     locallyClearedHintTargets.clear();
@@ -4369,6 +4393,84 @@ function showGameOver(data) {
     text.style.color = "#e94560";
     sub.textContent = data.game_over_detail || gameOverReasonText(data.game_over_reason);
   }
+
+  // Render the game over truth display
+  let truthContainer = document.getElementById("game-over-truth");
+  if (!truthContainer) {
+    truthContainer = document.createElement("div");
+    truthContainer.id = "game-over-truth";
+    truthContainer.className = "truth-panel";
+    truthContainer.style.margin = "20px 0";
+    truthContainer.style.display = "flex";
+    truthContainer.style.flexDirection = "column";
+    truthContainer.style.gap = "12px";
+    truthContainer.style.background = "rgba(0, 0, 0, 0.25)";
+    truthContainer.style.padding = "16px";
+    truthContainer.style.borderRadius = "8px";
+    truthContainer.style.border = "1px solid rgba(140, 177, 230, 0.2)";
+    truthContainer.style.textAlign = "left";
+    sub.parentNode.insertBefore(truthContainer, sub.nextSibling);
+  }
+
+  let truthHtml = "";
+
+  // 1. Werewolves
+  const werewolves = data.werewolf_names || (data.werewolf_name ? [data.werewolf_name] : []);
+  if (werewolves.length > 0) {
+    truthHtml += `
+      <div style="display: flex; align-items: center; gap: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 8px;">
+        <span style="font-weight: bold; color: #ff5e7e; width: 120px; font-size: 14px;">🐺 狼人阵营：</span>
+        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+    `;
+    werewolves.forEach(name => {
+      const displayName = getDisplayName(name, data);
+      const url = duskPortraitUrl(name);
+      truthHtml += `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <img src="${url}" style="width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid #ff5e7e;" alt="" />
+          <span style="font-size: 14px; color: #eee;">${displayName}</span>
+        </div>
+      `;
+    });
+    truthHtml += `
+        </div>
+      </div>
+    `;
+  }
+
+  // 2. Silver Knife Holder
+  const knifeHolder = data.silver_knife_holder || "";
+  if (knifeHolder) {
+    const displayName = getDisplayName(knifeHolder, data);
+    const url = duskPortraitUrl(knifeHolder);
+    truthHtml += `
+      <div style="display: flex; align-items: center; gap: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 8px; margin-top: 4px;">
+        <span style="font-weight: bold; color: #8ea0c4; width: 120px; font-size: 14px;">\uD83D\uDDE1 银刀持有者：</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <img src="${url}" style="width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid #8ea0c4;" alt="" />
+          <span style="font-size: 14px; color: #eee;">${displayName}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // 3. Silver Necklace Holder
+  const jewelryHolder = data.silver_jewelry_holder || "";
+  if (jewelryHolder) {
+    const displayName = getDisplayName(jewelryHolder, data);
+    const url = duskPortraitUrl(jewelryHolder);
+    truthHtml += `
+      <div style="display: flex; align-items: center; gap: 12px; padding-bottom: 4px; margin-top: 4px;">
+        <span style="font-weight: bold; color: #ffd45f; width: 120px; font-size: 14px;">📿 银项链持有者：</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <img src="${url}" style="width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid #ffd45f;" alt="" />
+          <span style="font-size: 14px; color: #eee;">${displayName}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  truthContainer.innerHTML = truthHtml;
   overlay.classList.add("show");
 }
 
@@ -4591,7 +4693,7 @@ function create() {
     // Villager Homes
     { name: "Arthur Burton's Home", displayName: "亚瑟之家", x: 89, y: 73, color: "#70a1ff" },
     { name: "Crow's Sheriff Residence", displayName: "警长办公室", x: 23, y: 65, color: "#54a0ff" },
-    { name: "Jane Moreno's Home", displayName: "简之家", x: 72, y: 74, color: "#a5b1c2" },
+    { name: "Jane Moreno's Home", displayName: "简之家", x: 78, y: 74, color: "#a5b1c2" },
     { name: "Mei Lin's Home", displayName: "林梅之家", x: 107, y: 62, color: "#a5b1c2" },
     { name: "Crow's Jail Cell A", displayName: "牢房1", x: 31, y: 66, color: "#54a0ff" },
     { name: "Crow's Jail Cell B", displayName: "牢房2", x: 38, y: 65, color: "#54a0ff" }

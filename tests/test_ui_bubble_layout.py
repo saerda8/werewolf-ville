@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 
 INDEX_HTML = Path(__file__).parents[1] / "ui" / "templates" / "index.html"
@@ -199,6 +199,10 @@ def test_dusk_vote_submission_hides_vote_actions_and_confirms_without_delay():
 
     assert 'const showVoteButtons = stage === "voting" && voteSummary.active && !crowHasVoted;' in render_block
     assert 'else if (stage === "voting" && crowHasVoted)' in render_block
+    assert 'function crowVoteIsAbstain(voteSummary)' in html
+    assert 'function isAbstainVoteTarget(vote)' in html
+    assert 'const voteLabel = crowVoteIsAbstain(voteSummary) ? "已弃票" : "已投票";' in render_block
+    assert '${name ? "已投票" : "已弃票"}' in html
     assert 'voteSummary.crow_vote === undefined' not in render_block
     assert 'footerAbstainBtn.textContent = "放弃投票 (弃票)";' in render_block
     assert '已选择弃票，投票中...' not in render_block
@@ -1448,6 +1452,9 @@ def test_agent_cards_hide_role_tags_and_debug_labels():
     assert "roleLabel" not in update_block
     assert "roleClass" not in update_block
     assert "knifeMarkerHtml" not in update_block
+    assert "silverTags" not in update_block
+    assert "silver_knife_holder" not in update_block
+    assert "silver_jewelry_holder" not in update_block
 
 
 def test_confirm_vote_result_success_hides_voting_panel():
@@ -1552,3 +1559,22 @@ def test_morning_gathering_hides_normal_action_bubbles():
     block = html[start:end]
     assert 'state.phase === "day" && state.primary_cta === "gathering"' in block
     assert 'return "";' in block
+
+
+def test_game_over_ui_truth_rendering_and_version():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # 1. Check version display is updated with backend version
+    assert 'state.frontend_version' in html
+    assert 'const badge = document.getElementById("app-version-badge");' in html
+    assert 'badge.textContent = "版本 " + state.frontend_version;' in html
+
+    # 2. Check game over truth display panel rendering inside showGameOver
+    assert 'const werewolves = data.werewolf_names || (data.werewolf_name ? [data.werewolf_name] : []);' in html
+    assert 'const knifeHolder = data.silver_knife_holder || "";' in html
+    assert 'const jewelryHolder = data.silver_jewelry_holder || "";' in html
+    assert 'duskPortraitUrl(name)' in html
+    assert 'duskPortraitUrl(knifeHolder)' in html
+    assert 'duskPortraitUrl(jewelryHolder)' in html
+    assert 'document.getElementById("game-over-truth")' in html
+    assert 'sub.parentNode.insertBefore(truthContainer, sub.nextSibling)' in html

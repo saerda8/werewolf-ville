@@ -19,6 +19,7 @@ from world_config import (
     validate_world_config,
 )
 from config_loader import reload_config
+from engine_navigation import bfs_path, load_collision_maze
 
 
 def test_eight_active_participants_include_crow_and_seven_npcs():
@@ -172,7 +173,7 @@ def test_home_semantics_match_map_labels():
     assert ACTIVE_CHARACTERS["Klaus Mueller"]["home"] == {"x": 126, "y": 46}
     assert ACTIVE_CHARACTERS["Maria Lopez"]["home"] == {"x": 93, "y": 18}
     assert ACTIVE_CHARACTERS["Sam Moore"]["home"] == {"x": 54, "y": 16}
-    assert ACTIVE_CHARACTERS["Jane Moreno"]["home"] == {"x": 72, "y": 74}
+    assert ACTIVE_CHARACTERS["Jane Moreno"]["home"] == {"x": 78, "y": 74}
     assert ACTIVE_CHARACTERS["Mei Lin"]["home"] == {"x": 107, "y": 62}
 
 
@@ -305,6 +306,19 @@ def test_sheriff_area_contains_office_and_two_prison_rooms():
     crow_home = ACTIVE_CHARACTERS["Crow"]["home"]
     assert any(abs(pt[0] - crow_home["x"]) + abs(pt[1] - crow_home["y"]) <= 3
                for pt in office_pts), "Sheriff office should be near Crow's home"
+
+
+def test_jane_home_can_reach_morning_gathering_plaza():
+    """Jane's night home must not trap her before morning gathering."""
+    maze = load_collision_maze()
+    home = ACTIVE_CHARACTERS["Jane Moreno"]["home"]
+    start = (home["x"], home["y"])
+    target = (INITIAL_BODY_SITE["x"], INITIAL_BODY_SITE["y"])
+
+    assert maze[start[1]][start[0]] == 0
+    path = bfs_path(maze, start, target)
+    assert path, f"Jane must be able to walk from home {start} to morning plaza {target}"
+    assert len(path) < 90
 
 
 def test_public_jobs_are_map_aligned_after_expansion():

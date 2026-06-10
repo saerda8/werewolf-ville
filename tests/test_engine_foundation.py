@@ -2461,6 +2461,7 @@ def test_silver_holders_are_initialized(monkeypatch):
     if engine._silver_knife_holder:
         assert engine._silver_knife_holder != "Crow"
         assert engine._silver_knife_holder not in engine.werewolf_names
+        assert engine._silver_knife_holder != engine._silver_jewelry_holder
         assert engine._silver_knife_holder in engine.agents
 
 
@@ -2691,7 +2692,7 @@ def test_hidden_silver_knife_can_be_used_once_at_night(monkeypatch):
     assert "已经使用过" in second["error"]
 
 
-def test_first_night_silver_knife_ignores_decline_for_testing(monkeypatch):
+def test_first_night_silver_knife_can_decline(monkeypatch):
     engine = _make_engine(monkeypatch)
     holder = engine._silver_knife_holder
     candidates = [name for name in engine.agents if name not in {holder, engine.detective_name}]
@@ -2700,10 +2701,10 @@ def test_first_night_silver_knife_ignores_decline_for_testing(monkeypatch):
     engine.day = 1
     target = engine._choose_silver_knife_target(holder, candidates)
 
-    assert target in engine.werewolf_names
+    assert target == ""
 
 
-def test_first_night_silver_knife_prefers_living_werewolf_for_testing(monkeypatch):
+def test_first_night_silver_knife_decline_does_not_force_living_werewolf(monkeypatch):
     engine = _make_engine(monkeypatch)
     holder = engine._silver_knife_holder
     first_wolf, second_wolf = engine.werewolf_names[:2]
@@ -2717,7 +2718,7 @@ def test_first_night_silver_knife_prefers_living_werewolf_for_testing(monkeypatc
     engine.day = 1
     target = engine._choose_silver_knife_target(holder, candidates)
 
-    assert target == second_wolf
+    assert target == ""
 
 
 def test_silver_knife_killed_werewolf_is_dead_body_not_talkable_or_voteable(monkeypatch):

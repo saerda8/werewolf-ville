@@ -36,6 +36,8 @@ game:
   bubble_lifetime_seconds: 6
   crow_intro_line_delay_seconds: 2.0
   day_duration_seconds: 600
+  # 晨会每位发言人 30 秒超时。
+  gathering_per_speaker_timeout_seconds: 30
   gathering_speech_visible_seconds: 2.5
   gathering_departure_gap_seconds: 0.5
   max_days: 5

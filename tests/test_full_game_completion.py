@@ -526,11 +526,14 @@ def test_status_exposes_night_progress(monkeypatch):
     assert status["night_progress"]["stage"] == "werewolf"
 
 
-def test_status_no_longer_exposes_temporary_silver_knife_holder_marker(monkeypatch):
-    """get_status no longer leaks the hidden silver-knife holder or night target/outcome."""
+def test_status_exposes_silver_holder_truth_fields(monkeypatch):
+    """get_status must expose the silver holders for truth reveal UI."""
     engine = _start_night(monkeypatch)
     status = engine.get_status()
-    assert "silver_knife_holder" not in status
+    assert status["silver_knife_holder"] == engine._silver_knife_holder
+    assert status["silver_knife_holder_display"] == game_engine.display_name_for_person(engine._silver_knife_holder)
+    assert status["silver_jewelry_holder"] == engine._silver_jewelry_holder
+    assert status["silver_jewelry_holder_display"] == game_engine.display_name_for_person(engine._silver_jewelry_holder)
     assert "silver_knife_used" not in status
     assert "silver_knife_phase_started_at" not in status
     assert "silver_knife_phase_duration" not in status
