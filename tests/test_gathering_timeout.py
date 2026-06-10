@@ -472,6 +472,31 @@ def test_gathering_queue_contains_all_alive_agents(monkeypatch):
     assert len(queue) == len(alive)
 
 
+def test_morning_gathering_assigns_paths_instead_of_direct_wall_line(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    participants = [
+        name for name, agent in engine.agents.items()
+        if agent.is_alive and name not in engine._jailed
+    ]
+    for name in participants:
+        home = game_engine.AGENT_CONFIGS[name]["home"]
+        agent = engine.agents[name]
+        start = engine._nearest_walkable_tile((home["x"], home["y"])) or (home["x"], home["y"])
+        agent.x, agent.y = start
+        agent.target_x, agent.target_y = start
+    engine.agent_paths.clear()
+
+    engine._send_dusk_participants_to_plaza(participants)
+
+    moved = 0
+    for name in participants:
+        agent = engine.agents[name]
+        if (agent.x, agent.y) != (agent.target_x, agent.target_y):
+            moved += 1
+            assert engine.agent_paths.get(name), name
+    assert moved >= len(participants) - 1
+
+
 def test_gathering_order_deterministic_same_seed(monkeypatch):
     """Same random seed produces identical gathering order."""
     engine1 = _make_engine(monkeypatch, seed=42)

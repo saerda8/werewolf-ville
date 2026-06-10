@@ -185,6 +185,70 @@ def test_silver_knife_kills_after_reaching_target(monkeypatch):
     assert engine._night_progress["knife_complete"] is True
 
 
+def test_silver_knife_kills_selected_target_if_path_unreachable(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    holder_name = next(
+        name for name in engine.agents
+        if name not in engine.werewolf_names and name != "Crow"
+    )
+    target_name = next(
+        name for name, agent in engine.agents.items()
+        if name not in engine.werewolf_names
+        and name not in {holder_name, "Crow"}
+        and agent.is_alive
+    )
+    engine.day = 1
+    engine.phase = game_engine.GamePhase.NIGHT
+    engine._silver_knife_holder = holder_name
+    engine._silver_knife_used = False
+    engine._silver_knife_night_checked = False
+    engine._silver_knife_scrapped_tonight = False
+    engine._night_progress = {
+        "active": True,
+        "stage": "silver_knife",
+        "complete": False,
+        "wolf_complete": True,
+        "knife_complete": False,
+    }
+    monkeypatch.setattr(engine, "_choose_silver_knife_target", lambda holder, candidates: target_name)
+    monkeypatch.setattr(engine, "_path_adjacent_to", lambda *args, **kwargs: None)
+
+    engine._advance_silver_knife_action()
+
+    assert target_name in engine.dead_list
+    assert engine.bodies[-1].victim_name == target_name
+    assert engine.bodies[-1].is_werewolf_corpse is False
+    assert engine._night_progress["knife_complete"] is True
+
+
+def test_silver_knife_prefers_moving_to_selected_target_before_fallback(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    holder_name = engine._silver_knife_holder
+    holder = engine.agents[holder_name]
+    target_name = next(
+        name for name, agent in engine.agents.items()
+        if name not in {holder_name, "Crow"} and agent.is_alive
+    )
+    holder.x, holder.y = 10, 10
+    engine.agents[target_name].x, engine.agents[target_name].y = 30, 10
+    engine._night_progress = {
+        "active": True,
+        "stage": "silver_knife",
+        "complete": False,
+        "wolf_complete": True,
+        "knife_complete": False,
+    }
+    monkeypatch.setattr(engine, "_choose_silver_knife_target", lambda holder, candidates: target_name)
+    long_path = [(x, 10) for x in range(11, 30)]
+    monkeypatch.setattr(engine, "_path_adjacent_to", lambda *args, **kwargs: (29, 10, long_path))
+
+    engine._advance_silver_knife_action()
+
+    assert target_name not in engine.dead_list
+    assert engine._silver_knife_action["status"] == "moving"
+    assert engine.agent_paths[holder_name]
+
+
 def test_silver_knife_does_not_force_kill_when_path_ends_after_target_moves(monkeypatch):
     engine = _start_hunt(monkeypatch)
     holder_name = engine._silver_knife_holder
@@ -219,10 +283,10 @@ def test_silver_knife_does_not_force_kill_when_path_ends_after_target_moves(monk
 
     engine._advance_silver_knife_action()
 
-    assert target_name not in engine.dead_list
-    assert target.is_alive is True
+    assert target_name in engine.dead_list
+    assert target.is_alive is False
     assert engine._night_progress["knife_complete"] is True
     assert engine._silver_knife_action["complete"] is True
-    assert engine._silver_knife_action["reason"] == "path_ended_not_adjacent"
+    assert engine._silver_knife_action["reason"] == "forced_after_path_end"
     assert holder_name not in engine.agent_paths
     assert holder.runtime_state == "idle"

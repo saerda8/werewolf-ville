@@ -183,6 +183,25 @@ def test_dusk_discussion_waits_three_seconds_after_every_npc_statement(monkeypat
     assert len(engine._dusk_discussion_statements) == len(eligible)
 
 
+def test_dusk_discussion_prompt_keeps_crow_identity_as_sheriff(monkeypatch):
+    """NPC dusk speeches may suspect Crow, but must keep Crow's identity as sheriff."""
+    engine = _make_engine(monkeypatch)
+    engine._running = True
+    captured = {}
+
+    def fake_chat(agent_name, system_prompt, user_prompt, **kwargs):
+        captured["system_prompt"] = system_prompt
+        return "我会说明自己的行踪，并点名一个真正可疑的人。"
+
+    monkeypatch.setattr(game_engine, "chat_for_agent", fake_chat)
+    engine._generate_single_dusk_discussion_statement("Isabella Rodriguez", "暂无", "暂无")
+
+    prompt = captured["system_prompt"]
+    suspect_text = prompt.split("可怀疑对象：", 1)[1].split("。", 1)[0]
+    assert "克罗" in suspect_text
+    assert "警长、不是园丁" in prompt
+
+
 def test_crow_input_waits_three_seconds_after_last_npc_bubble_clears(monkeypatch):
     engine = _make_engine(monkeypatch)
     engine._running = True
@@ -516,6 +535,33 @@ def test_crow_can_abstain_vote(monkeypatch):
     assert result.get("success")
     assert engine._dusk_votes["Crow"] == ""
     assert engine._dusk_crow_voted is True
+
+
+def test_vote_summary_hides_npc_votes_until_crow_votes(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine._transition_to_dusk()
+    _arrive_dusk_participants(engine)
+    engine.submit_dusk_statement("Please vote.")
+    engine._dusk_stage = "voting"
+    engine._dusk_vote_active = True
+    engine._dusk_crow_voted = False
+    engine._dusk_votes = {
+        "Isabella Rodriguez": "Arthur Burton",
+        "Klaus Mueller": "Arthur Burton",
+    }
+    engine._dusk_vote_reasons = {name: "test" for name in engine._dusk_votes}
+
+    hidden = engine._build_vote_summary()
+    assert hidden["votes_hidden_until_crow_vote"] is True
+    assert hidden["votes"] == {}
+    assert hidden["counts"] == []
+    assert hidden["voters_by_target"] == {}
+
+    engine._dusk_votes["Crow"] = ""
+    engine._dusk_crow_voted = True
+    revealed = engine._build_vote_summary()
+    assert revealed["votes_hidden_until_crow_vote"] is False
+    assert revealed["voters_by_target"]["Arthur Burton"] == ["Isabella Rodriguez", "Klaus Mueller"]
 
 
 def test_dusk_phase_timeout_finalizes_missing_votes_before_resolving(monkeypatch):

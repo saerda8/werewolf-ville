@@ -713,7 +713,7 @@ body.phase-locked #game-container { pointer-events: none; }
       <p><strong>白天：</strong>居民会自行行动和思考。警长每天需要采访所有存活且未被拘留的居民；每个白天有 3 次可选深度挖掘。</p>
       <p><strong>黄昏：</strong>完成当天必要任务后，可以召集讨论和投票。居民可以投人，也可以弃票。最高票者自动被拘留，平票时由警长的一票裁决。</p>
       <p><strong>夜晚：</strong>狼人每天晚上必须尝试杀死一名非克罗目标。克罗只能最后被杀。</p>
-      <p><strong>银器：</strong>第二天起，警长需要收集五金店工具和银饰，之后才能制作一颗银质子弹。子弹只能用一次。</p>
+      <p><strong>银器：</strong>第二天起，警长需要收集五金店工具和银色制品或银色首饰。银色制品或银色首饰只能在女性 NPC 中通过深挖获得；制造完银色子弹以后，可以在第二天选择射杀一名 NPC。子弹只能用一次。</p>
       <p><strong>隐藏刀具：</strong>一名好人居民藏有银质小刀，可在夜里尝试击杀一名目标；如果误杀好人，也会造成死亡。夜晚的银刀阶段每晚固定展示，不会泄露银刀是否有效或已被使用。</p>
       <p><strong>灯泡与问号含义：</strong></p>
       <ul>
@@ -1010,6 +1010,20 @@ function getDisplayName(name, state) {
     "Yuriko": "百合子"
   };
   return fallback[name] || name;
+}
+
+function shouldHideNightActorName(persona, state) {
+  if (!persona || !state || state.phase !== "night") return false;
+  const runtime = String(persona.runtime_state || "");
+  const action = String(persona.action || "");
+  return (
+    runtime === "moving" ||
+    persona.visual_moving === true ||
+    Number(persona.path_len || 0) > 0 ||
+    action.includes("夜间") ||
+    action.includes("狼人") ||
+    action.includes("银质小刀")
+  );
 }
 
 function getWerewolfDisplayNames(data) {
@@ -1416,8 +1430,8 @@ function createSilverToolMarker(scene) {
 
   marker.add([halo, star, label, hint]);
   marker.setDepth(24);
-  marker.setSize(92, 66);
-  marker.setInteractive(new Phaser.Geom.Rectangle(-46, -28, 92, 74), Phaser.Geom.Rectangle.Contains);
+  marker.setSize(140, 110);
+  marker.setInteractive(new Phaser.Geom.Rectangle(-70, -52, 140, 118), Phaser.Geom.Rectangle.Contains);
   marker.on("pointerdown", acquireSilverBulletToolFromShelf);
   marker.on("pointerover", () => marker.setScale(1.08));
   marker.on("pointerout", () => marker.setScale(1));
@@ -3566,7 +3580,6 @@ function updateAgentList(state, isDirectorSummaryViewed) {
     const locallyClearedHint = locallyClearedHintTargets.has(name);
     const showBulb = p.alive && hasClueHint && !locallyClearedHint && !isNight && !isDusk && !isGathering && (normalChatAvailable || deepDiveAvailable);
     const bulbHtml = showBulb ? `<span id="clue-bulb-${safeName}" class="clue-bulb" style="margin-left: 6px; font-size: 13px; filter: drop-shadow(0 0 3px #ffd700); cursor: help;" title="有新线索">💡</span>` : '';
-
     // Signature-based diffing to prevent hover flicker (include isPendingChat to update all cards when pending state shifts)
     const signature = `${name}|${displayName}|${p.alive}|${hasClueHint}|${locallyClearedHint}|${showBulb}|${modelFailed}|${selectedAgent === name}|${normalChatAvailable}|${deepDiveAvailable}|${globalDdRemaining}|${ddRemaining}|${isNight}|${isDusk}|${pendingPhase}|${isGathering}|${isPendingChat}`;
     const targetContainer = name === "Crow" ? crowList : list;
@@ -5374,12 +5387,7 @@ function update(time, delta) {
     const bx = (Number(body.x) + bodyOffset[0]) * TILE_W;
     const by = (Number(body.y) + bodyOffset[1]) * TILE_W;
 
-    const isWerewolf = body.kind === "werewolf" ||
-                       body.corpse_kind === "werewolf" ||
-                       body.is_werewolf_corpse === true ||
-                       body.is_werewolf_corpse === "true" ||
-                       (typeof body.kind === "string" && body.kind.toLowerCase() === "werewolf") ||
-                       (typeof body.corpse_kind === "string" && body.corpse_kind.toLowerCase() === "werewolf");
+    const isWerewolf = false;
 
     if (!corpseSprite) {
       // Create new corpse sprite
@@ -5471,12 +5479,37 @@ function update(time, delta) {
       const isWaitingReply = (pendingChatTarget === name && pendingChatPhase === "waiting");
       const effectiveIsMoving = !isWaitingReply && isMoving;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      const isScriptedPathMove = effectiveIsMoving && Number(p.path_len || 0) > 0 && (
+        isNight ||
+        (gameState && (
+          gameState.phase === "night" ||
+          gameState.phase === "dusk_discussion" ||
+          gameState.primary_cta === "gathering"
+        ))
+      );
 
       if (isNight || (gameState && gameState.phase === "night")) {
         sprite.setPosition(targetPx, targetPy);
         sprite.anims.stop();
         sprite.lastDir = "down";
         sprite.setTexture(key, "down-walk.000");
+      } else if (isScriptedPathMove) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+          sprite.lastDir = dx >= 0 ? "right" : "left";
+        } else if (Math.abs(dy) > 1) {
+          sprite.lastDir = dy >= 0 ? "down" : "up";
+        }
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          if (Math.abs(dx) > step) sprite.x += Math.sign(dx) * step;
+          else sprite.x = targetPx;
+          if (Math.abs(dx) <= step && Math.abs(dy) <= step) sprite.y = targetPy;
+        } else {
+          if (Math.abs(dy) > step) sprite.y += Math.sign(dy) * step;
+          else sprite.y = targetPy;
+          if (Math.abs(dx) <= step && Math.abs(dy) <= step) sprite.x = targetPx;
+        }
+        const walkDir = sprite.lastDir === "up" ? "back" : sprite.lastDir === "down" ? "front" : sprite.lastDir;
+        if (walkDir) sprite.anims.play(key + "-" + walkDir + "-walk", true);
       } else if (dist > 1 && !isWaitingReply) {
         // 有距离差，播放walk动画并插值移动
         if (Math.abs(dx) > Math.abs(dy)) {
@@ -5500,9 +5533,6 @@ function update(time, delta) {
         else sprite.x = targetPx;
         if (Math.abs(dy) > step) sprite.y += Math.sign(dy) * step;
         else sprite.y = targetPy;
-      } else if (isMoving && p.path_len > 0 && !isWaitingReply) {
-        // 后端仍有路径时才保持 walk 动画
-        sprite.setPosition(targetPx, targetPy);
       } else {
         // 非移动状态 → stop动画
         sprite.setPosition(targetPx, targetPy);
@@ -5539,7 +5569,7 @@ function update(time, delta) {
 
     nameLabels[name].x = cx;
     nameLabels[name].y = cy - 44;
-    nameLabels[name].setVisible(true);
+    nameLabels[name].setVisible(!shouldHideNightActorName(p, gameState));
     const displayName = getDisplayName(name, gameState);
     nameLabels[name].setText(displayName);
     nameLabels[name].setStyle({ fill: PERSONA_LABEL_COLORS[name] || "#66c2ff" });
