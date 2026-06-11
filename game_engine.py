@@ -4977,14 +4977,10 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             raw = chat_for_agent(holder_name, system_prompt, user_prompt, temperature=0.4, max_retries=0, priority=True)
             compact = str(raw or "").strip()
             decline_words = (
-                "\u4e0d\u7528",  # 不用
-                "\u653e\u5f03",  # 放弃
-                "\u4e0d\u6740",  # 不杀
-                "\u8df3\u8fc7",  # 跳过
-                "涓嶇敤",
-                "鏀惧純",
-                "涓嶆潃",
-                "璺宠繃",
+                "不用",
+                "放弃",
+                "不杀",
+                "跳过",
             )
             if any(word in compact for word in decline_words):
                 return ""
