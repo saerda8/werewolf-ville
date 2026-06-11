@@ -94,16 +94,16 @@ llm:
   api_key: ${CHAT2API_API_KEY}
 ```
 
-运行游戏前，需要先启动 Chat2API 服务，并设置 API Key：
+运行游戏前，需要先设置 API Key：
 
 ```bat
-set CHAT2API_API_KEY=你的_api_key
+set LOCAL_LLM_API_KEY=你的_api_key
 ```
 
 macOS / Linux 使用：
 
 ```bash
-export CHAT2API_API_KEY=你的_api_key
+export LOCAL_LLM_API_KEY=你的_api_key
 ```
 
 ### 启动游戏
