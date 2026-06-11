@@ -577,6 +577,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self.night_start_time = None
 
         self.day_time_expired = False
+        self._auto_dusk_triggered = False
 
 
 
@@ -3855,6 +3856,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self.night_start_time = None
 
         self.day_time_expired = False
+        self._auto_dusk_triggered = False
 
         self.dusk_start_time = None
 
@@ -4096,6 +4098,11 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         if elapsed >= self.day_duration:
 
             self.day_time_expired = True
+
+            if not getattr(self, "_gathering_active", False):
+                self._log("⏰ 白天时间结束，克罗召集居民进入黄昏讨论。", "system")
+                self._transition_to_dusk()
+                return
 
 
 
@@ -5203,6 +5210,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self.night_start_time = time.time()
 
         self.day_time_expired = False
+        self._auto_dusk_triggered = False
 
         self._chat_round_count = {}  # 新一天重置对话轮数
 
@@ -5399,6 +5407,7 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self.game_hour = 7
 
         self.day_time_expired = False
+        self._auto_dusk_triggered = False
 
         self.dusk_start_time = None  # 清除上一轮的黄昏状态
 

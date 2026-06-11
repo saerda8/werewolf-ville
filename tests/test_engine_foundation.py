@@ -2,6 +2,7 @@
 import threading
 import time
 
+import engine_dusk
 import game_engine
 from simulation_events import BodyRecord
 from world_config import (
@@ -186,6 +187,43 @@ def test_day_tick_does_not_run_realtime_reflection(monkeypatch):
     engine._day_tick()
 
     assert calls == ["schedule", "move"]
+
+
+def test_day_timeout_automatically_starts_normal_dusk_flow(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DAY
+    engine._gathering_active = False
+    engine._daily_interviewed.clear()
+    engine.day_duration = 600
+    engine.day_start_time = 1000
+
+    monkeypatch.setattr(game_engine.time, "time", lambda: 1600)
+
+    engine._day_tick()
+
+    assert engine.day_time_expired is True
+    assert engine.phase == game_engine.GamePhase.DUSK_DISCUSSION
+    assert engine._dusk_stage == "gathering"
+    assert engine.chat_bubbles["Crow"]["text"] == engine_dusk._CROW_GATHERING_TEXT
+
+
+def test_day_timeout_waits_for_morning_gathering_to_finish(monkeypatch):
+    engine = _make_engine(monkeypatch)
+    engine.phase = game_engine.GamePhase.DAY
+    engine._gathering_active = True
+    engine.day_duration = 600
+    engine.day_start_time = 1000
+    calls = []
+
+    monkeypatch.setattr(game_engine.time, "time", lambda: 1600)
+    monkeypatch.setattr(engine, "_transition_to_dusk", lambda: calls.append("dusk"))
+    monkeypatch.setattr(engine, "_handle_gathering", lambda: calls.append("gathering"))
+
+    engine._day_tick()
+
+    assert engine.day_time_expired is True
+    assert "dusk" not in calls
+    assert "gathering" in calls
 
 
 def test_stage_reflection_only_runs_at_night_start_when_running(monkeypatch):
