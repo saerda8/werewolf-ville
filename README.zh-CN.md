@@ -69,7 +69,7 @@ http://127.0.0.1:5000/
 
 - Python 3.10+
 - pip
-- 一个兼容 Chat2API 的本地模型服务
+- 一个兼容 OpenAI 接口格式的本地模型服务
 - `requirements.txt` 中列出的 Python 依赖
 
 安装依赖：
@@ -91,19 +91,19 @@ NPC 模型服务默认配置在 `config.yaml` 里：
 ```yaml
 llm:
   api_base: http://127.0.0.1:8000/v1
-  api_key: ${CHAT2API_API_KEY}
+  api_key: ${LOCAL_LLM_API_KEY}
 ```
 
-运行游戏前，需要先启动 Chat2API 服务，并设置 API Key：
+运行游戏前，需要先启动本地模型服务，并设置 API Key：
 
 ```bat
-set CHAT2API_API_KEY=你的_api_key
+set LOCAL_LLM_API_KEY=你的_api_key
 ```
 
 macOS / Linux 使用：
 
 ```bash
-export CHAT2API_API_KEY=你的_api_key
+export LOCAL_LLM_API_KEY=你的_api_key
 ```
 
 ### 启动游戏

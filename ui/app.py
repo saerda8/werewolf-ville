@@ -71,9 +71,9 @@ def _runtime_llm_override_from_data(data):
                 return None
             local_override = _local_chat2api_override()
             if not local_override.get("model"):
-                return {"error": "chat2api override requires model."}
+                return {"error": "local model override requires model."}
             if not local_override.get("api_base"):
-                return {"error": "chat2api override requires API base URL."}
+                return {"error": "local model override requires API base URL."}
             return {
                 "provider": "chat2api",
                 "api_key": local_override.get("api_key") or "EMPTY",
@@ -88,7 +88,7 @@ def _runtime_llm_override_from_data(data):
         if not api_base:
             missing.append("API base URL")
         if missing:
-            return {"error": f"chat2api override requires: {', '.join(missing)}."}
+            return {"error": f"local model override requires: {', '.join(missing)}."}
         return {
             "provider": "chat2api",
             "api_key": api_key or "EMPTY",
@@ -285,7 +285,7 @@ def _test_local_chat2api_agent() -> tuple[str, str]:
     llm_override = _local_chat2api_override()
     sample = _test_openai_compatible_chat(llm_override)
     if not sample:
-        raise RuntimeError("empty local Chat2API response")
+        raise RuntimeError("empty local model response")
     return llm_override["model"], sample
 
 

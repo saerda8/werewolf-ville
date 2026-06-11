@@ -57,7 +57,7 @@ llm:
     Jane Moreno: Kimi-K2.6
     Mei Lin: deepseek-v4-flash
   api_base: http://127.0.0.1:8000/v1
-  api_key: ${CHAT2API_API_KEY}
+  api_key: ${LOCAL_LLM_API_KEY}
   available_models:
   - Qwen3.5-Flash
   - Kimi-K2.6

@@ -62,7 +62,7 @@ Werewolf Ville is a Python + Flask browser game. The backend runs the game simul
 
 - Python 3.10+
 - pip
-- A Chat2API-compatible local model service
+- A local model service compatible with the OpenAI API format
 - Required Python packages from `requirements.txt`
 
 Install dependencies:
@@ -86,19 +86,19 @@ The NPC model provider is configured in `config.yaml`:
 ```yaml
 llm:
   api_base: http://127.0.0.1:8000/v1
-  api_key: ${CHAT2API_API_KEY}
+  api_key: ${LOCAL_LLM_API_KEY}
 ```
 
-Before running the game, make sure your Chat2API service is already running and the required API key is available as an environment variable:
+Before running the game, make sure your local model service is already running and the required API key is available as an environment variable:
 
 ```bash
-set CHAT2API_API_KEY=your_api_key_here
+set LOCAL_LLM_API_KEY=your_api_key_here
 ```
 
 On macOS/Linux:
 
 ```bash
-export CHAT2API_API_KEY=your_api_key_here
+export LOCAL_LLM_API_KEY=your_api_key_here
 ```
 
 ### Start the Game
