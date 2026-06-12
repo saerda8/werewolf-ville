@@ -951,36 +951,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
         self._observation_events.append(event)
         cutoff = time.time() - self._observation_ttl_seconds()
         self._observation_events = [item for item in self._observation_events if item.timestamp >= cutoff]
-        if event.event_type in {"body_discovered", "vote_result", "night_kill"}:
-            if event.public:
-                recipients = [
-                    name for name, agent in self.agents.items()
-                    if name != self.detective_name and agent.is_alive and name not in self._jailed
-                ]
-            else:
-                recipients = [
-                    name for name in event.witnesses
-                    if name in self.agents
-                    and name != self.detective_name
-                    and self.agents[name].is_alive
-                    and name not in self._jailed
-                ]
-            for recipient in recipients:
-                self._enqueue_memory_task(
-                    recipient,
-                    {
-                        "kind": "observation_event",
-                        "event_id": event.event_id,
-                        "event_type": event.event_type,
-                        "subject": event.subject,
-                        "text": event.text,
-                        "day": event.day,
-                        "game_hour": event.game_hour,
-                        "public": event.public,
-                        "hidden": event.hidden,
-                        "witnesses": sorted(event.witnesses),
-                    },
-                )
         return event
 
     def _observable_events_for(self, name: str, agent) -> list[ObservationEvent]:
@@ -4043,8 +4013,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                     elif self.phase == GamePhase.NIGHT:
 
                         self._night_tick()
-
-                    self._process_next_memory_task()
 
                 # 锁外广播状态，避免阻塞游戏循环
 
@@ -9072,7 +9040,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
 
         agent.update_scratch(currently=f"刚完成：{result_sentence[:100]}")
 
-        observation_after = self._build_observation_packet(name, agent)
         self._record_observation_event(
             event_type="action_complete",
             subject=name,
@@ -9080,26 +9047,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             x=agent.x,
             y=agent.y,
             public=False,
-        )
-        self._enqueue_memory_task(
-            name,
-            {
-                "kind": "action_completed",
-                "day": self.day,
-                "game_hour": self.game_hour,
-                "action_type": action_type,
-                "target_location": location,
-                "target_object": target_object,
-                "target_person": target_person,
-                "action": action,
-                "action_status": pending.get("action_status", ""),
-                "thought": pending.get("thought", ""),
-                "expected_result": expected_result,
-                "action_result": result_sentence,
-                "observation_before": pending.get("observation_before", {}),
-                "observation_after": observation_after,
-                "visible_events": observation_after.get("visible_events", []),
-            },
         )
 
 
@@ -10062,17 +10009,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
             y=source.y,
             witnesses={source_name, self.detective_name},
         )
-        self._enqueue_memory_task(
-            source_name,
-            {
-                "kind": "conversation_completed",
-                "speaker": source_name,
-                "listener": self.detective_name,
-                "transcript": [(source_name, message)],
-                "day": self.day,
-                "game_hour": self.game_hour,
-            },
-        )
         return True
 
 
@@ -10474,12 +10410,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                 y=target.y,
                 witnesses={self.detective_name, target_name},
             )
-            self._enqueue_conversation_memory(
-                self.detective_name,
-                target_name,
-                [(self.detective_name, incoming_message), (target_name, response)],
-            )
-
 
 
             # 清除NPC的思考/行动状态，避免回复后残留蓝泡泡状态；对话锁等白色气泡过期时释放。
@@ -11116,12 +11046,6 @@ class WerewolfGameEngine(EngineBubbleMixin, EngineDuskMixin, EngineTasksMixin):
                         y=agent2.y,
                         witnesses={name1, name2},
                     )
-                    self._enqueue_conversation_memory(
-                        name1,
-                        name2,
-                        [(name1, msg1), (name2, response2)],
-                    )
-
 
 
 

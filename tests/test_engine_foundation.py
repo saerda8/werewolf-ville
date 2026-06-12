@@ -468,15 +468,8 @@ def test_night_kill_event_is_hidden_and_visible_only_to_witnesses(monkeypatch):
     assert event not in engine._observable_events_for(outsider_name, outsider)
 
 
-def test_important_public_and_witnessed_events_enqueue_eligible_npc_memories(monkeypatch):
+def test_observation_events_do_not_start_memory_consolidation(monkeypatch):
     engine = _make_engine(monkeypatch)
-    eligible = [
-        name for name, agent in engine.agents.items()
-        if name != engine.detective_name and agent.is_alive
-    ]
-    witness_name = eligible[0]
-    jailed_name = eligible[-1]
-    engine._jailed.add(jailed_name)
 
     engine._record_observation_event(
         event_type="body_discovered",
@@ -486,30 +479,8 @@ def test_important_public_and_witnessed_events_enqueue_eligible_npc_memories(mon
         y=10,
         public=True,
     )
-    engine._record_observation_event(
-        event_type="night_kill",
-        subject="Arthur Burton",
-        text="亚瑟在夜里遭到袭击。",
-        x=20,
-        y=20,
-        hidden=True,
-        witnesses={witness_name, jailed_name, engine.detective_name},
-    )
 
-    tasks = _drain_memory_tasks(engine)
-    public_recipients = set(eligible) - {jailed_name}
-    public_tasks = [
-        task for task in tasks
-        if task.payload.get("event_type") == "body_discovered"
-    ]
-    witnessed_tasks = [
-        task for task in tasks
-        if task.payload.get("event_type") == "night_kill"
-    ]
-
-    assert {task.agent_name for task in public_tasks} == public_recipients
-    assert {task.agent_name for task in witnessed_tasks} == {witness_name}
-    assert all(task.payload.get("kind") == "observation_event" for task in tasks)
+    assert len(engine._memory_queue) == 0
 
 
 def test_action_status_drops_customer_when_no_visible_person(monkeypatch):
@@ -531,9 +502,15 @@ def test_action_status_drops_customer_when_no_visible_person(monkeypatch):
     assert "客人" not in status
 
 
-def test_complete_action_enqueues_memory_task(monkeypatch):
+def test_complete_action_writes_one_legacy_memory(monkeypatch):
     engine = _make_two_npc_planning_engine(monkeypatch)
     arthur = engine.agents["Arthur Burton"]
+    written = []
+    monkeypatch.setattr(
+        arthur,
+        "add_memory",
+        lambda event, day: written.append((event, day)),
+    )
     arthur._pending_action = {
         "action_type": "inspect",
         "target_location": "Harvey Oak Supply Store",
@@ -549,68 +526,10 @@ def test_complete_action_enqueues_memory_task(monkeypatch):
 
     engine._complete_agent_action("Arthur Burton", arthur)
 
-    assert len(engine._memory_queue) == 1
-    task = engine._memory_queue.pop_next()
-    assert task.agent_name == "Arthur Burton"
-    assert task.payload["kind"] == "action_completed"
-    assert "需要确认工具是否齐全" in task.payload["thought"]
-    assert "掌握库存情况" in task.payload["expected_result"]
-
-
-def test_npc_chat_completion_enqueues_memory_for_both_participants(monkeypatch):
-    engine = _make_two_npc_planning_engine(monkeypatch)
-
-    engine._enqueue_conversation_memory(
-        speaker="Arthur Burton",
-        listener="Isabella Rodriguez",
-        transcript=[
-            ("Arthur Burton", "我看到五金店门口有人徘徊。"),
-            ("Isabella Rodriguez", "这听起来很奇怪。"),
-        ],
-    )
-
-    tasks = [engine._memory_queue.pop_next(), engine._memory_queue.pop_next()]
-
-    assert {task.agent_name for task in tasks} == {"Arthur Burton", "Isabella Rodriguez"}
-    assert all(task.payload["kind"] == "conversation_completed" for task in tasks)
-    assert all("五金店门口有人徘徊" in str(task.payload["transcript"]) for task in tasks)
-
-
-def test_memory_lane_writes_thought_memory(monkeypatch):
-    engine = _make_two_npc_planning_engine(monkeypatch)
-    arthur = engine.agents["Arthur Burton"]
-    written = []
-
-    def fake_consolidate(payload):
-        return {
-            "memories": [
-                {
-                    "type": "thought",
-                    "text": "亚瑟认为伊莎贝拉可能已经注意到他的异常。",
-                    "importance": 8,
-                    "keywords": ["亚瑟", "伊莎贝拉", "异常"],
-                    "subject": "Arthur Burton",
-                    "predicate": "suspects",
-                    "object": "Isabella Rodriguez",
-                }
-            ],
-            "current_goal": "避免伊莎贝拉继续怀疑自己。",
-        }
-
-    monkeypatch.setattr(arthur, "consolidate_memory", fake_consolidate)
-    monkeypatch.setattr(arthur, "add_memory", lambda event, day: written.append({"event": event, "day": day}))
-
-    engine._enqueue_memory_task("Arthur Burton", {"kind": "action_completed"})
-    engine._process_next_memory_task()
-
-    deadline = time.time() + 2
-    while not written and time.time() < deadline:
-        time.sleep(0.01)
-
-    assert written
-    assert "thought" in written[0]["event"]
-    assert "伊莎贝拉" in written[0]["event"]
-    assert arthur.scratch["currently"] == "避免伊莎贝拉继续怀疑自己。"
+    assert len(written) == 1
+    assert "第1天" in written[0][0]
+    assert written[0][1] == 1
+    assert len(engine._memory_queue) == 0
 
 
 def _make_tracking_decide(name, store):
